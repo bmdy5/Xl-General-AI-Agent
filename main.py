@@ -178,6 +178,12 @@ async def run_interactive():
                 if etype == "compacted":
                     print(f"\n  [上下文已压缩: {event.get('message_count', '?')} 条消息]")
 
+                elif etype == "exploring_start":
+                    print(f"\033[90m✻ 思考中...\033[0m", end="", flush=True)
+
+                elif etype == "exploring_done":
+                    print(f"\r\033[K", end="")  # 清除思考提示
+
                 elif etype == "reasoning":
                     print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
 

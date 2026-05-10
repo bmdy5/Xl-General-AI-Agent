@@ -84,6 +84,9 @@ class SpawnAgentTool(BaseTool):
             return {"result": False, "message": "task is required"}
         return {"result": True, "message": ""}
 
+    # 递归深度追踪 (hermes 模式: 最多 3 层)
+    _depth: int = 0
+
     async def call(
         self, input_args: dict, context: Any = None
     ) -> AsyncGenerator[ToolResult, None]:
@@ -91,63 +94,53 @@ class SpawnAgentTool(BaseTool):
         task = input_args["task"]
         ctx = input_args.get("context", "")
 
-        yield ToolResult(type="progress", data=f"🤖 派发 {role} 子代理...")
+        # hermes: 防递归
+        if SpawnAgentTool._depth >= 3:
+            yield ToolResult(type="result", data="Error: max spawn depth reached")
+            return
+
+        yield ToolResult(type="progress", data=f"🤖 {role} 子代理工作中...")
 
         try:
-            # 获取主 agent 的组件
             main = context if context else None
             if not main or not hasattr(main, "llm"):
-                yield ToolResult(type="result", data="Error: no agent context available")
+                yield ToolResult(type="result", data="Error: no agent context")
                 return
 
             from agent.core import Agent
 
-            # 构建子代理：复用 LLM + registry，隔离 messages
-            sub = Agent(
-                llm=main.llm,
-                registry=main.registry,
-                memory=main.memory,
-                max_turns=10,
-            )
+            sub = Agent(llm=main.llm, registry=main.registry,
+                        memory=main.memory, max_turns=8)
             sub.system_prompt = ROLES[role]
 
-            # 给子代理必要的上下文
             full_task = task
             if ctx:
                 full_task = f"{task}\n\n上下文:\n{ctx}"
 
-            # 执行
+            # hermes: 超时 120s
+            SpawnAgentTool._depth += 1
             output_parts = []
             tool_calls_made = []
             try:
-                sub._abort = asyncio.Event()  # type: ignore
-                async for event in sub.run(full_task):
-                    etype = event.get("type", "")
-                    if etype == "text_delta":
-                        output_parts.append(str(event.get("content", "")))
-                    elif etype in ("tool_call", "tool_exec"):
+                sub._abort = asyncio.Event()
+                async for event in asyncio.wait_for(
+                    self._collect_output(sub, full_task), timeout=120
+                ):
+                    if isinstance(event, str):
+                        output_parts.append(event)
+                    elif isinstance(event, dict):
                         tool_calls_made.append(event.get("name", "?"))
-                    elif etype == "tool_result":
-                        pass  # 中间结果不输出
-                    elif etype == "error":
-                        output_parts.append(f"\n[ERROR] {event.get('content', '')}")
-                    elif etype == "max_turns":
-                        output_parts.append("\n[max turns reached]")
-                    elif etype == "aborted":
-                        output_parts.append("\n[aborted]")
-            except Exception as e:
-                yield ToolResult(type="result", data=f"Sub-agent error: {e}")
-                return
+            except asyncio.TimeoutError:
+                output_parts.append("\n[timeout: 120s]")
+            finally:
+                SpawnAgentTool._depth -= 1
 
-            result_text = "".join(output_parts).strip()
-            if not result_text:
-                result_text = "(sub-agent produced no output)"
-
-            tools_summary = f" (用了 {len(tool_calls_made)} 次工具: {', '.join(tool_calls_made[:5])})" if tool_calls_made else ""
+            result_text = "".join(output_parts).strip() or "(no output)"
+            summary = f" (用了 {len(tool_calls_made)} 次工具)" if tool_calls_made else ""
 
             yield ToolResult(
                 type="result",
-                data=f"[{role}] {result_text[:500]}{tools_summary}",
+                data=f"[{role}] {result_text[:500]}{summary}",
                 result_for_assistant=(
                     f"子代理 [{role}] 完成:\n{result_text[:1500]}\n"
                     f"工具调用: {len(tool_calls_made)} 次"
@@ -155,5 +148,14 @@ class SpawnAgentTool(BaseTool):
             )
 
         except Exception as e:
-            logger.error(f"Spawn agent failed: {e}")
+            logger.error(f"Spawn failed: {e}")
             yield ToolResult(type="result", data=f"Error: {e}")
+
+    async def _collect_output(self, sub, full_task):
+        """收集子代理输出事件."""
+        async for event in sub.run(full_task):
+            etype = event.get("type", "")
+            if etype == "text_delta":
+                yield str(event.get("content", ""))
+            elif etype in ("tool_call", "tool_exec"):
+                yield event
