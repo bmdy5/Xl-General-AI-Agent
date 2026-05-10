@@ -1,0 +1,61 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>Pixel Office</title>
+<style>
+body{margin:0;background:#111;display:flex;justify-content:center;align-items:center;height:100vh}
+canvas{border:3px solid #c8934a;image-rendering:pixelated}
+</style></head><body>
+<canvas id="c" width="960" height="640"></canvas>
+<script>
+const C=document.getElementById('c'), X=C.getContext('2d');
+
+// Rooms with exact coords from Mimo analysis
+const R=[
+  {x:15,y:20,w:200,h:200,l:'电脑房',f:'#3d2e4a',wf:'#5a5a6a'},
+  {x:215,y:20,w:165,h:190,l:'经理室',f:'#b8854a',wf:'#5a4030'},
+  {x:390,y:15,w:170,h:140,l:'资料室',f:'#c49a55',wf:'#8a7a5a'},
+  {x:570,y:15,w:170,h:140,l:'Mimo视觉',f:'#7a7a82',wf:'#5a5a6a'},
+  {x:20,y:240,w:130,h:150,l:'储藏室',f:'#3d2e4a',wf:'#5a5a6a'},
+  {x:155,y:200,w:430,h:170,l:'走廊',f:'#7a7a82',wf:'#8a7a5a'},
+  {x:255,y:390,w:655,h:235,l:'会议室',f:'#3d2e4a',wf:'#d4c4a8'},
+  {x:580,y:215,w:160,h:160,l:'XL办公室',f:'#b8854a',wf:'#5a4030'},
+];
+
+function draw(){
+  // Background
+  X.fillStyle='#1a1010';X.fillRect(0,0,960,640);
+
+  R.forEach(r=>{
+    // Wall shadow
+    X.fillStyle=r.wf;X.fillRect(r.x-6,r.y-6,r.w+12,r.h+12);
+    // Floor
+    X.fillStyle=r.f;X.fillRect(r.x,r.y,r.w,r.h);
+    // Floor texture
+    if(r.f[0]==='#'){let d=r.f;X.fillStyle='rgba(0,0,0,0.15)';
+      for(let y=r.y;y<r.y+r.h;y+=20)X.fillRect(r.x,y,r.w,1);
+    }
+    // Baseboard
+    X.fillStyle='rgba(0,0,0,0.3)';X.fillRect(r.x,r.y+r.h-4,r.w,4);
+    // Label
+    X.fillStyle='rgba(0,0,0,0.5)';X.font='10px monospace';X.fillText(r.l,r.x+6,r.y+16);
+    X.fillStyle='#f0e8d0';X.fillText(r.l,r.x+5,r.y+15);
+  });
+
+  // Desk in computer room
+  [40,140].forEach(y=>[40,140].forEach(x=>{
+    X.fillStyle='#c4a060';X.fillRect(15+x,20+y,40,18);
+    X.fillStyle='#5b9bd5';X.fillRect(15+x+28,20+y-12,10,12);
+  }));
+  // Round table in meeting
+  X.fillStyle='#a08050';X.beginPath();X.arc(580,510,60,0,Math.PI*2);X.fill();
+  // XL Agent
+  let x=650,y=260;
+  X.fillStyle='#f4d058';X.fillRect(x-6,y,12,14);
+  X.fillStyle='#f4c8a0';X.fillRect(x-5,y-10,10,10);
+  X.fillStyle='#1a1010';X.fillRect(x-3,y-8,2,2);X.fillRect(x+2,y-8,2,2);
+  X.fillStyle='rgba(255,255,255,0.9)';X.fillRect(x-20,y-22,100,14);
+  X.fillStyle='#3a2010';X.font='8px monospace';X.fillText('XL Agent',x-18,y-10);
+
+  requestAnimationFrame(draw);
+}
+draw();
+</script></body></html>

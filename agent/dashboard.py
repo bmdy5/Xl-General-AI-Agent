@@ -16,7 +16,7 @@ from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-HTML_PATH = Path(__file__).parent / "dashboard_v2" / "index.html"
+HTML_PATH = Path(__file__).parent / "dashboard_v2" / "office.html"
 
 
 class DashboardServer:
