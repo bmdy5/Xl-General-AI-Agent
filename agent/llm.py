@@ -5,10 +5,15 @@
 """
 
 import asyncio
+import logging
 from typing import AsyncGenerator, Optional
 
 import litellm
 from litellm import acompletion
+
+# 关闭 LiteLLM 噪音日志
+litellm.suppress_debug_info = True
+logging.getLogger("litellm").setLevel(logging.WARNING)
 
 
 class LLMClient:
