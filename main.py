@@ -74,10 +74,15 @@ async def run_interactive():
             all_msgs = await agent.session.initialize()
             if len(all_msgs) > 20:
                 compressed, _ = await agent.compressor.compress(all_msgs, memory=agent.memory)
+                # 合并：如果用户已开始聊天，历史在前，新消息在后
+                if agent.messages:
+                    compressed.extend(agent.messages)
                 agent.messages = compressed
                 if agent.session:
                     await agent.session.replace_all(agent.messages)
             else:
+                if agent.messages:
+                    all_msgs.extend(agent.messages)
                 agent.messages = all_msgs
 
     load_task = asyncio.create_task(load_history())
@@ -160,13 +165,9 @@ async def run_interactive():
                 print(f"  {name}: {desc}")
             continue
 
-        # 等待历史加载完成再运行
-        if not history_loaded:
-            print("  加载历史中...", end="", flush=True)
-            await load_task
+        # 历史在后台加载，不阻塞首条消息
+        if not history_loaded and load_task.done():
             history_loaded = True
-            print("\r" + " " * 20 + "\r", end="")
-
         print()
         try:
             async for event in agent.run_stream(user_input):
