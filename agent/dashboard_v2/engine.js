@@ -104,11 +104,9 @@ function drawBackground() {
   ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
-// ── 踢脚线 ────────────────────────────────────────────
 function drawBaseboard(r) {
   const { x, y, w, h } = r;
-  ctx.fillStyle = C.baseboard;
-  // 下沿
+  ctx.fillStyle = 'rgba(0,0,0,0.3)';
   ctx.fillRect(x, y + h - 4, w, 4);
 }
 
