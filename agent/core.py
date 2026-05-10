@@ -153,12 +153,11 @@ class Agent:
                     # 压缩后刷新上下文
                     cached_prompt = await self._build_system_prompt()
 
-            # 用缓存（除周期性 nudge 外不重建）
+            # 用缓存（nudge 轮次重建）
             system_prompt = cached_prompt
-            if self._turn_count > 0 and self._turn_count % 10 == 0:
-                memory_block = await self._build_memory_block(user_input, turn)
-            else:
-                memory_block = cached_block if turn == 0 else None
+            memory_block = cached_block if turn == 0 else (
+                await self._build_memory_block(user_input, turn) if self._turn_count > 0 and self._turn_count % 10 == 0 else None
+            )
 
             # 消息列表 = [MEMORY BLOCK] + conversation messages
             llm_messages = [{"role": "system", "content": system_prompt}]
