@@ -183,10 +183,11 @@ async def run_interactive():
                     print(event["content"], end="", flush=True)
 
                 elif etype in ("tool_call", "tool_exec"):
-                    print(f"\n  [TOOL] {event['name']} ", end="", flush=True)
+                    name = event.get("name") or event.get("data", {}).get("function", {}).get("name", "?")
+                    print(f"\n  [TOOL] {name} ", end="", flush=True)
 
                 elif etype == "tool_result":
-                    short = event["result"][:200].replace("\n", " ")
+                    short = str(event.get("result", ""))[:200].replace("\n", " ")
                     print(f"→ {short}")
 
                 elif etype == "nudge":
@@ -223,7 +224,7 @@ async def run_single(query: str):
         elif etype == "text_delta":
             print(event["content"], end="", flush=True)
         elif etype == "tool_call":
-            print(f"\n[TOOL] {event['name']}")
+            print(f"\n[TOOL] {event.get('name', '?')}")
         elif etype == "tool_result":
             short = event["result"][:300].replace("\n", " ")
             print(f"  → {short}")
