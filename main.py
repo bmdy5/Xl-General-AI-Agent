@@ -174,6 +174,9 @@ async def run_interactive():
                 if etype == "compacted":
                     print(f"\n  [上下文已压缩: {event.get('message_count', '?')} 条消息]")
 
+                elif etype == "reasoning":
+                    print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
+
                 elif etype == "text_delta":
                     print(event["content"], end="", flush=True)
 
@@ -213,6 +216,8 @@ async def run_single(query: str):
         etype = event["type"]
         if etype == "compacted":
             print(f"\n[上下文压缩: {event.get('message_count', '?')} 条消息]")
+        elif etype == "reasoning":
+            print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
         elif etype == "text_delta":
             print(event["content"], end="", flush=True)
         elif etype == "tool_call":

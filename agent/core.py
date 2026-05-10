@@ -187,6 +187,9 @@ class Agent:
             if self.session:
                 await self.session.append_message(assistant_msg)
 
+            if reasoning:
+                yield {"type": "reasoning", "content": reasoning}
+
             if content:
                 yield {"type": "text_delta", "content": content}
 
