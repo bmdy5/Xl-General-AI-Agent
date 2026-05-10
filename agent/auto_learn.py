@@ -180,30 +180,54 @@ class AutoLearner:
         if not all_findings:
             return {"articles_read": 0, "skills_created": 0, "topics": [], "summary": "无发现", "errors": errors}
 
-        # Phase 2: 主 agent 审查
-        print(f"\n  🔍 审查 {len(all_findings)} 条发现...")
+        # Phase 2: 辩论 + 双审查
+        print(f"\n  ⚔️ Phase 2: 辩论审查 {len(all_findings)} 条发现...")
+        topics = list({f.get("topic", f.get("title", "")) for f in all_findings})
+        roles = await self._generate_debate_roles(" + ".join(topics[:2]))
+        if len(roles) >= 3:
+            print(f"     {roles[0]['emoji']} {roles[0]['name']} vs {roles[1]['emoji']} {roles[1]['name']} + 👿{roles[2]['name']}")
+
         for f in all_findings:
             if (asyncio.get_event_loop().time() - start_time) >= self.max_duration:
                 break
-            review = await self._review_finding(f)
-            if review and review.get("approved"):
-                insights = review.get("corrected_insights", f.get("insights", []))
-                cat = f.get("category", "AI")
-                title = f.get("title", "untitled")
-                filename = self._safe_filename(title)
-                filepath = self.kb / cat / f"{filename}.md"
-                filepath.write_text(f"# {title}\n\n**来源**: {f.get('source', '')}\n\n## 要点\n" + "\n".join(f"- {i}" for i in insights))
-                try:
-                    await self.agent.memory.save(
-                        f"learn_{filename}", f"[learn] {cat}: {insights[0][:80]}",
-                        f"来源: {f.get('source', '')}\n" + "\n".join(f"- {i}" for i in insights),
-                    )
-                except Exception: pass
-                articles_read += 1
-                topics_learned.append(f"{cat}/{title}")
-                print(f"  ✅ {title[:40]}")
-            else:
-                print(f"  ❌ {f.get('title', '?')[:40]}")
+            insights = f.get("insights", [])
+            if not insights: continue
+
+            # 交叉质疑
+            critiques = []
+            for r in roles[:2]:
+                q = await self._cross_critique(r["name"], f.get("title", ""), {"insights": insights})
+                critiques.append(q)
+            devil_q = await self._devil_question(roles[2]["name"], {"insights": insights}, f.get("topic", ""))
+            critiques.append(devil_q)
+
+            # 辩护
+            rebuttal = await self._rebut(roles[0]["name"], {"insights": insights, "critiques": critiques})
+
+            # 双评审独立打分
+            scores = [None, None]
+            for i in range(2):
+                scores[i] = await self._score_single(roles[i]["name"], f.get("title", ""), {"insights": insights, "critiques": critiques, "rebuttal": rebuttal})
+
+            # 都通过才入库
+            if scores[0] and scores[1]:
+                avg = (scores[0].get("practicality", 0) + scores[0].get("accuracy", 0) +
+                       scores[1].get("practicality", 0) + scores[1].get("accuracy", 0)) / 4
+                if avg >= 7:
+                    cat = f.get("category", "AI")
+                    title = f.get("title", "untitled")
+                    filename = self._safe_filename(title)
+                    filepath = self.kb / cat / f"{filename}.md"
+                    filepath.write_text(f"# {title}\n\n**来源**: {f.get('source', '')}\n**评分**: {avg:.1f}/10\n\n## 要点\n" + "\n".join(f"- {i}" for i in insights))
+                    try:
+                        await self.agent.memory.save(f"learn_{filename}", f"[learn] {cat}: {insights[0][:80]}",
+                            f"来源: {f.get('source', '')}\n辩论评分: {avg:.1f}/10\n" + "\n".join(f"- {i}" for i in insights))
+                    except Exception: pass
+                    articles_read += 1
+                    topics_learned.append(f"{cat}/{title}")
+                    print(f"  ✅ {title[:40]} ({avg:.1f})")
+                    continue
+            print(f"  ❌ {f.get('title', '?')[:40]}")
 
         summary = await self._generate_summary(articles_read, skills_created, topics_learned, errors)
         return {"articles_read": articles_read, "skills_created": skills_created,
@@ -253,6 +277,56 @@ class AutoLearner:
             f"要点: {json.dumps(f.get('insights',[]), ensure_ascii=False)[:500]}\n\n"
             "标准：通用性、可操作性、准确性、非商业推广。\n"
             'JSON: {"approved":true/false,"reason":"","corrected_insights":["要点"]}',
+            use_review=True
+        )
+
+    # ── 辩论方法 ──────────────────────────────────────────
+
+    async def _generate_debate_roles(self, topic: str) -> list[dict]:
+        return await self._ask_json_list(
+            f"为学习'{topic}'生成3个角色:\n"
+            "1. 激进派专家 2. 保守派专家 3. 魔鬼代言人(只管找漏洞)\n"
+            'JSON: [{"name":"","emoji":"","perspective":""}]'
+        )
+
+    async def _cross_critique(self, name: str, title: str, findings: dict) -> str:
+        try:
+            resp = await self.agent.llm.chat(
+                messages=[{"role": "user", "content": (
+                    f"你是{name}。质疑'{title}': "
+                    f"{json.dumps(findings.get('insights', []), ensure_ascii=False)[:500]}\n30字。"
+                )}], tools=None, model_override=self._learn_model)
+            return resp.get("content", "").strip()[:120]
+        except Exception: return ""
+
+    async def _devil_question(self, name: str, findings: dict, topic: str) -> str:
+        try:
+            resp = await self.agent.llm.chat(
+                messages=[{"role": "user", "content": (
+                    f"你是'{name}'，专门找漏洞。质疑关于'{topic}'的发现: "
+                    f"{json.dumps(findings.get('insights', []), ensure_ascii=False)[:500]}"
+                    f"——最致命漏洞？30字。"
+                )}], tools=None, model_override=self._learn_model)
+            return resp.get("content", "").strip()[:120]
+        except Exception: return ""
+
+    async def _rebut(self, name: str, findings: dict) -> str:
+        try:
+            resp = await self.agent.llm.chat(
+                messages=[{"role": "user", "content": (
+                    f"你是'{name}'。质疑: {'; '.join(findings.get('critiques', []))[:200]}\n"
+                    f"反驳。40字。"
+                )}], tools=None, model_override=self._learn_model)
+            return resp.get("content", "").strip()[:120]
+        except Exception: return ""
+
+    async def _score_single(self, name: str, topic: str, findings: dict) -> Optional[dict]:
+        return await self._ask_json(
+            f"评审'{name}'关于'{topic}'的发现:\n"
+            f"{json.dumps(findings.get('insights', []), ensure_ascii=False)[:800]}\n"
+            f"质疑: {'; '.join(findings.get('critiques', []))[:200]}\n"
+            f"反驳: {findings.get('rebuttal', '')[:100]}\n"
+            "打分 practicality(实用性) accuracy(准确性) 1-10。JSON: {\"practicality\":N,\"accuracy\":N,\"reason\":\"\"}",
             use_review=True
         )
 
