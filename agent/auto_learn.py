@@ -144,244 +144,117 @@ class AutoLearner:
             await self._dash.send({"agent": agent_id, "event": event, **extra})
 
     async def run(self) -> dict:
-        """两阶段学习: Phase1收集 → Phase2批量辩论+审查."""
+        """子代理学习: 拆分任务→spawn子代理并行→回收审查→入库."""
         start_time = asyncio.get_event_loop().time()
-        raw_findings = []  # Phase1 收集的所有发现
-        errors = []
-
-        logger.info(f"Auto-learn started, max {self.max_duration}s")
-        interests = self._get_interests()
-        is_feedback = [t for t in interests if t in getattr(self, '_gaps', [])]
-
-        # ═══ Phase 1: 收集（5 min）═══
-        print("\n  📥 Phase 1: 收集知识...")
-        topic_idx = 0
-        try:
-            while (asyncio.get_event_loop().time() - start_time) < self.max_duration:
-                batch_topics = []
-                for _ in range(2):
-                    topic = interests[topic_idx % len(interests)]
-                    source = "web" if topic in is_feedback else ["local", "local", "github", "web"][topic_idx % 4]
-                    topic_idx += 1
-                    if topic not in self._seen_topics:
-                        self._seen_topics.add(topic)
-                        batch_topics.append((topic, source))
-
-                if not batch_topics:
-                    await asyncio.sleep(2)
-                    continue
-
-                print(f"  📚 {[(t, s) for t, s in batch_topics]}")
-
-                tasks = []
-                for topic, source in batch_topics:
-                    if source == "local":
-                        tasks.append(asyncio.wait_for(self._collect_local(topic), timeout=120))
-                    elif source == "github":
-                        tasks.append(asyncio.wait_for(self._collect_github(topic), timeout=120))
-                    else:
-                        tasks.append(asyncio.wait_for(self._collect_web(topic), timeout=120))
-
-                results = await asyncio.gather(*tasks, return_exceptions=True)
-                for r in results:
-                    if isinstance(r, dict):
-                        raw_findings.extend(r.get("findings", []))
-                    elif isinstance(r, Exception):
-                        errors.append(str(r))
-
-                await asyncio.sleep(2)
-        except asyncio.CancelledError:
-            print("\n  ⏹ 收集被中断")
-
-        # ═══ Phase 2: 批量辩论 + 审查 ──────────────────────
         articles_read = 0
         skills_created = 0
         topics_learned = []
+        errors = []
 
-        if raw_findings:
-            print(f"\n  ⚖️ Phase 2: 辩论审查 {len(raw_findings)} 条发现...")
-            for batch in self._batch(raw_findings, 3):  # 每批 3 条
-                result = await self._batch_review(batch)
-                articles_read += result.get("articles", 0)
-                skills_created += result.get("skills", 0)
-                topics_learned.extend(result.get("topics", []))
-        else:
-            print("  📭 无发现可审查")
+        interests = self._get_interests()
+        if not interests:
+            return {"articles_read": 0, "skills_created": 0, "topics": [], "summary": "无学习主题", "errors": []}
+
+        # 拆分为 3 个方向
+        directions = self._split_directions(interests)
+        print(f"\n  🎯 学习方向: {directions}")
+
+        # Phase 1: spawn 子代理并行学习
+        print(f"  🤖 派发 {len(directions)} 个子代理...")
+        tasks = []
+        for d in directions:
+            tasks.append(asyncio.wait_for(
+                self._spawn_learn(d), timeout=180
+            ))
+
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        all_findings = []
+        for i, r in enumerate(results):
+            if isinstance(r, dict):
+                all_findings.extend(r.get("findings", []))
+                print(f"  ✅ {directions[i]}: {r.get('count', 0)} 条")
+            elif isinstance(r, Exception):
+                errors.append(f"{directions[i]}: {r}")
+                print(f"  ❌ {directions[i]}: {r}")
+
+        if not all_findings:
+            return {"articles_read": 0, "skills_created": 0, "topics": [], "summary": "无发现", "errors": errors}
+
+        # Phase 2: 主 agent 审查
+        print(f"\n  🔍 审查 {len(all_findings)} 条发现...")
+        for f in all_findings:
+            if (asyncio.get_event_loop().time() - start_time) >= self.max_duration:
+                break
+            review = await self._review_finding(f)
+            if review and review.get("approved"):
+                insights = review.get("corrected_insights", f.get("insights", []))
+                cat = f.get("category", "AI")
+                title = f.get("title", "untitled")
+                filename = self._safe_filename(title)
+                filepath = self.kb / cat / f"{filename}.md"
+                filepath.write_text(f"# {title}\n\n**来源**: {f.get('source', '')}\n\n## 要点\n" + "\n".join(f"- {i}" for i in insights))
+                try:
+                    await self.agent.memory.save(
+                        f"learn_{filename}", f"[learn] {cat}: {insights[0][:80]}",
+                        f"来源: {f.get('source', '')}\n" + "\n".join(f"- {i}" for i in insights),
+                    )
+                except Exception: pass
+                articles_read += 1
+                topics_learned.append(f"{cat}/{title}")
+                print(f"  ✅ {title[:40]}")
+            else:
+                print(f"  ❌ {f.get('title', '?')[:40]}")
 
         summary = await self._generate_summary(articles_read, skills_created, topics_learned, errors)
-        logger.info(f"Auto-learn done: {articles_read} articles, {skills_created} skills")
         return {"articles_read": articles_read, "skills_created": skills_created,
                 "topics": topics_learned, "summary": summary, "errors": errors}
 
-    def _batch(self, items: list, n: int):
-        """分批迭代."""
-        for i in range(0, len(items), n):
-            yield items[i:i + n]
+    def _split_directions(self, interests: list) -> list:
+        """把兴趣拆成 3 个学习方向."""
+        if len(interests) <= 3:
+            return interests
+        return [interests[0], interests[len(interests)//2], interests[-1]]
 
-    # ═══ Phase 1: 纯收集方法（不审查，只提取）─────────────────
+    async def _spawn_learn(self, topic: str) -> dict:
+        """spawn 一个 coder 子代理去学一个主题."""
+        from agent.tools.spawn_agent_tool import SpawnAgentTool
+        tool = SpawnAgentTool()
 
-    async def _collect_web(self, topic: str) -> dict:
+        task = (
+            f"搜索并学习关于 '{topic}' 的最新知识（2025-2026）。\n"
+            f"要求：\n"
+            f"1. 用 web_search 搜 1-2 篇高质量文章\n"
+            f"2. 用 web_fetch 读文章\n"
+            f"3. 提取 3 条核心要点\n"
+            f"4. 用以下 JSON 格式返回（只返回 JSON）：\n"
+            f'{{"title":"知识点","category":"AI/后端/前端/运维","insights":["要点1","要点2","要点3"],"source":"URL"}}'
+        )
+
         findings = []
-        await self._dash_event("learner-web", "search_start", name=f"🌐搜:{topic[:15]}")
-        query = f"{topic} latest 2026"
-        search_text = await self._call_tool("web_search", {"query": query, "max_results": 2})
-        if not search_text:
-            return {"findings": []}
-        for url in self._extract_urls(search_text)[:1]:
-            if url in self._seen_urls:
-                continue
-            self._seen_urls.add(url)
-            content = await self._call_tool("web_fetch", {"url": url})
-            if content and len(content) > 300:
-                analysis = await self._ask_json(
-                    f"分析关于'{topic}'的文章:\n{content[:6000]}\n"
-                    "JSON: {\"title\":\"\",\"category\":\"\",\"insights\":[\"发现\"],\"source\":\"" + url + "\",\"topic\":\"" + topic + "\",\"year\":\"\"}"
-                )
-                if analysis:
-                    analysis["topic"] = topic
-                    analysis["source_type"] = "web"
-                    findings.append(analysis)
-                    print(f"  ✅ {analysis.get('title', topic)[:40]}")
-        return {"findings": findings}
+        async for tr in tool.call({"role": "general", "task": task, "context": ""}, context=self.agent):
+            if tr.type == "result":
+                text = str(tr.data)
+                # 提取 JSON
+                import re
+                json_match = re.search(r'\{[\s\S]*\}', text)
+                if json_match:
+                    try:
+                        findings.append(json.loads(json_match.group(0)))
+                    except json.JSONDecodeError:
+                        pass
+        return {"findings": findings, "count": len(findings)}
 
-    async def _collect_local(self, topic: str) -> dict:
-        """读本地文件提取，不审查."""
-        findings = []
-        import random
-        base = random.choice(self.LOCAL_PATHS)
-        if not base.exists():
-            return {"findings": []}
-        files = [f for f in base.rglob("*.md") + base.rglob("*.py")
-                 if not any(s in str(f) for s in ["node_modules", ".venv", "__pycache__", ".git"])]
-        for f in random.sample(files, min(1, len(files))):
-            if str(f) in self._seen_files:
-                continue
-            self._seen_files.add(str(f))
-            try:
-                content = f.read_text(encoding="utf-8", errors="replace")[:6000]
-            except Exception:
-                continue
-            if len(content) < 200:
-                continue
-            analysis = await self._ask_json(
-                f"分析本地文件 {f.relative_to(base)}:\n{content}\n"
-                "JSON: {\"title\":\"\",\"category\":\"\",\"insights\":[\"发现\"],\"source\":\"" + str(f.relative_to(base)) + "\"}"
-            )
-            if analysis:
-                analysis["topic"] = topic
-                analysis["source_type"] = "local"
-                findings.append(analysis)
-                print(f"  ✅ {analysis.get('title', topic)[:40]}")
-        return {"findings": findings}
-
-    async def _collect_github(self, topic: str) -> dict:
-        """搜 GitHub 高星仓库 README，不审查."""
-        findings = []
-        search_text = await self._call_tool("web_search", {
-            "query": f"site:github.com {topic} stars:>500", "max_results": 2
-        })
-        if not search_text:
-            return {"findings": []}
-        for url in self._extract_urls(search_text)[:1]:
-            if "github.com" not in url or url in self._seen_urls:
-                continue
-            self._seen_urls.add(url)
-            raw = url.replace("github.com", "raw.githubusercontent.com") + "/refs/heads/main/README.md"
-            content = await self._call_tool("web_fetch", {"url": raw})
-            if not content or len(content) < 300:
-                raw = raw.replace("/main/", "/master/")
-                content = await self._call_tool("web_fetch", {"url": raw})
-            if content and len(content) > 300:
-                analysis = await self._ask_json(
-                    f"分析GitHub仓库README:\n{content[:6000]}\n"
-                    "JSON: {\"title\":\"\",\"category\":\"\",\"insights\":[\"发现\"],\"source\":\"" + url + "\"}"
-                )
-                if analysis:
-                    analysis["topic"] = topic
-                    analysis["source_type"] = "github"
-                    findings.append(analysis)
-                    print(f"  ✅ {analysis.get('title', topic)[:40]}")
-        return {"findings": findings}
-
-    # ═══ Phase 2: 批量辩论审查 ──────────────────────────────
-
-    async def _batch_review(self, findings: list) -> dict:
-        result = {"articles": 0, "skills": 0, "topics": []}
-        if not findings:
-            return result
-
-        await self._dash_event("debater-a", "enter_debate", name="激进")
-        await self._dash_event("debater-b", "enter_debate", name="保守")
-        await self._dash_event("devil", "enter_debate", name="魔鬼")
-
-        topics = list({f.get("topic", "") for f in findings})
-        roles = await self._generate_roles(" + ".join(topics[:2]))
-        if len(roles) < 3:
-            return result
-
-        print(f"     ⚔️ {roles[0]['name']} vs {roles[1]['name']} + 👿{roles[2]['name']}")
-
-        # 每个发现被两个辩手分别评估
-        for f in findings:
-            insights = f.get("insights", [])
-            if not insights:
-                continue
-
-            # 反方质疑: 两个角色各自质疑这条发现
-            critiques = []
-            for r in roles[:2]:
-                q = await self._cross_critique(r["name"], f.get("title", ""), {"insights": insights})
-                critiques.append(q)
-
-            # 魔鬼质疑
-            devil_q = await self._devil_question(roles[2]["name"], {"insights": insights}, f.get("topic", ""))
-            critiques.append(devil_q)
-
-            # 辩护
-            rebuttal = await self._rebut(roles[0]["name"], {"insights": insights, "critiques": critiques})
-
-            # 审查: 时效性 + 质量
-            review = await self._ask_json(
-                f"审查这个发现:\n{json.dumps(insights, ensure_ascii=False)[:800]}\n"
-                f"质疑: {'; '.join(critiques)[:300]}\n"
-                f"辩护: {rebuttal[:100]}\n"
-                f"来源类型: {f.get('source_type', 'web')}\n"
-                "打分(1-10): practicality(实用性) accuracy(准确性) freshness(时效性,2024前内容≤3分)\n"
-                "JSON: {\"practicality\":N,\"accuracy\":N,\"freshness\":N,\"reason\":\"\"}",
-                use_review=True
-            )
-            if not review:
-                continue
-
-            avg = (review.get("practicality", 0) + review.get("accuracy", 0) + review.get("freshness", 0)) / 3
-            if avg < 7:
-                print(f"     ❌ {f.get('title', '')[:30]}: {avg:.1f} - {review.get('reason', '')[:50]}")
-                continue
-
-            print(f"     ✅ {f.get('title', '')[:30]}: {avg:.1f}")
-
-            title = f.get("title", "untitled")
-            cat = f.get("category", "AI")
-            filename = self._safe_filename(title)
-            filepath = self.kb / cat / f"{filename}.md"
-            filepath.write_text(
-                f"# {title}\n\n**来源**: {f.get('source', '')}\n"
-                f"**评分**: 实用{review.get('practicality',0)} 准确{review.get('accuracy',0)} 时效{review.get('freshness',0)}\n\n"
-                f"## 要点\n" + "\n".join(f"- {ins}" for ins in insights)
-            )
-            try:
-                await self.agent.memory.save(
-                    f"learn_{filename}", f"[learn] {cat}: {insights[0][:80]}",
-                    f"来源: {f.get('source', '')}\n评分: {avg:.1f}\n" + "\n".join(f"- {ins}" for ins in insights),
-                )
-            except Exception:
-                pass
-            result["articles"] += 1
-            result["topics"].append(f"{cat}/{title}")
-
-        return result
-
-    # ── LLM 调用工具 ─────────────────────────────────────
+    async def _review_finding(self, f: dict) -> Optional[dict]:
+        """主 agent 审查一条发现."""
+        return await self._ask_json(
+            f"审查这条学习发现，判断是否值得存入知识库：\n"
+            f"标题: {f.get('title','')}\n"
+            f"分类: {f.get('category','AI')}\n"
+            f"要点: {json.dumps(f.get('insights',[]), ensure_ascii=False)[:500]}\n\n"
+            "标准：通用性、可操作性、准确性、非商业推广。\n"
+            'JSON: {"approved":true/false,"reason":"","corrected_insights":["要点"]}',
+            use_review=True
+        )
 
     async def _ask_json(self, prompt: str, use_review: bool = False) -> Optional[dict]:
         """统一 LLM→JSON 调用，消除 8 处重复 try/except."""
@@ -415,53 +288,6 @@ class AutoLearner:
         return []
 
     # ── 辩论学习系统 ──────────────────────────────────────
-
-    async def _generate_roles(self, topic: str) -> list[dict]:
-        prompt = (
-            f"为学习'{topic}'生成3个角色:\n"
-            f"1. 激进派专家 2. 保守派专家 3. 魔鬼代言人(只管找漏洞)\n"
-            "输出 JSON 数组: [{{\"name\":\"\",\"emoji\":\"\",\"perspective\":\"\"}}]"
-        )
-        return await self._ask_json_list(prompt)
-
-    async def _devil_question(self, name: str, findings: dict, topic: str) -> str:
-        try:
-            resp = await self.agent.llm.chat(
-                messages=[{"role": "user", "content": (
-                    f"你是'{name}'。质疑关于'{topic}'的发现: "
-                    f"{json.dumps(findings.get('insights', []), ensure_ascii=False)[:500]}"
-                    f"——最致命漏洞？30字。"
-                )}], tools=None, model_override=self._learn_model)
-            return resp.get("content", "").strip()[:120]
-        except Exception:
-            return ""
-
-    async def _rebut(self, name: str, findings: dict) -> str:
-        try:
-            resp = await self.agent.llm.chat(
-                messages=[{"role": "user", "content": (
-                    f"你是'{name}'。质疑: {'; '.join(findings.get('critiques', []))[:200]}\n"
-                    f"反驳。40字。"
-                )}], tools=None, model_override=self._learn_model)
-            return resp.get("content", "").strip()[:120]
-        except Exception:
-            return ""
-
-    async def _cross_critique(self, name: str, title: str, findings: dict) -> str:
-        """角色 name 质疑某条发现."""
-        try:
-            resp = await self.agent.llm.chat(
-                messages=[{"role": "user", "content": (
-                    f"你是{name}。质疑'{title}': "
-                    f"{json.dumps(findings.get('insights', []), ensure_ascii=False)[:500]}\n30字。"
-                )}],
-                tools=None, model_override=self._learn_model,
-            )
-            return resp.get("content", "").strip()[:120]
-        except Exception:
-            return ""
-
-    # ── 本地项目学习 ────────────────────────────────────────
 
     async def _call_tool(self, tool_name: str, args: dict) -> Optional[str]:
         """直接调用工具（web_search / web_fetch 不需要 LLM 参与）."""
