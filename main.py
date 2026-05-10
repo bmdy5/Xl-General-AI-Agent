@@ -364,19 +364,23 @@ async def run_dashboard():
         print()
 
 
+def _run_safe(coro):
+    try: asyncio.run(coro)
+    except (KeyboardInterrupt, asyncio.CancelledError): pass
+
 if __name__ == "__main__":
     if len(sys.argv) > 1:
         if sys.argv[1] == "--auto-learn":
-            asyncio.run(run_auto_learn())
+            _run_safe(run_auto_learn())
         elif sys.argv[1] == "--cleanup":
             from agent.cleanup import run_cleanup
             agent = build_agent()
-            asyncio.run(run_cleanup(agent))
+            _run_safe(run_cleanup(agent))
         elif sys.argv[1] == "--dashboard":
-            asyncio.run(run_dashboard())
+            _run_safe(run_dashboard())
         elif sys.argv[1] == "--dashboard-learn":
-            asyncio.run(run_dashboard_learn())
+            _run_safe(run_dashboard_learn())
         else:
-            asyncio.run(run_single(" ".join(sys.argv[1:])))
+            _run_safe(run_single(" ".join(sys.argv[1:])))
     else:
-        asyncio.run(run_interactive())
+        _run_safe(run_interactive())
