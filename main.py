@@ -191,12 +191,26 @@ async def run_interactive():
                     print(f"\n  [上下文已压缩: {event.get('message_count', '?')} 条消息]")
 
                 elif etype == "exploring_start":
-                    print(f"\033[90m✻ 思考中...\033[0m", end="", flush=True)
+                    _spin_start = event.get("ts", asyncio.get_event_loop().time())
+                    _spinning = True
+
+                    async def spin():
+                        frames = "⠋⠙⠙⠘⠜⠴⠦⠧⠇⠏"
+                        i = 0
+                        while _spinning:
+                            e = asyncio.get_event_loop().time() - _spin_start
+                            print(f"\r\033[K\033[90m{frames[i%len(frames)]} 思考中 ({e:.1f}s)\033[0m", end="", flush=True)
+                            i += 1; await asyncio.sleep(0.15)
+
+                    _spin_task = asyncio.create_task(spin())
 
                 elif etype == "exploring_done":
+                    _spinning = False
+                    if _spin_task: _spin_task.cancel()
                     print(f"\r\033[K", end="")
 
                 elif etype == "completed":
+                    _spinning = False
                     _elapsed = asyncio.get_event_loop().time() - _req_start
                     _tokens = sum(len(str(m.get("content","")))//4 for m in agent.messages[-10:])
                     _ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000
@@ -231,6 +245,7 @@ async def run_interactive():
                     print(f"\n  [ERROR] {event['content']}")
 
                 elif etype == "aborted":
+                    _spinning = False
                     print("\n  [aborted]")
 
         except Exception as e:
