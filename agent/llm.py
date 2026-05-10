@@ -58,10 +58,13 @@ class LLMClient:
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
+        if abort_event and abort_event.is_set():
+            return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
         try:
             response = await acompletion(**kwargs)
         except litellm.RateLimitError as e:
-            # 简单重试一次
+            if abort_event and abort_event.is_set():
+                return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
             await asyncio.sleep(2)
             response = await acompletion(**kwargs)
 
