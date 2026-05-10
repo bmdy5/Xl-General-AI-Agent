@@ -29,6 +29,7 @@ from agent.tools.image2_tool import Image2GenerateTool
 from agent.tools.memory_tool import MemoryTool
 from agent.tools.read_image_tool import ReadImageTool
 from agent.tools.registry import registry
+from agent.tools.spawn_agent_tool import SpawnAgentTool
 from agent.tools.web_fetch_tool import WebFetchTool
 from agent.tools.web_search_tool import WebSearchTool
 
@@ -50,6 +51,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(WebFetchTool())
         registry.register(ReadImageTool())
         registry.register(Image2GenerateTool())
+        registry.register(SpawnAgentTool())
         registry.register(MemoryTool())
 
     memory = MemoryManager()
@@ -184,7 +186,8 @@ async def run_interactive():
 
                 elif etype in ("tool_call", "tool_exec"):
                     name = event.get("name") or event.get("data", {}).get("function", {}).get("name", "?")
-                    print(f"\n  [TOOL] {name} ", end="", flush=True)
+                    icon = "💾" if name == "save_memory" else "🤖" if name == "spawn_agent" else ""
+                    print(f"\n  {icon if icon else '[TOOL]'} {name} ", end="", flush=True)
 
                 elif etype == "tool_result":
                     short = str(event.get("result", ""))[:200].replace("\n", " ")
