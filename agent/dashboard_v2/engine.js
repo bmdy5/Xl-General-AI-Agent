@@ -124,6 +124,17 @@ function drawLabel(r) {
 
 // ── 主渲染 ────────────────────────────────────────────
 function render() {
+  // 测试: 画一个显眼的红色大矩形
+  ctx.fillStyle = '#ff0000';
+  ctx.fillRect(0, 0, 960, 640);
+  ctx.fillStyle = '#00ff00';
+  ctx.fillRect(50, 50, 860, 540);
+  ctx.fillStyle = '#0000ff';
+  ctx.fillRect(100, 100, 760, 440);
+  ctx.fillStyle = '#ffffff';
+  ctx.font = '30px monospace';
+  ctx.fillText('TEST - If you see this, Canvas works', 150, 200);
+
   drawBackground();
   Object.values(ROOMS).forEach(r => {
     drawRoomShell(r);
