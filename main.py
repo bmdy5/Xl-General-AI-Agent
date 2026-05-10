@@ -224,9 +224,6 @@ async def run_interactive():
                 elif etype == "nudge":
                     print(f"\n  [💡 Periodic Nudge: 检查是否有值得保存的记忆]")
 
-                elif etype == "completed":
-                    pass
-
                 elif etype == "max_turns":
                     print("\n  [max turns reached]")
 

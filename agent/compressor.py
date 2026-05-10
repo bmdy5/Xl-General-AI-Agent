@@ -67,6 +67,7 @@ class ContextCompressor:
 
     def should_compress(self, messages: list[dict]) -> bool:
         """判断是否触发压缩."""
+        self._should_unstick_circuit()
         if self._circuit_open:
             return False
         if len(messages) < 6:  # 太少消息不值得压
@@ -160,13 +161,25 @@ class ContextCompressor:
             return messages, False
 
     def _find_split_point(self, messages: list[dict]) -> int:
-        """找到最后一条 user 消息的位置（抄 tinypace Head/Tail 分割）."""
+        """断点保护：不在 tool_use/tool_result 链中间切断."""
         for i in range(len(messages) - 1, -1, -1):
             if messages[i].get("role") == "user":
-                # 断点保护（抄 CC）：不切在 tool 链中间
-                # 如果 user 后面紧跟着 tool 消息，继续往前找
+                # 检查 i+1 是否是 tool 消息（user 后面直接跟着 tool result）
+                if i + 1 < len(messages) and messages[i + 1].get("role") == "tool":
+                    continue  # 往前找更早的 user 消息
                 return i
-        # 找不到 user 消息 → 保留最后 4 条
+        return max(0, len(messages) - 4)
+
+    def _should_unstick_circuit(self) -> bool:
+        """超过 30 分钟自动重置熔断器."""
+        import time
+        if self._circuit_open and self._consecutive_failures >= self._max_failures:
+            if not hasattr(self, '_circuit_opened_at'):
+                self._circuit_opened_at = time.time()
+            if time.time() - self._circuit_opened_at > 1800:
+                self.reset()
+                return True
+        return False
         return max(0, len(messages) - 4)
 
     def _format_head(self, head: list[dict]) -> str:
