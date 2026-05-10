@@ -125,6 +125,10 @@ class LLMClient:
 
             delta = chunk.choices[0].delta
 
+            # DeepSeek reasoning (thinking process)
+            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                yield {"type": "reasoning", "content": delta.reasoning_content}
+
             if delta.content:
                 yield {"type": "text_delta", "content": delta.content}
 

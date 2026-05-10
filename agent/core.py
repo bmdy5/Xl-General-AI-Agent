@@ -280,7 +280,9 @@ class Agent:
                     tools=tools if tools else None,
                     abort_event=self._abort,
                 ):
-                    if event["type"] == "text_delta":
+                    if event["type"] == "reasoning":
+                        yield event
+                    elif event["type"] == "text_delta":
                         text_parts.append(event["content"])
                         yield event
                     elif event["type"] == "tool_call":
