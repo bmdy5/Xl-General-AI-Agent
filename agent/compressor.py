@@ -180,7 +180,6 @@ class ContextCompressor:
                 self.reset()
                 return True
         return False
-        return max(0, len(messages) - 4)
 
     def _format_head(self, head: list[dict]) -> str:
         """将 Head 消息格式化为文本，供 LLM 摘要."""

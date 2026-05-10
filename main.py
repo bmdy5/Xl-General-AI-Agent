@@ -184,7 +184,7 @@ async def run_interactive():
         print()
         _req_start = asyncio.get_event_loop().time()
         try:
-            async for event in agent.run_stream(user_input):
+            async for event in agent.run(user_input, stream=True):
                 etype = event["type"]
 
                 if etype == "compacted":

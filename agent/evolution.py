@@ -269,7 +269,7 @@ def filter_memories_by_relevance(entries: list[dict], user_input: str) -> list[d
         preferred = [e for e in entries if "[user]" in e.get("description", "") or
                      "[feedback]" in e.get("description", "")]
         rest = [e for e in entries if e not in preferred]
-        entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+        preferred.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
         rest.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
         return preferred + rest
     return entries
