@@ -169,7 +169,7 @@ async def run_interactive():
 
         print()
         try:
-            async for event in agent.run(user_input):
+            async for event in agent.run_stream(user_input):
                 etype = event["type"]
 
                 if etype == "compacted":
@@ -181,7 +181,7 @@ async def run_interactive():
                 elif etype == "text_delta":
                     print(event["content"], end="", flush=True)
 
-                elif etype == "tool_call":
+                elif etype in ("tool_call", "tool_exec"):
                     print(f"\n  [TOOL] {event['name']} ", end="", flush=True)
 
                 elif etype == "tool_result":
