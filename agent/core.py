@@ -128,6 +128,10 @@ class Agent:
             self._abort.clear()  # 重置取消信号
 
     async def _run_loop(self, user_input: str, turn: int) -> AsyncGenerator[dict, None]:
+        # 预计算上下文（不变部分缓存）
+        cached_prompt = await self._build_system_prompt()
+        cached_block = await self._build_memory_block(user_input, 0)
+
         while turn < self.max_turns:
             if self._abort.is_set():
                 yield {"type": "aborted"}
@@ -143,10 +147,15 @@ class Agent:
                     if self.session:
                         await self.session.replace_all(self.messages)
                     yield {"type": "compacted", "message_count": len(self.messages)}
+                    # 压缩后刷新上下文
+                    cached_prompt = await self._build_system_prompt()
 
-            # ── 组装完整上下文（静态 + 动态 + [MEMORY BLOCK]）──
-            system_prompt = await self._build_system_prompt()
-            memory_block = await self._build_memory_block(user_input, turn)
+            # 用缓存（除周期性 nudge 外不重建）
+            system_prompt = cached_prompt
+            if self._turn_count > 0 and self._turn_count % 10 == 0:
+                memory_block = await self._build_memory_block(user_input, turn)
+            else:
+                memory_block = cached_block if turn == 0 else None
 
             # 消息列表 = [MEMORY BLOCK] + conversation messages
             llm_messages = [{"role": "system", "content": system_prompt}]
