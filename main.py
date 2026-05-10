@@ -102,6 +102,8 @@ async def run_interactive():
   ╠══════════════════════════════════════════════════════╣
   ║  /exit   /clear   /memory   /tools                  ║
   ╚══════════════════════════════════════════════════════╝
+
+  亮哥，有什么可以帮你的？
 """)
 
     # 确保历史加载完成
@@ -115,13 +117,13 @@ async def run_interactive():
         try:
             user_input = input("> ").strip()
         except (EOFError, KeyboardInterrupt):
-            print("\n🧠 整理记忆中...", end="", flush=True)
+            print("\r\033[K🧠 整理记忆中...", end="", flush=True)
             try:
                 from agent.evolution import on_session_end
                 await asyncio.wait_for(on_session_end(agent), timeout=8)
             except (asyncio.TimeoutError, Exception):
                 pass
-            print("\rBye.                    ")
+            print("\r\033[KBye.\033[?25h")
             break
 
         if not user_input:
@@ -134,7 +136,7 @@ async def run_interactive():
                 await asyncio.wait_for(on_session_end(agent), timeout=8)
             except (asyncio.TimeoutError, Exception):
                 pass
-            print("\rBye.                    ")
+            print("\r\033[KBye.\033[?25h")
             break
 
         if user_input == "/clear":
