@@ -261,16 +261,23 @@ class Agent:
     async def run_stream(self, user_input: str) -> AsyncGenerator[dict, None]:
         """流式版."""
         self._abort.clear()
+        self._turn_count = 0
+        self._total_tokens = 0
 
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
             await self.session.append_message({"role": "user", "content": user_input})
+
+        cached_prompt = await self._build_system_prompt()
+        cached_block = await self._build_memory_block(user_input, 0)
 
         turn = 0
         while turn < self.max_turns:
             if self._abort.is_set():
                 yield {"type": "aborted"}
                 return
+            if self.compressor.estimate_tokens(self.messages) > 900_000:
+                yield {"type": "ctx_warning", "pct": 90}
 
             if self.compressor.should_compress(self.messages):
                 new_messages, was_compressed = await self.compressor.compress(
@@ -281,9 +288,10 @@ class Agent:
                     if self.session:
                         await self.session.replace_all(self.messages)
                     yield {"type": "compacted", "message_count": len(self.messages)}
+                    cached_prompt = await self._build_system_prompt()
 
-            system_prompt = await self._build_system_prompt()
-            memory_block = await self._build_memory_block(user_input, turn)
+            system_prompt = cached_prompt
+            memory_block = cached_block if turn == 0 else None
 
             llm_messages = [{"role": "system", "content": system_prompt}]
             if memory_block:
@@ -304,7 +312,7 @@ class Agent:
                     tools=tools if tools else None,
                     abort_event=self._abort,
                 ):
-                    if _first_token and event["type"] in ("reasoning", "text_delta"):
+                    if _first_token and event["type"] in ("reasoning", "text_delta", "tool_call"):
                         _first_token = False
                         yield {"type": "exploring_done"}
 
@@ -318,9 +326,11 @@ class Agent:
                         tool_calls.append(event["data"])
                         yield event
                     elif event["type"] == "aborted":
+                        if _first_token: yield {"type": "exploring_done"}
                         yield event
                         return
             except Exception as e:
+                if _first_token: yield {"type": "exploring_done"}
                 yield {"type": "error", "content": f"LLM call failed: {e}"}
                 return
 

@@ -54,12 +54,13 @@ class ContextCompressor:
         self._max_failures = 3
 
     def estimate_tokens(self, messages: list[dict]) -> int:
-        """简单 token 估算：len(str)/4。中文约 1.5 字/token，取 4 偏保守."""
+        """混合 token 估算：中文~2字/token，英文~4字/token."""
         total = 0
         for m in messages:
             content = str(m.get("content", ""))
-            total += max(1, len(content) // 4)
-            # tool_calls 也占 token
+            cjk = sum(1 for c in content if '一' <= c <= '鿿')
+            en = len(content) - cjk
+            total += max(1, cjk // 2 + en // 4)
             if m.get("tool_calls"):
                 total += len(str(m["tool_calls"])) // 4
         return total
