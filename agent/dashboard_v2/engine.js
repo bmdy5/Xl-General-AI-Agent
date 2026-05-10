@@ -14,27 +14,37 @@ const SCALE = 3.75;   // 放大倍数 → 16*3.75 = 60px 显示尺寸
 const COLS  = 16;     // Canvas 横向瓦片数 (960/60)
 const ROWS  = 10.6;   // Canvas 纵向瓦片数 (640/60)
 
-// ── 颜色调色板 (与设计目标图对齐) ──────────────────────
+// ── 颜色调色板 (星露谷暖色调) ──────────────────────
 const C = {
-  // 地板
-  floorWood:    '#c8934a',
-  floorWoodD:   '#a07038',
-  floorPurple:  '#7856a0',
-  floorPurpleD: '#5a3a80',
-  floorStone:   '#8a8a9a',
-  floorStoneD:  '#6a6a7a',
-  floorHall:    '#a09080',
-  floorHallD:   '#807060',
-  // 壁
-  wall:         '#5a3a1a',
-  wallInner:    '#8a6040',
-  wallTop:      '#3a2010',
-  // 踢脚线
-  baseboard:    '#4a2a0a',
-  // 房间标题
-  roomLabel:    'rgba(0,0,0,0.45)',
-  // 黑色区域（房间之外）
-  black:        '#000000',
+  // 地板: 暖木 + 石砖 + 地毯
+  floorWood:    '#c89048',
+  floorWoodD:   '#a07030',
+  floorStone:   '#9a9a8a',
+  floorStoneD:  '#7a7a6a',
+  floorHall:    '#b8a080',
+  floorHallD:   '#988060',
+  floorCarpet:  '#8b5a3c',
+  // 壁: 暖木墙
+  wall:         '#6b4a2a',
+  wallInner:    '#9a7a50',
+  wallTop:      '#4a2a10',
+  baseboard:    '#5a3a1a',
+  roomLabel:    'rgba(0,0,0,0.4)',
+  black:        '#1a1008',
+  // 家具
+  deskWood:     '#c4a060',
+  deskDark:     '#8a6030',
+  chairWood:    '#b89850',
+  shelfWood:    '#8b6914',
+  // 角色
+  skin:         '#f4c8a0',
+  xlGold:       '#f4d058',
+  learnBlue:    '#5b9bd5',
+  debateRed:    '#e05555',
+  debateGreen:  '#5daa55',
+  devilPurple:  '#9b59b6',
+  reviewGray:   '#8b8b9b',
+  hair:         '#4a3020',
 };
 
 // ── 房间定义 (单位: 显示像素) ───────────────────────────
@@ -42,26 +52,24 @@ const C = {
 const px = v => v * TILE * SCALE;
 
 const ROOMS = {
-  computer: { x: px(0),    y: px(0),    w: px(5.5),  h: px(4.5),  label: '⌨ 电脑房',   floor: 'purple' },
-  library:  { x: px(5.5),  y: px(0),    w: px(4.5),  h: px(5),    label: '📚 图书室',   floor: 'wood'   },
-  xl:       { x: px(10),   y: px(0),    w: px(4.5),  h: px(4),    label: '👑 XL办公室', floor: 'carpet' },
-  storage:  { x: px(10),   y: px(4),    w: px(4.5),  h: px(2.5),  label: '📦 杂物室',   floor: 'stone'  },
-  hallway:  { x: px(0),    y: px(4.5),  w: px(10),   h: px(1.5),  label: '🚶 走廊',     floor: 'hall'   },
-  meeting:  { x: px(2.5),  y: px(6),    w: px(12),   h: px(4.67), label: '🗣 会议室',   floor: 'purple2'},
+  computer: { x: px(0),    y: px(0),    w: px(5.5),  h: px(4.5),  label: '电脑房',   floor: 'wood' },
+  library:  { x: px(5.5),  y: px(0),    w: px(4.5),  h: px(5),    label: '图书室',   floor: 'wood' },
+  xl:       { x: px(10),   y: px(0),    w: px(4.5),  h: px(4),    label: 'XL办公室', floor: 'carpet' },
+  storage:  { x: px(10),   y: px(4),    w: px(4.5),  h: px(2.5),  label: '杂物室',   floor: 'stone' },
+  hallway:  { x: px(0),    y: px(4.5),  w: px(10),   h: px(1.5),  label: '走廊',     floor: 'hall' },
+  meeting:  { x: px(2.5),  y: px(6),    w: px(12),   h: px(4.67), label: '会议室',   floor: 'carpet'},
 };
 
 // ── 瓦片地板绘制 ──────────────────────────────────────
 function drawFloor(rx, ry, rw, rh, type) {
   const ts = TILE * SCALE; // 瓦片显示尺寸
 
-  let base, dark, isWood = false, isStone = false;
+  let base, dark, isWood = false, isStone = false, isCarpet = false;
   switch(type) {
-    case 'wood':    base = '#c8934a'; dark = '#a07038'; isWood = true;  break;
-    case 'purple':  base = '#6a4a8a'; dark = '#523870'; break;
-    case 'purple2': base = '#7050a0'; dark = '#5a3888'; break;
-    case 'carpet':  base = '#9a7a50'; dark = '#7a5a30'; break;
-    case 'stone':   base = '#8a8a9a'; dark = '#6a6a7a'; isStone = true; break;
-    case 'hall':    base = '#909090'; dark = '#707070'; isStone = true; break;
+    case 'wood':    base = C.floorWood; dark = C.floorWoodD; isWood = true; break;
+    case 'carpet':  base = C.floorCarpet; dark = '#6b3a1c'; isCarpet = true; break;
+    case 'stone':   base = C.floorStone; dark = C.floorStoneD; isStone = true; break;
+    case 'hall':    base = C.floorHall; dark = C.floorHallD; isStone = true; break;
     default:        base = '#888';    dark = '#666';
   }
 
@@ -125,7 +133,7 @@ function drawBaseboard(r) {
 // ── 房间标签 ──────────────────────────────────────────
 function drawLabel(r) {
   const { x, y, w, label } = r;
-  ctx.font = '9px "Press Start 2P", monospace';
+  ctx.font = '9px monospace';
   ctx.fillStyle = 'rgba(0,0,0,0.5)';
   ctx.fillText(label, x + 9, y + 16);
   ctx.fillStyle = '#f0e8d0';
@@ -181,7 +189,115 @@ window.addEventListener('load', () => {
   });
 });
 
-// 导出给其他模块使用
+// ── 角色渲染 ────────────────────────────────────────────
+// 全局 agent 状态（events.js 更新此对象）
+window._agents = {};
+
+function drawAgent(a) {
+  if (!a || a.hidden) return;
+  const { x, y } = a;
+  const c = a.color || C.learnBlue;
+  const s = TILE * SCALE * 0.5; // 角色尺寸
+  const bounce = Math.sin(Date.now() * 0.005 + (a.id || 'x').charCodeAt(0)) * 1.5;
+
+  // 阴影
+  ctx.fillStyle = 'rgba(0,0,0,0.2)';
+  ctx.fillRect(x - s/2 + 2, y + s/2 - 1, s, 3);
+
+  // 身体 (方形, Stardew 风格)
+  ctx.fillStyle = c;
+  ctx.fillRect(x - s/2 + 2, y - s/3 + bounce, s - 4, s * 0.6);
+  // 头部 (略圆, 用两个小矩形模拟)
+  ctx.fillStyle = C.skin;
+  ctx.fillRect(x - s/3 + 1, y - s/2 - 2 + bounce, s * 0.55, s * 0.4);
+  // 眼睛
+  ctx.fillStyle = '#1a1008';
+  ctx.fillRect(x - 2, y - s/3 - 1 + bounce, 2, 2);
+  ctx.fillRect(x + 2, y - s/3 - 1 + bounce, 2, 2);
+  // 头发
+  ctx.fillStyle = C.hair;
+  ctx.fillRect(x - s/3, y - s/2 - 4 + bounce, s * 0.55, 2);
+
+  // 名称标签
+  if (a.name) {
+    ctx.font = '8px monospace';
+    ctx.fillStyle = 'rgba(0,0,0,0.5)';
+    ctx.fillText(a.name, x - a.name.length * 2 - 1, y - s/2 - 8 + bounce);
+    ctx.fillStyle = '#f0e8d0';
+    ctx.fillText(a.name, x - a.name.length * 2, y - s/2 - 9 + bounce);
+  }
+
+  // 气泡
+  if (a.bubble && a.bubbleTimer > 0) {
+    const txt = a.bubble.slice(0, 25);
+    const bw = Math.min(txt.length * 5 + 12, 160);
+    ctx.fillStyle = 'rgba(255,255,255,0.9)';
+    ctx.fillRect(x + 6, y - s - 10, bw, 14);
+    ctx.strokeStyle = C.wall;
+    ctx.lineWidth = 1;
+    ctx.strokeRect(x + 6, y - s - 10, bw, 14);
+    ctx.fillStyle = '#3a2010';
+    ctx.font = '7px monospace';
+    ctx.fillText(txt, x + 10, y - s + 1);
+  }
+}
+
+function drawAllAgents() {
+  const agents = window._agents;
+  for (const id in agents) {
+    drawAgent(agents[id]);
+  }
+}
+
+function updateAgents() {
+  const agents = window._agents;
+  const now = Date.now();
+  for (const id in agents) {
+    const a = agents[id];
+    // 移动到目标
+    if (a.tx != null && a.ty != null) {
+      const dx = a.tx - a.x, dy = a.ty - a.y;
+      const dist = Math.sqrt(dx*dx + dy*dy);
+      if (dist > 1.5) {
+        a.x += dx * 0.06;
+        a.y += dy * 0.06;
+      } else {
+        a.x = a.tx; a.y = a.ty;
+      }
+    }
+    // 气泡计时
+    if (a.bubbleTimer > 0) a.bubbleTimer--;
+    else a.bubble = '';
+  }
+}
+
+// ── 主渲染 ────────────────────────────────────────────────
+function render() {
+  drawBackground();
+  Object.values(ROOMS).forEach(r => {
+    drawRoomShell(r);
+    drawFloor(r.x, r.y, r.w, r.h, r.floor);
+    drawBaseboard(r);
+    drawLabel(r);
+  });
+  if (window.SpriteEngine) window.SpriteEngine.render(ctx);
+  drawAllAgents();
+}
+
+// ── 动画循环 ─────────────────────────────────────────────
+function loop(ts) {
+  updateAgents();
+  render();
+  requestAnimationFrame(loop);
+}
+
+// ── 启动 (不依赖外部字体) ────────────────────────────────
+window.addEventListener('load', () => {
+  requestAnimationFrame(loop);
+  if (window.EventBus) window.EventBus.connect();
+});
+
+// 导出
 window.ROOMS = ROOMS;
 window.CTX = ctx;
 window.TILE = TILE;

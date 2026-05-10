@@ -1,0 +1,161 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>Pixel Office Dashboard v2</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: #1a1a2e;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    min-height: 100vh;
+    font-family: 'Press Start 2P', monospace;
+  }
+  #header {
+    color: #f4d058;
+    font-size: 13px;
+    padding: 12px 0 8px;
+    text-shadow: 2px 2px #8b6914;
+    letter-spacing: 1px;
+  }
+  #ui-wrap {
+    display: flex;
+    gap: 12px;
+    align-items: flex-start;
+    padding-bottom: 16px;
+  }
+  #canvas-wrap {
+    position: relative;
+    border: 3px solid #c8934a;
+    box-shadow: 0 0 24px rgba(200,147,74,0.4), inset 0 0 12px rgba(0,0,0,0.5);
+    image-rendering: pixelated;
+  }
+  canvas {
+    display: block;
+    image-rendering: pixelated;
+  }
+  /* Agent detail panel */
+  #agent-panel {
+    display: none;
+    width: 200px;
+    background: #2a1a0a;
+    border: 3px solid #c8934a;
+    box-shadow: 4px 4px 0 #8b6914;
+    color: #f0e8d0;
+    font-size: 8px;
+    padding: 8px;
+    image-rendering: pixelated;
+  }
+  #agent-panel.visible { display: block; }
+  #agent-panel .panel-title {
+    color: #f4d058;
+    font-size: 9px;
+    border-bottom: 2px solid #c8934a;
+    padding-bottom: 6px;
+    margin-bottom: 8px;
+  }
+  #agent-panel .stat-row {
+    display: flex;
+    justify-content: space-between;
+    margin-bottom: 6px;
+    align-items: center;
+  }
+  #agent-panel .stat-label { color: #a0907a; }
+  #agent-panel .stat-val { color: #f0e8d0; }
+  .hp-bar-wrap {
+    width: 100%;
+    height: 8px;
+    background: #1a0a00;
+    border: 1px solid #c8934a;
+    margin: 4px 0 8px;
+  }
+  .hp-bar {
+    height: 100%;
+    background: linear-gradient(to right, #e04b4b, #f4d058);
+    transition: width 0.3s;
+  }
+  #agent-panel .status-text {
+    color: #4ba4e0;
+    font-size: 7px;
+    border-top: 1px solid #5a3a1a;
+    padding-top: 6px;
+    margin-top: 4px;
+    line-height: 1.6;
+  }
+  #agent-panel .bubble-icon {
+    font-size: 18px;
+    text-align: center;
+    margin: 6px 0;
+  }
+  /* Status log */
+  #log-panel {
+    width: 200px;
+    max-height: 480px;
+    background: #0a0a1a;
+    border: 3px solid #4a4a6a;
+    color: #6a9a6a;
+    font-size: 7px;
+    padding: 6px;
+    overflow-y: auto;
+    line-height: 1.8;
+  }
+  #log-panel .log-title {
+    color: #a0a0c0;
+    font-size: 8px;
+    border-bottom: 1px solid #4a4a6a;
+    padding-bottom: 4px;
+    margin-bottom: 6px;
+  }
+  .log-entry { margin-bottom: 3px; }
+  .log-entry.info { color: #6a9a6a; }
+  .log-entry.action { color: #4ba4e0; }
+  .log-entry.warn { color: #f4d058; }
+</style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Press+Start+2P&display=swap" rel="stylesheet">
+</head>
+<body>
+
+<div id="header">⚡ PIXEL OFFICE DASHBOARD v2.0</div>
+
+<div id="ui-wrap">
+  <!-- Left: Agent Info Panel -->
+  <div id="agent-panel">
+    <div class="panel-title" id="panel-name">- SELECT AGENT -</div>
+    <div class="stat-row">
+      <span class="stat-label">ROLE</span>
+      <span class="stat-val" id="panel-role">---</span>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">TOKEN</span>
+    </div>
+    <div class="hp-bar-wrap">
+      <div class="hp-bar" id="panel-hp" style="width:0%"></div>
+    </div>
+    <div class="stat-row">
+      <span class="stat-label">MEMORY</span>
+      <span class="stat-val" id="panel-mem">0 KIs</span>
+    </div>
+    <div class="bubble-icon" id="panel-icon">💤</div>
+    <div class="status-text" id="panel-status">Waiting for activity...</div>
+  </div>
+
+  <!-- Center: Canvas -->
+  <div id="canvas-wrap">
+    <canvas id="c" width="960" height="640"></canvas>
+  </div>
+
+  <!-- Right: Event Log -->
+  <div id="log-panel">
+    <div class="log-title">📋 EVENT LOG</div>
+    <div id="log-entries"></div>
+  </div>
+</div>
+
+<script src="engine.js"></script>
+<script src="sprites.js"></script>
+<script src="events.js"></script>
+</body>
+</html>
