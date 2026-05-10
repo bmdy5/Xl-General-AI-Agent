@@ -113,6 +113,7 @@ class Agent:
     async def run(self, user_input: str) -> AsyncGenerator[dict, None]:
         self._abort.clear()
         self._turn_count = 0
+        self._total_tokens = 0
 
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
@@ -194,6 +195,7 @@ class Agent:
             content = response["content"]
             tool_calls = response["tool_calls"]
             reasoning = response.get("reasoning_content")
+            self._total_tokens += response.get("tokens_used", 0)
 
             assistant_msg = {"role": "assistant", "content": content}
             if tool_calls:
