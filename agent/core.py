@@ -288,7 +288,7 @@ class Agent:
     # ── internal ───────────────────────────────────────────────
 
     async def _build_system_prompt(self) -> str:
-        """组装 system prompt = 静态段 + 当前上下文."""
+        """组装 system prompt = 静态段 + 当前上下文 + 自进化规则."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         cwd = os.getcwd()
         dynamic = (
@@ -297,6 +297,12 @@ class Agent:
             f"Time: {now}\n"
             f"Working directory: {cwd}\n"
         )
+        # 注入自进化规则
+        rules_file = self.memory.base_dir / "EVOLVED_RULES.md"
+        if rules_file.exists():
+            rules = rules_file.read_text(encoding="utf-8").strip()
+            if rules:
+                dynamic += f"\n## Self-Evolved Rules (learned from past corrections)\n{rules}\n"
         return self.static_prompt + dynamic
 
     async def _build_memory_block(self, user_input: str, turn: int) -> Optional[str]:
