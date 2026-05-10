@@ -12,6 +12,7 @@
 
 import asyncio
 import os
+import readline  # 启用退格键和行编辑
 import sys
 
 from dotenv import load_dotenv
