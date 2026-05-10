@@ -59,6 +59,7 @@ You have a save_memory tool. Use it to remember things permanently across sessio
 - bash: Execute shell commands (requires approval)
 - web_search: Search the internet for current information
 - web_fetch: Fetch and read the full content of a web page
+- read_image: Analyze an image (screenshot, diagram, UI mockup) using a vision model
 - save_memory: Save persistent memories across sessions (requires approval)
 
 ## Autonomous Learning

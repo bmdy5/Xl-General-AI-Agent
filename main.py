@@ -25,6 +25,7 @@ from agent.session.handler import SessionHandler
 from agent.tools.bash_tool import BashTool
 from agent.tools.file_tools import ReadFileTool, WriteFileTool
 from agent.tools.memory_tool import MemoryTool
+from agent.tools.read_image_tool import ReadImageTool
 from agent.tools.registry import registry
 from agent.tools.web_fetch_tool import WebFetchTool
 from agent.tools.web_search_tool import WebSearchTool
@@ -45,6 +46,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(BashTool(work_dir=os.getcwd()))
         registry.register(WebSearchTool())
         registry.register(WebFetchTool())
+        registry.register(ReadImageTool())
         registry.register(MemoryTool())
 
     memory = MemoryManager()
