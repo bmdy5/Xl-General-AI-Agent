@@ -124,28 +124,21 @@ function drawLabel(r) {
 
 // ── 全局背景 ──────────────────────────────────────────
 
-// ── 主渲染函数 ─────────────────────────────────────────
+// ── 主渲染 ────────────────────────────────────────────
 function render() {
   drawBackground();
-
-  // 按顺序渲染：壳 → 地板 → 踢脚线 → 标签
   Object.values(ROOMS).forEach(r => {
     drawRoomShell(r);
     drawFloor(r.x, r.y, r.w, r.h, r.floor);
     drawBaseboard(r);
     drawLabel(r);
   });
-
-  // 渲染家具和角色 (P2/P3 填充)
   if (window.SpriteEngine) window.SpriteEngine.render(ctx);
+  drawAllAgents();
 }
 
-// ── 动画循环 ──────────────────────────────────────────
-let lastTime = 0;
 function loop(ts) {
-  const dt = ts - lastTime;
-  lastTime = ts;
-  if (window.AgentEngine) window.AgentEngine.update(dt);
+  updateAgents();
   render();
   requestAnimationFrame(loop);
 }
@@ -249,11 +242,7 @@ function updateAgents() {
   }
 }
 
-// ── 主渲染 ────────────────────────────────────────────────
-
-// ── 动画循环 ─────────────────────────────────────────────
-
-// ── 启动 (不依赖外部字体) ────────────────────────────────
+// ── 启动 ────────────────────────────────────────────────
 window.addEventListener('load', () => {
   requestAnimationFrame(loop);
   if (window.EventBus) window.EventBus.connect();

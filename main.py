@@ -285,12 +285,23 @@ import atexit
 atexit.register(_cleanup_terminal)
 
 async def run_dashboard():
-    """Dashboard 模式：启动 HTTP + SSE，同时运行交互 CLI."""
+    """Dashboard 模式：启动 HTTP + SSE。有 stdin 则交互，无 stdin 则纯服务."""
+    import sys
     from agent.dashboard import DashboardServer
 
     agent = build_agent()
     dash = DashboardServer(port=8765)
     await dash.start()
+
+    # 无 stdin (nohup/后台) → 纯服务模式
+    if not sys.stdin.isatty():
+        print("  📡 纯服务模式 (无交互)")
+        try:
+            while True:
+                await asyncio.sleep(3600)
+        except KeyboardInterrupt:
+            pass
+        return
 
     # 恢复历史
     if agent.session:
