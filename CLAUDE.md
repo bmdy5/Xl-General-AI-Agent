@@ -6,7 +6,7 @@
 
 ```
 搭建agent/
-├── main.py                  # CLI 入口 (--dashboard/--auto-learn/--cleanup/--plan)
+├── main.py                  # CLI (--gateway/--dashboard/--auto-learn/--cleanup/--plan)
 ├── start_dashboard.sh       # Dashboard 一键启动
 ├── auto_learn.sh            # 自主学习启动（launchd 用）
 ├── com.myagent.autolearn.plist  # macOS 定时任务（每天 10:00）
@@ -29,6 +29,9 @@
 │   │                        #    - task→skill检测 / 技能追踪
 │   │                        #    - 自进化规则: 反馈≥2次→生成规则→注入prompt
 │   ├── cleanup.py           # 知识库清理器 (pro模型批量审查, 174行)
+│   ├── gateway.py           # QQ Gateway (NapCat WebSocket + HTTP API, 140行)
+│   │                        #    - aiohttp ws → OneBot v11 → Agent.run()
+│   │                        #    - 按用户/群隔离 session，@提及过滤
 │   ├── dashboard.py         # HTTP+SSE server (100行)
 │   ├── dashboard.html       # Canvas 像素办公室 (300行, 零依赖)
 │   │

@@ -435,6 +435,22 @@ async def run_auto_learn():
     print(f"\n{result['summary']}")
 
 
+async def run_gateway():
+    """QQ Gateway 模式：连接 NapCat 收发 QQ 消息."""
+    from agent.gateway import QQGateway
+
+    print("\n  MyAgent — QQ Gateway 模式")
+    print(f"  WebSocket: {os.getenv('NAPCAT_WS_URL', 'ws://localhost:3001')}")
+    print(f"  HTTP API:  {os.getenv('NAPCAT_HTTP_URL', 'http://localhost:3000')}")
+    print()
+
+    gw = QQGateway(build_agent)
+    try:
+        await gw.run()
+    except KeyboardInterrupt:
+        print("\n  Gateway stopped.")
+
+
 def _cleanup_terminal():
     """恢复终端状态（抄 openclaw）."""
     import sys
@@ -532,7 +548,9 @@ if __name__ == "__main__":
     argv = [a for a in sys.argv if a != "--plan"]
 
     if len(argv) > 1:
-        if argv[1] == "--auto-learn":
+        if argv[1] == "--gateway":
+            _run_safe(run_gateway())
+        elif argv[1] == "--auto-learn":
             _run_safe(run_auto_learn())
         elif argv[1] == "--cleanup":
             from agent.cleanup import run_cleanup
