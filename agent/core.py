@@ -128,7 +128,6 @@ class Agent:
             self._abort.clear()  # 重置取消信号
 
     async def _run_loop(self, user_input: str, turn: int) -> AsyncGenerator[dict, None]:
-        # 预计算上下文（不变部分缓存）
         cached_prompt = await self._build_system_prompt()
         cached_block = await self._build_memory_block(user_input, 0)
 
@@ -136,6 +135,8 @@ class Agent:
             if self._abort.is_set():
                 yield {"type": "aborted"}
                 return
+            if self.compressor.estimate_tokens(self.messages) > 900_000:
+                yield {"type": "ctx_warning", "pct": 90}
 
             # ── 上下文压缩 ──
             if self.compressor.should_compress(self.messages):
