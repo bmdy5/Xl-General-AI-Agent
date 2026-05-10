@@ -13,6 +13,8 @@
 import asyncio
 import os
 import readline  # 启用退格键和行编辑
+import select
+import signal
 import sys
 
 from dotenv import load_dotenv
@@ -32,6 +34,43 @@ from agent.tools.registry import registry
 from agent.tools.spawn_agent_tool import SpawnAgentTool
 from agent.tools.web_fetch_tool import WebFetchTool
 from agent.tools.web_search_tool import WebSearchTool
+
+
+# ── 终端辅助 ───────────────────────────────────────────────
+
+def _read_multiline(prompt: str = "> ") -> str:
+    """读用户输入，自动检测多行粘贴."""
+    print(prompt, end="", flush=True)
+    try:
+        first = input()
+    except (EOFError, KeyboardInterrupt):
+        raise
+    first = first.strip()
+    if not first:
+        return ""
+    # Unix: 用 fcntl 检测 stdin buffer 中是否有更多数据（粘贴）
+    try:
+        import fcntl
+        fd = sys.stdin.fileno()
+        fl = fcntl.fcntl(fd, fcntl.F_GETFL)
+        fcntl.fcntl(fd, fcntl.F_SETFL, fl | os.O_NONBLOCK)
+        try:
+            rest = sys.stdin.read()
+            if rest and rest.strip():
+                return first + rest.rstrip('\n')
+        finally:
+            fcntl.fcntl(fd, fcntl.F_SETFL, fl)
+    except (ImportError, AttributeError, OSError):
+        pass
+    return first
+
+
+def _print_highlighted(text: str):
+    """流式输出 agent 回复，暖色区分."""
+    print(f"\033[38;5;252m{text}\033[0m", end="", flush=True)
+
+def _flush_highlighted():
+    pass  # 当前无需 flush，保留接口
 
 
 def build_agent(session_id: str = "default") -> Agent:
@@ -66,7 +105,7 @@ def build_agent(session_id: str = "default") -> Agent:
     )
 
 
-async def run_interactive():
+async def run_interactive(plan_mode: bool = False):
     """交互模式：持续对话直到用户输入 /exit."""
     agent = build_agent()
 
@@ -123,7 +162,7 @@ async def run_interactive():
                 print(f"\n  ⚠️ 历史加载失败: {load_task.exception()}")
 
         try:
-            user_input = input("> ").strip()
+            user_input = _read_multiline()
         except (EOFError, KeyboardInterrupt):
             print("\r\033[K🧠 整理记忆中...", end="", flush=True)
             try:
@@ -183,54 +222,113 @@ async def run_interactive():
             history_loaded = True
         print()
         _req_start = asyncio.get_event_loop().time()
+        _spinning = False
+        _spin_task = None
+        _tool_spinning = False
+        _tool_spin_task = None
+
+        # SIGINT → abort agent (not exit)
+        loop = asyncio.get_running_loop()
         try:
-            async for event in agent.run(user_input, stream=True):
+            loop.add_signal_handler(signal.SIGINT, lambda: agent.abort())
+        except (NotImplementedError, RuntimeError):
+            pass  # Windows 不支持
+
+        def _start_spin(label):
+            nonlocal _spinning, _spin_task
+            _spinning = True
+            _spin_start = asyncio.get_event_loop().time()
+            async def spin():
+                frames = "⠋⠙⠙⠘⠜⠴⠦⠧⠇⠏"
+                i = 0
+                while _spinning:
+                    e = asyncio.get_event_loop().time() - _spin_start
+                    print(f"\r\033[K\033[90m{frames[i%len(frames)]} {label} ({e:.1f}s)\033[0m", end="", flush=True)
+                    i += 1; await asyncio.sleep(0.15)
+            _spin_task = asyncio.create_task(spin())
+
+        def _stop_spin():
+            nonlocal _spinning
+            _spinning = False
+            try: _spin_task.cancel()
+            except Exception: pass
+
+        def _start_tool_spin(name):
+            nonlocal _tool_spinning, _tool_spin_task
+            _tool_spinning = True
+            _tool_start = asyncio.get_event_loop().time()
+            async def tool_spin():
+                frames = "⠋⠙⠙⠘⠜⠴⠦⠧⠇⠏"
+                i = 0
+                while _tool_spinning:
+                    e = asyncio.get_event_loop().time() - _tool_start
+                    print(f"\r\033[K\033[90m{frames[i%len(frames)]} {name} ({e:.1f}s)\033[0m", end="", flush=True)
+                    i += 1; await asyncio.sleep(0.15)
+            _tool_spin_task = asyncio.create_task(tool_spin())
+
+        def _stop_tool_spin():
+            nonlocal _tool_spinning
+            _tool_spinning = False
+            try: _tool_spin_task.cancel()
+            except Exception: pass
+
+        try:
+            async for event in agent.run(user_input, stream=True, plan_mode=plan_mode):
                 etype = event["type"]
 
                 if etype == "compacted":
                     print(f"\n  [上下文已压缩: {event.get('message_count', '?')} 条消息]")
 
                 elif etype == "exploring_start":
-                    _spin_start = event.get("ts", asyncio.get_event_loop().time())
-                    _spinning = True
-
-                    async def spin():
-                        frames = "⠋⠙⠙⠘⠜⠴⠦⠧⠇⠏"
-                        i = 0
-                        while _spinning:
-                            e = asyncio.get_event_loop().time() - _spin_start
-                            print(f"\r\033[K\033[90m{frames[i%len(frames)]} 思考中 ({e:.1f}s)\033[0m", end="", flush=True)
-                            i += 1; await asyncio.sleep(0.15)
-
-                    _spin_task = asyncio.create_task(spin())
+                    _start_spin("思考中")
 
                 elif etype == "exploring_done":
-                    _spinning = False
-                    if _spin_task: _spin_task.cancel()
+                    _stop_spin()
                     print(f"\r\033[K", end="")
 
                 elif etype == "completed":
-                    _spinning = False
+                    _stop_spin()
+                    _stop_tool_spin()
                     _elapsed = asyncio.get_event_loop().time() - _req_start
                     _tokens = sum(len(str(m.get("content","")))//4 for m in agent.messages[-10:])
                     _ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000
                     print(f"\033[90m({_elapsed:.1f}s · ~{_tokens}t · {_ctx_pct}% ctx)\033[0m")
-                    _req_start = asyncio.get_event_loop().time()  # 重置计时
+                    _req_start = asyncio.get_event_loop().time()
 
                 elif etype == "reasoning":
                     print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
 
                 elif etype == "text_delta":
-                    print(event["content"], end="", flush=True)
+                    _print_highlighted(event["content"])
 
                 elif etype in ("tool_call", "tool_exec"):
                     name = event.get("name") or event.get("data", {}).get("function", {}).get("name", "?")
-                    icon = "💾" if name == "save_memory" else "🤖" if name == "spawn_agent" else ""
-                    print(f"\n  {icon if icon else '[TOOL]'} {name} ", end="", flush=True)
+                    _stop_spin()
+                    _start_tool_spin(name)
 
                 elif etype == "tool_result":
+                    _stop_tool_spin()
                     short = str(event.get("result", ""))[:200].replace("\n", " ")
-                    print(f"→ {short}")
+                    icon = "\033[32m✓\033[0m" if "error" not in str(event.get("result", "")).lower()[:50] else "\033[31m✗\033[0m"
+                    print(f"\r\033[K  {icon} {short}")
+
+                elif etype == "plan_ready":
+                    _stop_spin()
+                    plan = event.get("content", "")[:500]
+                    tools = event.get("tools", [])
+                    print(f"\r\033[K\033[1;36m--- 计划 ---\033[0m\n{plan}")
+                    print(f"\033[33m工具: {', '.join(tools)}\033[0m")
+                    print("\033[1;36m执行? [Y/n]\033[0m ", end="", flush=True)
+                    try:
+                        ans = await asyncio.get_event_loop().run_in_executor(None, input)
+                    except (EOFError, KeyboardInterrupt):
+                        ans = "n"
+                    if ans.strip().lower() in ("", "y", "yes"):
+                        agent.approve_plan()
+                        print("  → 执行中...")
+                    else:
+                        agent.abort()
+                        print("  → 已取消")
 
                 elif etype == "ctx_warning":
                     print(f"\n  ⚠️ 上下文已用 {event.get('pct',90)}%，建议 /clear 或等压缩")
@@ -242,14 +340,24 @@ async def run_interactive():
                     print("\n  [max turns reached]")
 
                 elif etype == "error":
-                    print(f"\n  [ERROR] {event['content']}")
+                    _stop_spin()
+                    _stop_tool_spin()
+                    print(f"\n  \033[31m[ERROR]\033[0m {event['content']}")
 
                 elif etype == "aborted":
-                    _spinning = False
+                    _stop_spin()
+                    _stop_tool_spin()
                     print("\n  [aborted]")
 
+        except (asyncio.CancelledError, KeyboardInterrupt):
+            agent.abort()
+            _stop_spin()
+            _stop_tool_spin()
+            print("\n  [interrupted]")
         except Exception as e:
-            print(f"\n  [ERROR] {e}")
+            _stop_spin()
+            _stop_tool_spin()
+            print(f"\n  \033[31m[ERROR]\033[0m {e}")
 
         print()
 
@@ -420,18 +528,21 @@ def _run_safe(coro):
     except (KeyboardInterrupt, asyncio.CancelledError): pass
 
 if __name__ == "__main__":
-    if len(sys.argv) > 1:
-        if sys.argv[1] == "--auto-learn":
+    plan_mode = "--plan" in sys.argv
+    argv = [a for a in sys.argv if a != "--plan"]
+
+    if len(argv) > 1:
+        if argv[1] == "--auto-learn":
             _run_safe(run_auto_learn())
-        elif sys.argv[1] == "--cleanup":
+        elif argv[1] == "--cleanup":
             from agent.cleanup import run_cleanup
             agent = build_agent()
             _run_safe(run_cleanup(agent))
-        elif sys.argv[1] == "--dashboard":
+        elif argv[1] == "--dashboard":
             _run_safe(run_dashboard())
-        elif sys.argv[1] == "--dashboard-learn":
+        elif argv[1] == "--dashboard-learn":
             _run_safe(run_dashboard_learn())
         else:
-            _run_safe(run_single(" ".join(sys.argv[1:])))
+            _run_safe(run_single(" ".join(argv[1:])))
     else:
-        _run_safe(run_interactive())
+        _run_safe(run_interactive(plan_mode=plan_mode))

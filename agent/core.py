@@ -54,12 +54,14 @@ class Agent:
 
         self.messages: list[dict] = []
         self._abort = asyncio.Event()
-        self._turn_count = 0  # Periodic Nudge 计数器
+        self._plan_approved = asyncio.Event()
+        self._turn_count = 0
 
     # ── public API ─────────────────────────────────────────────
 
-    async def run(self, user_input: str, stream: bool = False) -> AsyncGenerator[dict, None]:
+    async def run(self, user_input: str, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
         self._abort.clear()
+        self._plan_approved.clear()
         self._turn_count = 0
         self._total_tokens = 0
 
@@ -69,14 +71,14 @@ class Agent:
 
         turn = 0
         try:
-            async for event in self._run_loop(user_input, turn, stream=stream):
+            async for event in self._run_loop(user_input, turn, stream=stream, plan_mode=plan_mode):
                 yield event
         except asyncio.CancelledError:
             yield {"type": "aborted"}
         finally:
             self._abort.clear()
 
-    async def _run_loop(self, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
+    async def _run_loop(self, user_input: str, turn: int, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
         cached_prompt = await self._build_system_prompt()
         cached_block = await self._build_memory_block(user_input, 0)
@@ -170,6 +172,16 @@ class Agent:
             if not tool_calls_list:
                 yield {"type": "completed"}
                 return
+
+            # ── Plan mode: 等待用户确认 ──
+            if plan_mode:
+                tool_names = [tc["function"]["name"] for tc in tool_calls_list]
+                yield {"type": "plan_ready", "content": content, "tools": tool_names}
+                self._plan_approved.clear()
+                await self._plan_approved.wait()
+                if self._abort.is_set():
+                    yield {"type": "aborted"}
+                    return
 
             # ── 执行工具 ──
             for tc in tool_calls_list:
@@ -278,6 +290,9 @@ class Agent:
             return
 
         yield {"type": "_done", "text_parts": text_parts, "reasoning_parts": reasoning_parts, "tool_calls": tool_calls}
+
+    def approve_plan(self):
+        self._plan_approved.set()
 
     def abort(self):
         self._abort.set()

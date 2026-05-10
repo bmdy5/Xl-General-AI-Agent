@@ -6,7 +6,7 @@
 
 ```
 搭建agent/
-├── main.py                  # CLI 入口 (--dashboard / --auto-learn / --cleanup)
+├── main.py                  # CLI 入口 (--dashboard/--auto-learn/--cleanup/--plan)
 ├── start_dashboard.sh       # Dashboard 一键启动
 ├── auto_learn.sh            # 自主学习启动（launchd 用）
 ├── com.myagent.autolearn.plist  # macOS 定时任务（每天 10:00）
@@ -15,17 +15,19 @@
 ├── CLAUDE.md                # 本文件
 │
 ├── agent/                   # 核心代码
-│   ├── core.py              # 🔥 Agent 主循环 (while-true + AsyncGenerator, 452行)
-│   │                        #    - 三层记忆注入: system prompt + [MEMORY BLOCK]
-│   │                        #    - LLM竞速取消 + 合成tool_result + 上下文压缩
-│   ├── llm.py               # LiteLLM 封装 (chat + chat_stream, 144行)
-│   ├── compressor.py        # 上下文压缩 (Head/Tail + LLM摘要 + 熔断器, 206行)
-│   ├── auto_learn.py        # 自主学习系统 (两阶段:收集→辩论, 594行)
-│   │                        #    - Web/GitHub/本地三源
-│   │                        #    - flash提取 + pro审查 + 多Agent辩论
-│   ├── evolution.py         # 进化模块 (6个模式, 304行)
+│   ├── core.py              # Agent 主循环 (while-true + AsyncGenerator, 374行)
+│   │                        #    - 统一流式/非流式 _run_loop(stream=bool)
+│   │                        #    - [MEMORY BLOCK] 隔离注入 + 自进化规则
+│   │                        #    - Plan mode: plan_ready → 用户确认 → 执行
+│   ├── llm.py               # LiteLLM 封装 (chat + chat_stream, 160行)
+│   ├── compressor.py        # 上下文压缩 (Head/Tail + LLM摘要 + 熔断器, 219行)
+│   ├── auto_learn.py        # 自主学习系统 (子代理并行 + 辩论审查, 493行)
+│   │                        #    - Phase 1: spawn子代理并行搜索学习
+│   │                        #    - Phase 2: 交叉质疑→辩护→双评审→双通过入库
+│   ├── evolution.py         # 进化模块 (7个模式, 392行)
 │   │                        #    - after_tool_call审计 / on_session_end反思
 │   │                        #    - task→skill检测 / 技能追踪
+│   │                        #    - 自进化规则: 反馈≥2次→生成规则→注入prompt
 │   ├── cleanup.py           # 知识库清理器 (pro模型批量审查, 174行)
 │   ├── dashboard.py         # HTTP+SSE server (100行)
 │   ├── dashboard.html       # Canvas 像素办公室 (300行, 零依赖)
@@ -111,6 +113,9 @@ Co-Authored-By: Claude Opus 4.7 <noreply@anthropic.com>
 | 压缩 | tinypace Head/Tail + CC 熔断器 | 简单有效 |
 | 学习审查 | flash提取 + pro审查 双层 | 成本 vs 质量平衡 |
 | Dashboard | Canvas + SSE 纯前端 | 零外部依赖 |
+| 自进化 | 反馈≥2次→LLM生成规则→注入prompt | 数据驱动不改代码 |
+| Plan Mode | plan_ready事件 + asyncio.Event确认 | 用户审查后执行 |
+| 终端交互 | 多行粘贴检测 + SIGINT打断 + ANSI高亮 | Unix原生支持 |
 
 ## 参考源码位置
 
