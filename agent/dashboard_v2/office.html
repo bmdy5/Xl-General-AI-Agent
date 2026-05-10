@@ -2,60 +2,165 @@
 <html><head><meta charset="utf-8"><title>Pixel Office</title>
 <style>
 body{margin:0;background:#111;display:flex;justify-content:center;align-items:center;height:100vh}
-canvas{border:3px solid #c8934a;image-rendering:pixelated}
+canvas{border:3px solid #8B5E3C;image-rendering:pixelated}
 </style></head><body>
 <canvas id="c" width="960" height="640"></canvas>
 <script>
-const C=document.getElementById('c'), X=C.getContext('2d');
+const C=document.getElementById('c'),X=C.getContext('2d');
+const W=960,H=640;
+const CLR={
+  bg:'#0f0f0f',wallWood:'#3a2717',wallLight:'#5a4030',
+  doorFrame:'#8B5E3C',doorOpen:'#1a1010',
+  floorComp:'#4A4A4A',floorLib:'#7f5034',floorXL:'#7f5034',
+  floorStor:'#615988',floorMeet:'#8C4A2F',floorHall:'#9A7B4F',
+  desk:'#c4a060',screen:'#5b9bd5',chair:'#b89850',
+  plant:'#2a6b2a',pot:'#8b4513',table:'#a08050',
+  divider:'#a0a0a0',waterBody:'#4A90E2',
+  board:'#d4c8a0',text:'#f0e8d0',
+  skin:'#f4c8a0',xlGold:'#f4d058',
+};
 
-// Rooms with exact coords from Mimo analysis
-const R=[
-  {x:15,y:20,w:200,h:200,l:'电脑房',f:'#3d2e4a',wf:'#5a5a6a'},
-  {x:215,y:20,w:165,h:190,l:'经理室',f:'#b8854a',wf:'#5a4030'},
-  {x:390,y:15,w:170,h:140,l:'资料室',f:'#c49a55',wf:'#8a7a5a'},
-  {x:570,y:15,w:170,h:140,l:'Mimo视觉',f:'#7a7a82',wf:'#5a5a6a'},
-  {x:20,y:240,w:130,h:150,l:'储藏室',f:'#3d2e4a',wf:'#5a5a6a'},
-  {x:155,y:200,w:430,h:170,l:'走廊',f:'#7a7a82',wf:'#8a7a5a'},
-  {x:255,y:390,w:655,h:235,l:'会议室',f:'#3d2e4a',wf:'#d4c4a8'},
-  {x:580,y:215,w:160,h:160,l:'XL办公室',f:'#b8854a',wf:'#5a4030'},
+const ROOMS=[
+  {x:0, y:0, w:264, h:276, n:'电脑房', f:CLR.floorComp},
+  {x:274, y:0, w:270, h:276, n:'图书室', f:CLR.floorLib},
+  {x:554, y:0, w:406, h:276, n:'XL办公室', f:CLR.floorXL},
+  {x:0, y:360, w:264, h:280, n:'储物室', f:CLR.floorStor},
+  {x:274, y:360, w:686, h:280, n:'会议室', f:CLR.floorMeet},
 ];
 
-function draw(){
-  // Background
-  X.fillStyle='#1a1010';X.fillRect(0,0,960,640);
+function rect(x,y,w,h,c){X.fillStyle=c;X.fillRect(x,y,w,h)}
 
-  R.forEach(r=>{
-    // Wall shadow
-    X.fillStyle=r.wf;X.fillRect(r.x-6,r.y-6,r.w+12,r.h+12);
-    // Floor
-    X.fillStyle=r.f;X.fillRect(r.x,r.y,r.w,r.h);
-    // Floor texture
-    if(r.f[0]==='#'){let d=r.f;X.fillStyle='rgba(0,0,0,0.15)';
-      for(let y=r.y;y<r.y+r.h;y+=20)X.fillRect(r.x,y,r.w,1);
-    }
-    // Baseboard
-    X.fillStyle='rgba(0,0,0,0.3)';X.fillRect(r.x,r.y+r.h-4,r.w,4);
-    // Label
-    X.fillStyle='rgba(0,0,0,0.5)';X.font='10px monospace';X.fillText(r.l,r.x+6,r.y+16);
-    X.fillStyle='#f0e8d0';X.fillText(r.l,r.x+5,r.y+15);
-  });
-
-  // Desk in computer room
-  [40,140].forEach(y=>[40,140].forEach(x=>{
-    X.fillStyle='#c4a060';X.fillRect(15+x,20+y,40,18);
-    X.fillStyle='#5b9bd5';X.fillRect(15+x+28,20+y-12,10,12);
-  }));
-  // Round table in meeting
-  X.fillStyle='#a08050';X.beginPath();X.arc(580,510,60,0,Math.PI*2);X.fill();
-  // XL Agent
-  let x=650,y=260;
-  X.fillStyle='#f4d058';X.fillRect(x-6,y,12,14);
-  X.fillStyle='#f4c8a0';X.fillRect(x-5,y-10,10,10);
-  X.fillStyle='#1a1010';X.fillRect(x-3,y-8,2,2);X.fillRect(x+2,y-8,2,2);
-  X.fillStyle='rgba(255,255,255,0.9)';X.fillRect(x-20,y-22,100,14);
-  X.fillStyle='#3a2010';X.font='8px monospace';X.fillText('XL Agent',x-18,y-10);
-
-  requestAnimationFrame(draw);
+function drawRoom(r){
+  // Wall
+  rect(r.x-4,r.y-4,r.w+8,r.h+8,r.wallWood||CLR.wallWood);
+  rect(r.x-2,r.y-2,r.w+4,r.h+4,'rgba(255,255,255,0.06)');
+  // Floor
+  rect(r.x,r.y,r.w,r.h,r.f);
+  X.fillStyle='rgba(0,0,0,0.1)';
+  for(let y=r.y+12;y<r.y+r.h;y+=24)X.fillRect(r.x,y,r.w,1);
+  // Baseboard
+  rect(r.x,r.y+r.h-4,r.w,4,'rgba(0,0,0,0.25)');
+  // Label
+  X.fillStyle='rgba(0,0,0,0.5)';X.font='10px monospace';X.fillText(r.n,r.x+6,r.y+14);
+  X.fillStyle=CLR.text;X.fillText(r.n,r.x+5,r.y+13);
 }
-draw();
+
+function drawCorridor(){
+  const y=280, h=76;
+  rect(0,y,W,h,CLR.floorHall);
+  X.fillStyle='rgba(0,0,0,0.08)';
+  for(let yy=y;yy<y+h;yy+=16)X.fillRect(0,yy,W,1);
+  // Label
+  X.fillStyle='rgba(0,0,0,0.5)';X.font='10px monospace';X.fillText('走廊',8,y+16);
+  X.fillStyle=CLR.text;X.fillText('走廊',7,y+15);
+  // Water dispenser
+  rect(870,y+12,14,44,CLR.waterBody);
+  rect(872,y+10,10,6,'#fff');
+  // Bulletin board
+  rect(660,y+4,44,32,CLR.board);
+  rect(662,y+8,8,6,CLR.xlGold);
+  // Carpet
+  rect(420,y+20,80,36,'rgba(139,69,19,0.35)');
+}
+
+function drawDoorway(x, roomTop, roomBot){
+  // Dark opening
+  rect(x-10, roomTop-4, 20, roomBot-roomTop+8, CLR.doorOpen);
+  // Frame
+  rect(x-12, roomTop-6, 24, 4, CLR.doorFrame);
+  rect(x-12, roomBot+2, 24, 4, CLR.doorFrame);
+  rect(x-12, roomTop-4, 4, roomBot-roomTop+8, CLR.doorFrame);
+  rect(x+8, roomTop-4, 4, roomBot-roomTop+8, CLR.doorFrame);
+}
+
+function drawFurniture(){
+  // Computer room: 4 stations
+  const cr=ROOMS[0];
+  [[40,40],[150,40],[40,160],[150,160]].forEach(([dx,dy])=>{
+    const x=cr.x+dx, y=cr.y+dy;
+    rect(x,y,40,16,CLR.desk);
+    rect(x+28,y-12,10,12,CLR.screen);
+    rect(x+12,y+16,8,8,CLR.chair);
+  });
+  rect(cr.x+135,cr.y+20,2,254,CLR.divider);
+  rect(cr.x+20,cr.y+142,224,2,CLR.divider);
+  [20,240].forEach(dx=>{rect(cr.x+dx,cr.y+250,12,14,CLR.pot);rect(cr.x+dx,cr.y+240,12,10,CLR.plant)});
+
+  // Library: shelves + sofa
+  const lib=ROOMS[1];
+  for(let row=0;row<3;row++){
+    rect(lib.x+16,lib.y+16+row*56,28,48,'#8b6914');
+    for(let r2=0;r2<4;r2++)rect(lib.x+18,lib.y+20+row*56+r2*12,24,8,r2%2?'#e04b4b':'#4ba4e0');
+  }
+  rect(lib.x+120,lib.y+160,56,18,'#d4a060');
+  rect(lib.x+120,lib.y+178,56,16,'#c08040');
+  rect(lib.x+130,lib.y+196,30,14,'#a07040');
+  rect(lib.x+200,lib.y+230,12,14,CLR.pot);rect(lib.x+200,lib.y+220,12,10,CLR.plant);
+
+  // XL Office
+  const xl=ROOMS[2];
+  rect(xl.x+60,xl.y+60,130,36,CLR.desk);
+  rect(xl.x+80,xl.y+40,10,16,CLR.screen);
+  rect(xl.x+100,xl.y+40,10,16,CLR.screen);
+  rect(xl.x+105,xl.y+96,14,14,'#e04b4b');
+  rect(xl.x+260,xl.y+30,26,56,'#8b4513');
+  rect(xl.x+320,xl.y+80,22,22,'#87ceeb');
+  rect(xl.x+20,xl.y+20,16,16,'#d4c8a0');
+
+  // Storage
+  const st=ROOMS[3];
+  rect(st.x+20,st.y+10,40,40,'#8b6914');
+  rect(st.x+100,st.y+14,30,24,'#a08050');
+  rect(st.x+160,st.y+14,30,24,'#a08050');
+
+  // Meeting room
+  const mt=ROOMS[4];
+  X.fillStyle=CLR.table;X.beginPath();X.ellipse(mt.x+340,mt.y+120,160,50,0,0,Math.PI*2);X.fill();
+  X.fillStyle='#805030';X.beginPath();X.ellipse(mt.x+340,mt.y+120,150,42,0,0,Math.PI*2);X.fill();
+  [-0.8,-0.3,0.2,2.0,2.5,3.2].forEach(a=>{
+    const cx=mt.x+340+Math.cos(a)*130,cy=mt.y+120+Math.sin(a)*50;
+    rect(cx-6,cy-6,12,12,CLR.chair);
+  });
+  rect(mt.x+12,mt.y+60,64,44,'#f8f8f8');
+  rect(mt.x+10,mt.y+58,68,4,CLR.doorFrame);
+  rect(mt.x+250,mt.y+6,110,4,'#f0f0f0');
+  rect(mt.x+330,mt.y-4,20,8,'#f4d058');
+  // Plants
+  [40,610].forEach(dx=>{rect(mt.x+dx,mt.y+240,12,14,CLR.pot);rect(mt.x+dx,mt.y+230,12,10,CLR.plant)});
+}
+
+function drawAgents(){
+  // XL
+  let x=ROOMS[2].x+160,y=ROOMS[2].y+200;
+  rect(x-5,y,10,14,CLR.xlGold);rect(x-4,y-9,8,9,CLR.skin);
+  rect(x-3,y-7,2,2,'#1a1010');rect(x+2,y-7,2,2,'#1a1010');
+  X.fillStyle=CLR.text;X.font='7px monospace';X.fillText('XL',x-7,y-14);
+  // Learners in computer room
+  [[50,110],[160,110]].forEach(([dx,dy])=>{
+    x=ROOMS[0].x+dx;y=ROOMS[0].y+dy;
+    rect(x-4,y,8,12,CLR.screen);rect(x-3,y-8,6,8,CLR.skin);
+    rect(x-2,y-6,2,2,'#1a1010');rect(x+1,y-6,2,2,'#1a1010');
+  });
+  // Mimo in meeting room
+  x=ROOMS[4].x+200;y=ROOMS[4].y+200;
+  rect(x-4,y,8,12,'#a04be0');rect(x-3,y-8,6,8,CLR.skin);
+  rect(x-2,y-6,2,2,'#1a1010');rect(x+1,y-6,2,2,'#1a1010');
+  X.fillStyle=CLR.text;X.font='7px monospace';X.fillText('Mimo',x-12,y-14);
+}
+
+function render(){
+  rect(0,0,W,H,CLR.bg);
+  ROOMS.forEach(r=>drawRoom(r));
+  drawCorridor();
+  // Doorways: room y-end to corridor, corridor to room y-start
+  drawDoorway(140, 268, 280);  // computer → corridor
+  drawDoorway(400, 268, 280);  // library → corridor
+  drawDoorway(740, 268, 280);  // XL → corridor
+  drawDoorway(140, 356, 368);  // corridor → storage
+  drawDoorway(550, 356, 368);  // corridor → meeting
+  drawFurniture();
+  drawAgents();
+  requestAnimationFrame(render);
+}
+render();
 </script></body></html>
