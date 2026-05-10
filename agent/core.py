@@ -303,7 +303,7 @@ class Agent:
             reasoning_parts: list[str] = []
             tool_calls: list[dict] = []
 
-            yield {"type": "exploring_start"}
+            yield {"type": "exploring_start", "ts": asyncio.get_event_loop().time()}
             _first_token = True
 
             try:
