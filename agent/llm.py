@@ -44,16 +44,9 @@ class LLMClient:
 
         model_override: 可指定不同模型（自主学习用 flash 模型省钱）。
         """
-        # 剥掉 reasoning_content（DeepSeek thinking 模式兼容）
-        clean = []
-        for m in messages:
-            if "reasoning_content" in m:
-                m = {k: v for k, v in m.items() if k != "reasoning_content"}
-            clean.append(m)
-
         kwargs = {
             "model": model_override or self.model,
-            "messages": clean,
+            "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "timeout": 120,
@@ -107,10 +100,9 @@ class LLMClient:
 
         前端可以用这个做打字机效果。
         """
-        clean = [{k:v for k,v in m.items() if k!="reasoning_content"} for m in messages]
         kwargs = {
             "model": self.model,
-            "messages": clean,
+            "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,
             "timeout": 120,
