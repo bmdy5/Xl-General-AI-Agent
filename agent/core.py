@@ -94,7 +94,7 @@ class Agent:
         self.static_prompt = system_prompt or STATIC_PROMPT
         self.max_turns = max_turns
 
-        self.compressor = ContextCompressor(llm=llm)
+        self.compressor = ContextCompressor(llm=llm, max_tokens=1_000_000)
 
         self.messages: list[dict] = []
         self._abort = asyncio.Event()
