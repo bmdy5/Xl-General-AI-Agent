@@ -62,7 +62,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry=registry,
         memory=memory,
         session=session,
-        max_turns=int(os.getenv("MYAGENT_MAX_TURNS", "30")),
+        max_turns=int(os.getenv("MYAGENT_MAX_TURNS", "200")),
     )
 
 
@@ -152,6 +152,17 @@ async def run_interactive():
             print("History cleared.")
             continue
 
+        if user_input == "/stats":
+            ctx = agent.compressor.estimate_tokens(agent.messages)
+            ctx_pct = ctx * 100 // 1_000_000
+            bar = "█" * (ctx_pct // 5) + "░" * (20 - ctx_pct // 5)
+            print(f"\n  📊 Stats")
+            print(f"  上下文: [{bar}] {ctx_pct}% ({ctx:,} / 1,000,000 tokens)")
+            print(f"  消息数: {len(agent.messages)}")
+            print(f"  工具数: {len(agent.registry.list_names())}")
+            print(f"  模型: {agent.llm.model}")
+            continue
+
         if user_input == "/memory":
             mems = agent.memory.list_memories()
             if mems:
@@ -171,6 +182,7 @@ async def run_interactive():
         if not history_loaded and load_task.done():
             history_loaded = True
         print()
+        _req_start = asyncio.get_event_loop().time()
         try:
             async for event in agent.run_stream(user_input):
                 etype = event["type"]
@@ -182,7 +194,14 @@ async def run_interactive():
                     print(f"\033[90m✻ 思考中...\033[0m", end="", flush=True)
 
                 elif etype == "exploring_done":
-                    print(f"\r\033[K", end="")  # 清除思考提示
+                    print(f"\r\033[K", end="")
+
+                elif etype == "completed":
+                    _elapsed = asyncio.get_event_loop().time() - _req_start
+                    _tokens = sum(len(str(m.get("content","")))//4 for m in agent.messages[-10:])
+                    _ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000
+                    print(f"\033[90m({_elapsed:.1f}s · ~{_tokens}t · {_ctx_pct}% ctx)\033[0m")
+                    _req_start = asyncio.get_event_loop().time()  # 重置计时
 
                 elif etype == "reasoning":
                     print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
@@ -198,6 +217,9 @@ async def run_interactive():
                 elif etype == "tool_result":
                     short = str(event.get("result", ""))[:200].replace("\n", " ")
                     print(f"→ {short}")
+
+                elif etype == "ctx_warning":
+                    print(f"\n  ⚠️ 上下文已用 {event.get('pct',90)}%，建议 /clear 或等压缩")
 
                 elif etype == "nudge":
                     print(f"\n  [💡 Periodic Nudge: 检查是否有值得保存的记忆]")
