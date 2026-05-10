@@ -292,6 +292,9 @@ class Agent:
             reasoning_parts: list[str] = []
             tool_calls: list[dict] = []
 
+            # 探索开始时间戳
+            yield {"type": "exploring_start", "ts": asyncio.get_event_loop().time()}
+
             try:
                 async for event in self.llm.chat_stream(
                     messages=llm_messages,
@@ -302,6 +305,8 @@ class Agent:
                         reasoning_parts.append(str(event.get("content", "")))
                         yield event
                     elif event["type"] == "text_delta":
+                        yield {"type": "exploring_done"}  # 收到首个 token
+                        text_parts.append(event["content"])
                         text_parts.append(event["content"])
                         yield event
                     elif event["type"] == "tool_call":
