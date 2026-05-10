@@ -8,6 +8,7 @@ v2 升级：
 
 import asyncio
 import json
+import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
@@ -397,7 +398,7 @@ class Agent:
     async def _build_system_prompt(self) -> str:
         """组装 system prompt = 静态段 + 动态段（静态不变，动态每轮重算）."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        cwd = __import__("os").getcwd()
+        cwd = os.getcwd()
 
         dynamic = (
             f"\n\n---\n"
