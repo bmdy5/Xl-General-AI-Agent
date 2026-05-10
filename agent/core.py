@@ -280,6 +280,7 @@ class Agent:
 
             tools = self.registry.get_definitions()
             text_parts: list[str] = []
+            reasoning_parts: list[str] = []
             tool_calls: list[dict] = []
 
             try:
@@ -289,6 +290,7 @@ class Agent:
                     abort_event=self._abort,
                 ):
                     if event["type"] == "reasoning":
+                        reasoning_parts.append(str(event.get("content", "")))
                         yield event
                     elif event["type"] == "text_delta":
                         text_parts.append(event["content"])
@@ -304,9 +306,12 @@ class Agent:
                 return
 
             content = "".join(text_parts)
+            reasoning = "".join(reasoning_parts)
             assistant_msg = {"role": "assistant", "content": content}
             if tool_calls:
                 assistant_msg["tool_calls"] = tool_calls
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning
             self.messages.append(assistant_msg)
             if self.session:
                 await self.session.append_message(assistant_msg)
