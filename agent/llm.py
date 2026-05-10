@@ -84,10 +84,14 @@ class LLMClient:
                 for tc in choice.tool_calls
             ]
 
+        usage = getattr(response, "usage", None)
+        tokens_used = usage.total_tokens if usage else 0
+
         return {
             "content": choice.content or "",
             "tool_calls": tool_calls,
             "reasoning_content": reasoning,
+            "tokens_used": tokens_used,
         }
 
     async def chat_stream(
