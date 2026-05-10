@@ -8,29 +8,28 @@ const canvas = document.getElementById('c');
 const ctx = canvas.getContext('2d');
 ctx.imageSmoothingEnabled = false;
 
-// ── 常量 ──────────────────────────────────────────────
-const TILE = 16;      // 逻辑瓦片尺寸 (px)
-const SCALE = 3.75;   // 放大倍数 → 16*3.75 = 60px 显示尺寸
-const COLS  = 16;     // Canvas 横向瓦片数 (960/60)
-const ROWS  = 10.6;   // Canvas 纵向瓦片数 (640/60)
+// ── 常量 (设计图精确参数: 32px瓦片, 960x640) ──────────
+const TILE = 32;
+const SCALE = 1;
+const COLS = 30;
+const ROWS = 20;
 
-// ── 颜色调色板 (星露谷暖色调) ──────────────────────
+// ── 调色板 (Mimo分析设计图精确色值) ──────────────────
 const C = {
-  // 地板: 暖木 + 石砖 + 地毯
-  floorWood:    '#c89048',
-  floorWoodD:   '#a07030',
-  floorStone:   '#9a9a8a',
-  floorStoneD:  '#7a7a6a',
-  floorHall:    '#b8a080',
-  floorHallD:   '#988060',
-  floorCarpet:  '#8b5a3c',
-  // 壁: 暖木墙
-  wall:         '#6b4a2a',
-  wallInner:    '#9a7a50',
-  wallTop:      '#4a2a10',
-  baseboard:    '#5a3a1a',
-  roomLabel:    'rgba(0,0,0,0.4)',
-  black:        '#1a1008',
+  // 地板
+  carpetPurple: '#3d2e4a',
+  carpetDark:   '#4a3c5c',
+  woodFloor:    '#b8854a',
+  woodFloorD:   '#a07535',
+  woodWarm:     '#c49a55',
+  woodWarmD:    '#b08540',
+  stoneFloor:   '#7a7a82',
+  stoneFloorD:  '#5a5a6a',
+  // 墙壁
+  wallPurple:   '#5a5a6a',
+  wallDark:     '#5a4030',
+  wallWarm:     '#8a7a5a',
+  wallLight:    '#d4c4a8',
   // 家具
   deskWood:     '#c4a060',
   deskDark:     '#8a6030',
@@ -45,31 +44,33 @@ const C = {
   devilPurple:  '#9b59b6',
   reviewGray:   '#8b8b9b',
   hair:         '#4a3020',
+  // 装饰
+  plant:        '#2a6b2a',
+  plantLight:   '#3a8a3a',
 };
 
-// ── 房间定义 (单位: 显示像素) ───────────────────────────
-// 参考设计图: 电脑房左上, 图书室上中, XL办公室右上, 杂物室右中, 走廊中, 会议室下
-const px = v => v * TILE * SCALE;
-
+// ── 房间定义 (Mimo分析设计图精确坐标) ──────────────────
 const ROOMS = {
-  computer: { x: px(0),    y: px(0),    w: px(5.5),  h: px(4.5),  label: '电脑房',   floor: 'wood' },
-  library:  { x: px(5.5),  y: px(0),    w: px(4.5),  h: px(5),    label: '图书室',   floor: 'wood' },
-  xl:       { x: px(10),   y: px(0),    w: px(4.5),  h: px(4),    label: 'XL办公室', floor: 'carpet' },
-  storage:  { x: px(10),   y: px(4),    w: px(4.5),  h: px(2.5),  label: '杂物室',   floor: 'stone' },
-  hallway:  { x: px(0),    y: px(4.5),  w: px(10),   h: px(1.5),  label: '走廊',     floor: 'hall' },
-  meeting:  { x: px(2.5),  y: px(6),    w: px(12),   h: px(4.67), label: '会议室',   floor: 'carpet'},
+  computer:  { x:15,  y:20,  w:200, h:200, label:'电脑房',   floor:'purple', wall:C.wallPurple },
+  manager:   { x:215, y:20,  w:165, h:190, label:'经理室',   floor:'wood',   wall:C.wallDark },
+  reception: { x:390, y:15,  w:170, h:140, label:'资料室',   floor:'woodWarm', wall:C.wallWarm },
+  mimo:      { x:570, y:15,  w:170, h:140, label:'Mimo视觉', floor:'stone',wall:C.wallPurple },
+  storage:   { x:20,  y:240, w:130, h:150, label:'储藏室',   floor:'purple', wall:C.wallPurple },
+  hallway:   { x:155, y:200, w:430, h:170, label:'走廊',     floor:'stone', wall:C.wallWarm },
+  meeting:   { x:255, y:390, w:655, h:235, label:'会议室',   floor:'purple', wall:C.wallLight },
+  xlOffice:  { x:580, y:215, w:160, h:160, label:'XL办公室', floor:'wood',   wall:C.wallDark },
 };
 
 // ── 瓦片地板绘制 ──────────────────────────────────────
 function drawFloor(rx, ry, rw, rh, type) {
   const ts = TILE * SCALE; // 瓦片显示尺寸
 
-  let base, dark, isWood = false, isStone = false, isCarpet = false;
+  let base, dark, isWood = false, isStone = false;
   switch(type) {
-    case 'wood':    base = C.floorWood; dark = C.floorWoodD; isWood = true; break;
-    case 'carpet':  base = C.floorCarpet; dark = '#6b3a1c'; isCarpet = true; break;
-    case 'stone':   base = C.floorStone; dark = C.floorStoneD; isStone = true; break;
-    case 'hall':    base = C.floorHall; dark = C.floorHallD; isStone = true; break;
+    case 'wood':    base = C.woodFloor; dark = C.woodFloorD; isWood = true; break;
+    case 'woodWarm':base = C.woodWarm; dark = C.woodWarmD; isWood = true; break;
+    case 'purple':  base = C.carpetPurple; dark = C.carpetDark; break;
+    case 'stone':   base = C.stoneFloor; dark = C.stoneFloorD; isStone = true; break;
     default:        base = '#888';    dark = '#666';
   }
 
