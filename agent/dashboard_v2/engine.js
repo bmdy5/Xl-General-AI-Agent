@@ -74,33 +74,17 @@ function drawFloor(rx, ry, rw, rh, type) {
     default:        base = '#888';    dark = '#666';
   }
 
-  // 填充基础色
-  ctx.fillStyle = base;
-  ctx.fillRect(rx, ry, rw, rh);
-
-  // 木板条纹
+  ctx.fillStyle = base; ctx.fillRect(rx, ry, rw, rh);
   if (isWood) {
     ctx.fillStyle = dark;
-    for (let y = ry; y < ry + rh; y += ts * 0.5) {
-      ctx.fillRect(rx, y, rw, 2);
-    }
-    // 竖向分板缝
-    ctx.fillStyle = 'rgba(0,0,0,0.12)';
-    for (let x = rx; x < rx + rw; x += ts * 1.5) {
-      ctx.fillRect(x, ry, 1, rh);
-    }
+    for (let y = ry; y < ry+rh; y += 16) ctx.fillRect(rx, y, rw, 2);
+    ctx.fillStyle = 'rgba(0,0,0,0.1)';
+    for (let x = rx; x < rx+rw; x += 48) ctx.fillRect(x, ry, 1, rh);
   }
-
-  // 石砖网格
   if (isStone) {
-    ctx.strokeStyle = dark;
-    ctx.lineWidth = 1.5;
-    for (let y = ry; y <= ry + rh; y += ts * 0.75) {
-      ctx.beginPath(); ctx.moveTo(rx, y); ctx.lineTo(rx + rw, y); ctx.stroke();
-    }
-    for (let x = rx; x <= rx + rw; x += ts) {
-      ctx.beginPath(); ctx.moveTo(x, ry); ctx.lineTo(x, ry + rh); ctx.stroke();
-    }
+    ctx.strokeStyle = dark; ctx.lineWidth = 1;
+    for (let y = ry; y <= ry+rh; y += 24) { ctx.beginPath(); ctx.moveTo(rx,y); ctx.lineTo(rx+rw,y); ctx.stroke(); }
+    for (let x = rx; x <= rx+rw; x += 32) { ctx.beginPath(); ctx.moveTo(x,ry); ctx.lineTo(x,ry+rh); ctx.stroke(); }
   }
 }
 
@@ -108,19 +92,16 @@ function drawFloor(rx, ry, rw, rh, type) {
 const WALL = 6; // 壁厚 px
 
 function drawRoomShell(r) {
-  const { x, y, w, h } = r;
-  // 外框阴影
-  ctx.fillStyle = '#3a2010';
-  ctx.fillRect(x - WALL, y - WALL, w + WALL*2, h + WALL*2);
-  // 内墙顶部（略亮）
-  ctx.fillStyle = C.wallInner;
-  ctx.fillRect(x - WALL + 2, y - WALL + 2, w + WALL*2 - 4, WALL);
-  // 圆角感 (4 个角落抠掉)
-  ctx.fillStyle = C.black;
-  const cr = 4;
-  [[x-WALL, y-WALL],[x+w, y-WALL],[x-WALL, y+h],[x+w, y+h]].forEach(([cx,cy]) => {
-    ctx.fillRect(cx, cy, cr, cr);
-  });
+  const { x, y, w, h, wall } = r;
+  ctx.fillStyle = wall || C.wallDark;
+  ctx.fillRect(x-WALL, y-WALL, w+WALL*2, h+WALL*2);
+  ctx.fillStyle = 'rgba(255,255,255,0.1)';
+  ctx.fillRect(x-WALL+2, y-WALL+2, w+WALL*2-4, WALL);
+}
+
+function drawBackground() {
+  ctx.fillStyle = '#1a1010';
+  ctx.fillRect(0, 0, canvas.width, canvas.height);
 }
 
 // ── 踢脚线 ────────────────────────────────────────────
@@ -142,10 +123,6 @@ function drawLabel(r) {
 }
 
 // ── 全局背景 ──────────────────────────────────────────
-function drawBackground() {
-  ctx.fillStyle = C.black;
-  ctx.fillRect(0, 0, canvas.width, canvas.height);
-}
 
 // ── 主渲染函数 ─────────────────────────────────────────
 function render() {
@@ -273,24 +250,8 @@ function updateAgents() {
 }
 
 // ── 主渲染 ────────────────────────────────────────────────
-function render() {
-  drawBackground();
-  Object.values(ROOMS).forEach(r => {
-    drawRoomShell(r);
-    drawFloor(r.x, r.y, r.w, r.h, r.floor);
-    drawBaseboard(r);
-    drawLabel(r);
-  });
-  if (window.SpriteEngine) window.SpriteEngine.render(ctx);
-  drawAllAgents();
-}
 
 // ── 动画循环 ─────────────────────────────────────────────
-function loop(ts) {
-  updateAgents();
-  render();
-  requestAnimationFrame(loop);
-}
 
 // ── 启动 (不依赖外部字体) ────────────────────────────────
 window.addEventListener('load', () => {
