@@ -12,6 +12,7 @@
 import asyncio
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -132,7 +133,7 @@ class AutoLearner:
         self._seen_urls: set = set()
         self._seen_files: set = set()
         self._learn_model = learn_model or agent.llm.model
-        self._review_model = agent.llm.model
+        self._review_model = os.getenv("MYAGENT_REVIEW_MODEL") or agent.llm.model
         self._agent_scores: dict = {}
         self._dash = dashboard  # 可选 dashboard
         self._ensure_dirs()
