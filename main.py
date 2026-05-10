@@ -1,0 +1,365 @@
+#!/usr/bin/env python3
+"""MyAgent — 通用 AI Agent CLI.
+
+用法：
+    python main.py                          # 交互模式
+    python main.py "请帮我读一下 README.md"   # 单次模式
+
+配置：
+    复制 .env.example 为 .env，填入 API key。
+    支持所有 LiteLLM 兼容的 provider（OpenAI、Anthropic、DeepSeek 等）。
+"""
+
+import asyncio
+import os
+import sys
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+from agent.llm import LLMClient
+from agent.core import Agent
+from agent.memory.manager import MemoryManager
+from agent.session.handler import SessionHandler
+from agent.tools.bash_tool import BashTool
+from agent.tools.file_tools import ReadFileTool, WriteFileTool
+from agent.tools.memory_tool import MemoryTool
+from agent.tools.registry import registry
+from agent.tools.web_fetch_tool import WebFetchTool
+from agent.tools.web_search_tool import WebSearchTool
+
+
+def build_agent(session_id: str = "default") -> Agent:
+    """组装 Agent：LLM + Tools + Memory + Session."""
+    model = os.getenv("MYAGENT_MODEL", "openai/gpt-4o")
+    api_key = os.getenv("MYAGENT_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
+    api_base = os.getenv("MYAGENT_API_BASE") or os.getenv("OPENAI_API_BASE")
+
+    llm = LLMClient(model=model, api_key=api_key, api_base=api_base)
+
+    # 注册工具
+    if not registry.list_names():
+        registry.register(ReadFileTool())
+        registry.register(WriteFileTool())
+        registry.register(BashTool(work_dir=os.getcwd()))
+        registry.register(WebSearchTool())
+        registry.register(WebFetchTool())
+        registry.register(MemoryTool())
+
+    memory = MemoryManager()
+    session = SessionHandler(session_id)
+
+    return Agent(
+        llm=llm,
+        registry=registry,
+        memory=memory,
+        session=session,
+        max_turns=int(os.getenv("MYAGENT_MAX_TURNS", "30")),
+    )
+
+
+async def run_interactive():
+    """交互模式：持续对话直到用户输入 /exit."""
+    agent = build_agent()
+
+    # 后台加载历史，不阻塞启动
+    async def load_history():
+        if agent.session:
+            all_msgs = await agent.session.initialize()
+            if len(all_msgs) > 20:
+                compressed, _ = await agent.compressor.compress(all_msgs, memory=agent.memory)
+                agent.messages = compressed
+                if agent.session:
+                    await agent.session.replace_all(agent.messages)
+            else:
+                agent.messages = all_msgs
+
+    load_task = asyncio.create_task(load_history())
+
+    tools_list = ', '.join(agent.registry.list_names())
+    model_short = agent.llm.model.split('/')[-1] if '/' in agent.llm.model else agent.llm.model
+
+    print(fr"""
+  ╔══════════════════════════════════════════════════════╗
+  ║                                                      ║
+  ║   ██╗  ██╗██╗      █████╗  ██████╗ ███████╗███╗  ██╗████████╗ ║
+  ║   ╚██╗██╔╝██║     ██╔══██╗██╔════╝ ██╔════╝████╗ ██║╚══██╔══╝ ║
+  ║    ╚███╔╝ ██║     ███████║██║  ███╗█████╗  ██╔██╗██║   ██║    ║
+  ║    ██╔██╗ ██║     ██╔══██║██║   ██║██╔══╝  ██║╚████║   ██║    ║
+  ║   ██╔╝╚██╗███████╗██║  ██║╚██████╔╝███████╗██║ ╚███║   ██║    ║
+  ║   ╚═╝  ╚═╝╚══════╝╚═╝  ╚═╝ ╚═════╝ ╚══════╝╚═╝  ╚══╝   ╚═╝    ║
+  ║                                                      ║
+  ║           Personal AI · Self-Evolving · v2            ║
+  ╠══════════════════════════════════════════════════════╣
+  ║  Model   : {model_short:<43}║
+  ║  Tools   : {tools_list:<43}║
+  ║  History : {len(agent.messages)} messages{' ':<34}║
+  ╠══════════════════════════════════════════════════════╣
+  ║  /exit   /clear   /memory   /tools                  ║
+  ╚══════════════════════════════════════════════════════╝
+""")
+
+    # 确保历史加载完成
+    history_loaded = False
+    while True:
+        if not history_loaded and load_task.done():
+            history_loaded = True
+            if load_task.exception():
+                print(f"\n  ⚠️ 历史加载失败: {load_task.exception()}")
+
+        try:
+            user_input = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\n🧠 整理记忆中...", end="", flush=True)
+            try:
+                from agent.evolution import on_session_end
+                await asyncio.wait_for(on_session_end(agent), timeout=8)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            print("\rBye.                    ")
+            break
+
+        if not user_input:
+            continue
+
+        if user_input == "/exit":
+            print("🧠 整理记忆中...", end="", flush=True)
+            try:
+                from agent.evolution import on_session_end
+                await asyncio.wait_for(on_session_end(agent), timeout=8)
+            except (asyncio.TimeoutError, Exception):
+                pass
+            print("\rBye.                    ")
+            break
+
+        if user_input == "/clear":
+            agent.clear_history()
+            print("History cleared.")
+            continue
+
+        if user_input == "/memory":
+            mems = agent.memory.list_memories()
+            if mems:
+                print("\n".join(mems))
+            else:
+                print("(no memories)")
+            continue
+
+        if user_input == "/tools":
+            for name in agent.registry.list_names():
+                tool = agent.registry.get(name)
+                desc = await tool.description() if tool else ""
+                print(f"  {name}: {desc}")
+            continue
+
+        # 等待历史加载完成再运行
+        if not history_loaded:
+            print("  加载历史中...", end="", flush=True)
+            await load_task
+            history_loaded = True
+            print("\r" + " " * 20 + "\r", end="")
+
+        print()
+        try:
+            async for event in agent.run(user_input):
+                etype = event["type"]
+
+                if etype == "compacted":
+                    print(f"\n  [上下文已压缩: {event.get('message_count', '?')} 条消息]")
+
+                elif etype == "text_delta":
+                    print(event["content"], end="", flush=True)
+
+                elif etype == "tool_call":
+                    print(f"\n  [TOOL] {event['name']} ", end="", flush=True)
+
+                elif etype == "tool_result":
+                    short = event["result"][:200].replace("\n", " ")
+                    print(f"→ {short}")
+
+                elif etype == "nudge":
+                    print(f"\n  [💡 Periodic Nudge: 检查是否有值得保存的记忆]")
+
+                elif etype == "completed":
+                    pass
+
+                elif etype == "max_turns":
+                    print("\n  [max turns reached]")
+
+                elif etype == "error":
+                    print(f"\n  [ERROR] {event['content']}")
+
+                elif etype == "aborted":
+                    print("\n  [aborted]")
+
+        except Exception as e:
+            print(f"\n  [ERROR] {e}")
+
+        print()
+
+
+async def run_single(query: str):
+    """单次模式：执行一次查询后退出."""
+    agent = build_agent()
+
+    async for event in agent.run(query):
+        etype = event["type"]
+        if etype == "compacted":
+            print(f"\n[上下文压缩: {event.get('message_count', '?')} 条消息]")
+        elif etype == "text_delta":
+            print(event["content"], end="", flush=True)
+        elif etype == "tool_call":
+            print(f"\n[TOOL] {event['name']}")
+        elif etype == "tool_result":
+            short = event["result"][:300].replace("\n", " ")
+            print(f"  → {short}")
+        elif etype == "error":
+            print(f"\n[ERROR] {event['content']}")
+
+    print()
+
+
+async def run_dashboard_learn():
+    """Dashboard + 自主学习."""
+    from agent.dashboard import DashboardServer
+    from agent.auto_learn import AutoLearner
+
+    agent = build_agent()
+    dash = DashboardServer(port=8765)
+    await dash.start()
+
+    learn_model = os.getenv("MYAGENT_LEARN_MODEL", "")
+    learner = AutoLearner(agent, max_duration_minutes=5, learn_model=learn_model, dashboard=dash)
+
+    print(f"\n  👑 XL Agent — Dashboard 学习模式\n")
+    await dash.send({"agent": "xl", "event": "auto_learn_start", "name": "XL"})
+    result = await learner.run()
+
+    await dash.send({"agent": "xl", "event": "learn_done", "name": "XL",
+                     "action": f"{result['articles_read']} articles, {result['skills_created']} skills"})
+    print(f"\n  完成: {result['articles_read']}篇, {result['skills_created']}技能")
+    await asyncio.sleep(5)  # 让 dashboard 看到最终状态
+
+
+async def run_auto_learn():
+    """自主学习模式：agent 自动浏览网页、学习知识、创建技能."""
+    from agent.auto_learn import AutoLearner
+
+    agent = build_agent()
+    learn_model = os.getenv("MYAGENT_LEARN_MODEL", "")
+    dash = getattr(agent, '_dash', None)
+    learner = AutoLearner(agent, max_duration_minutes=5, learn_model=learn_model, dashboard=dash)
+
+    print("\n  MyAgent — 自主学习模式")
+    print(f"  Model: {agent.llm.model}")
+    print(f"  Duration: 5 minutes")
+    print(f"  Knowledge base: {learner.kb}")
+    print()
+
+    try:
+        result = await learner.run()
+    except KeyboardInterrupt:
+        result = {"articles_read": 0, "skills_created": 0, "topics": [], "summary": "用户中断", "errors": ["KeyboardInterrupt"]}
+
+    print(f"\n  ===== 学习完成 =====")
+    print(f"  阅读文章: {result['articles_read']} 篇")
+    print(f"  创建技能: {result['skills_created']} 个")
+    if result["errors"]:
+        print(f"  错误: {len(result['errors'])} 个")
+    print(f"\n{result['summary']}")
+
+
+def _cleanup_terminal():
+    """恢复终端状态（抄 openclaw）."""
+    import sys
+    try:
+        sys.stdout.write("\x1b[0m\x1b[?25h")  # 重置颜色 + 显示光标
+        sys.stdout.flush()
+    except Exception:
+        pass
+
+import atexit
+atexit.register(_cleanup_terminal)
+
+async def run_dashboard():
+    """Dashboard 模式：启动 HTTP + SSE，同时运行交互 CLI."""
+    from agent.dashboard import DashboardServer
+
+    agent = build_agent()
+    dash = DashboardServer(port=8765)
+    await dash.start()
+
+    # 恢复历史
+    if agent.session:
+        agent.messages = await agent.session.initialize()
+
+    # Hook: agent 事件同时推送到 dashboard
+    original_run = agent.run
+    async def hooked_run(user_input):
+        await dash.send({"agent": "xl", "event": "user_input", "name": "XL"})
+        async for event in original_run(user_input):
+            etype = event.get("type", "")
+            if etype == "tool_call":
+                await dash.send({"agent": "xl", "event": etype, "name": event.get("name", ""), "action": str(event.get("args", {}))[:80]})
+            elif etype == "tool_result":
+                await dash.send({"agent": "xl", "event": etype, "name": event.get("name", "")})
+            elif etype == "compacted":
+                await dash.send({"agent": "xl", "event": "compacting"})
+            elif etype == "nudge":
+                await dash.send({"agent": "xl", "event": "periodic_nudge"})
+            yield event
+    agent.run = hooked_run  # type: ignore
+
+    print("\n  👑 XL Agent — 交互模式 (Dashboard: http://localhost:8765)\n")
+
+    while True:
+        try:
+            user_input = input("> ").strip()
+        except (EOFError, KeyboardInterrupt):
+            print("\nBye.")
+            from agent.evolution import on_session_end
+            try: await asyncio.wait_for(on_session_end(agent), timeout=8)
+            except: pass
+            break
+        if not user_input: continue
+        if user_input == "/exit":
+            from agent.evolution import on_session_end
+            try: await asyncio.wait_for(on_session_end(agent), timeout=8)
+            except: pass
+            break
+        if user_input == "/clear": agent.clear_history(); continue
+        if user_input == "/memory":
+            for m in agent.memory.list_memories(): print(f"  {m}")
+            continue
+        print()
+        try:
+            async for event in agent.run(user_input):
+                etype = event.get("type", "")
+                if etype == "compacted": print(f"\n  [上下文压缩]")
+                elif etype == "text_delta": print(event["content"], end="", flush=True)
+                elif etype == "tool_call": print(f"\n  [TOOL] {event['name']}")
+                elif etype == "tool_result": print(f"  → {str(event['result'])[:200]}")
+                elif etype == "nudge": print(f"\n  [💡 Nudge]")
+                elif etype == "aborted": print("\n  [aborted]")
+                elif etype == "error": print(f"\n  [ERROR] {event['content']}")
+        except Exception as e: print(f"\n  [ERROR] {e}")
+        print()
+
+
+if __name__ == "__main__":
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--auto-learn":
+            asyncio.run(run_auto_learn())
+        elif sys.argv[1] == "--cleanup":
+            from agent.cleanup import run_cleanup
+            agent = build_agent()
+            asyncio.run(run_cleanup(agent))
+        elif sys.argv[1] == "--dashboard":
+            asyncio.run(run_dashboard())
+        elif sys.argv[1] == "--dashboard-learn":
+            asyncio.run(run_dashboard_learn())
+        else:
+            asyncio.run(run_single(" ".join(sys.argv[1:])))
+    else:
+        asyncio.run(run_interactive())

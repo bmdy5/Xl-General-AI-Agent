@@ -1,0 +1,328 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head><meta charset="UTF-8"><title>XL Agent — Pixel Office</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{background:#1a1c2c;display:flex;justify-content:center;align-items:center;height:100vh;overflow:hidden}
+canvas{image-rendering:pixelated;border:4px solid #f4d058;box-shadow:0 0 30px rgba(244,208,88,.3)}
+#info{position:fixed;bottom:10px;color:#8b8b9b;font:12px monospace}
+</style>
+</head>
+<body>
+<canvas id="c"></canvas>
+<div id="info"></div>
+<script>
+const C = document.getElementById('c');
+const X = C.getContext('2d');
+const W = 960, H = 600;
+C.width = W; C.height = H;
+const scale = Math.min(innerWidth/W, innerHeight/H) * 0.95;
+C.style.width = W * scale + 'px';
+C.style.height = H * scale + 'px';
+
+// ── Palette ──────────────────────────────
+const P = {
+  floor: '#2a2a3a', wall: '#3d3d55', wallDark: '#2d2d44',
+  door: '#5a4a3a', furniture: '#d4c8a0', deskTop: '#c4b890',
+  chair: '#b09860', screenOff: '#1a1a2a', screenOn: '#4ba4e0',
+  bookShelf: '#8b6914', book1: '#e04b4b', book2: '#4be05a', book3: '#4ba4e0',
+  carpet: '#3a2a4a', table: '#a08050',
+  xlGold: '#f4d058', xlRed: '#e04b4b',
+  learnBlue: '#4ba4e0', debateRed: '#e04b4b', debateGreen: '#4be05a',
+  devilPurple: '#a04be0', reviewGray: '#8b8b9b',
+  skin: '#f4c8a0', text: '#e0d8c0', dark: '#0f0f1b',
+};
+
+// ── Room Layout ──────────────────────────
+const ROOMS = {
+  computer:  {x:10,  y:10,  w:230, h:200, name:'电脑房',    color:'#1a2a3a'},
+  library:   {x:250, y:10,  w:230, h:200, name:'图书室',    color:'#2a1a1a'},
+  xlOffice:  {x:490, y:10,  w:230, h:200, name:'XL办公室',  color:'#2a2a1a'},
+  storage:   {x:730, y:10,  w:220, h:200, name:'杂物室',    color:'#1a2a2a'},
+  corridor:  {x:10,  y:220, w:940, h:80,  name:'走廊',      color:'#2a2a3a'},
+  meeting:   {x:10,  y:310, w:940, h:280, name:'会议室',     color:'#2a1a2a'},
+};
+
+// ── Furniture ────────────────────────────
+const DESKS = [
+  {room:'computer', x:30,y:60},{room:'computer', x:30,y:130},{room:'computer', x:130,y:60},{room:'computer', x:130,y:130},
+  {room:'library',x:270,y:60},{room:'library',x:270,y:130},
+  {room:'xlOffice',x:530,y:80},
+];
+const CHAIRS = [
+  {room:'computer',x:50,y:75},{room:'computer',x:50,y:145},{room:'computer',x:150,y:75},{room:'computer',x:150,y:145},
+  {room:'library',x:290,y:75},{room:'library',x:290,y:145},
+  {room:'xlOffice',x:550,y:95},
+];
+const SHELVES = [{room:'library',x:380,y:30},{room:'library',x:380,y:80},{room:'library',x:380,y:130}];
+const STORAGE_ITEMS = {chairs:6, desks:4};
+const MEETING_SEATS = [
+  {x:120,y:380},{x:200,y:380},{x:160,y:430},{x:120,y:480},{x:200,y:480},{x:300,y:430},
+];
+
+// ── Agents ───────────────────────────────
+const agents = {};
+let events = [];
+const ANIM = {frame:0, last:0};
+
+function spawnAgent(id, name, color, room) {
+  const r = ROOMS[room] || ROOMS.corridor;
+  agents[id] = {
+    id, name, color, room,
+    x: r.x + r.w/2, y: r.y + r.h/2,
+    tx: r.x + r.w/2, ty: r.y + r.h/2,
+    action: 'idle', bubble: '', bubbleTimer: 0,
+    carrying: null, seat: null,
+  };
+}
+
+// ── Drawing helpers ──────────────────────
+function rect(x,y,w,h,c){X.fillStyle=c;X.fillRect(x,y,w,h)}
+function pixelText(text,x,y,size,color){
+  X.fillStyle=color||P.text;X.font=(size||10)+'px monospace';X.fillText(text,x,y)
+}
+
+function drawRoom(r) {
+  // Floor
+  rect(r.x, r.y, r.w, r.h, r.color);
+  // Walls (border)
+  X.strokeStyle=P.wall;X.lineWidth=2;X.strokeRect(r.x,r.y,r.w,r.h);
+  // Name
+  pixelText(r.name, r.x+6, r.y+14, 10, P.text+'88');
+}
+
+function drawDoor(x, y, w, h) {
+  rect(x, y, w, h, P.door);
+  X.strokeStyle=P.wallDark;X.lineWidth=2;X.strokeRect(x,y,w,h);
+  rect(x+2, y+2, w-4, h-4, '#3a2a1a');
+}
+
+function drawDesk(x, y) {
+  rect(x, y, 40, 20, P.deskTop);
+  rect(x+2, y+2, 36, 16, P.furniture);
+  // Computer screen
+  rect(x+25, y-15, 12, 14, P.screenOff);
+  rect(x+26, y-14, 10, 8, P.dark);
+  rect(x+27, y-13, 8, 6, P.screenOff);
+}
+
+function drawChair(x, y, occupied) {
+  rect(x, y, 10, 10, occupied ? P.chair : P.furniture);
+  rect(x+2, y+2, 6, 6, occupied ? P.dark : '#b09860');
+}
+
+function drawBookshelf(x, y) {
+  rect(x, y, 20, 60, P.bookShelf);
+  for (let row = 0; row < 4; row++) {
+    const by = y + 5 + row * 14;
+    rect(x+2, by, 5, 12, P.book1);
+    rect(x+8, by, 5, 12, P.book2);
+    rect(x+13, by, 5, 12, P.book3);
+  }
+}
+
+function drawRoundTable(cx, cy, r) {
+  X.fillStyle=P.table;X.beginPath();X.arc(cx,cy,r,0,Math.PI*2);X.fill();
+  X.strokeStyle=P.deskTop;X.lineWidth=3;X.stroke();
+}
+
+function drawAgent(a) {
+  const {x, y, color, name, bubble, bubbleTimer, carrying, action} = a;
+  const fx = Math.round(x), fy = Math.round(y);
+  // Body
+  rect(fx-4, fy-2, 8, 10, color);
+  // Head
+  rect(fx-3, fy-10, 6, 8, P.skin);
+  // Eyes
+  rect(fx-2, fy-8, 2, 2, P.dark);
+  rect(fx+1, fy-8, 2, 2, P.dark);
+  // Carrying item
+  if (carrying === 'chair') {
+    rect(fx-8, fy-14, 6, 8, P.furniture);
+  } else if (carrying === 'desk') {
+    rect(fx-10, fy-16, 16, 6, P.deskTop);
+  }
+  // Working animation
+  if (action === 'work' && ANIM.frame % 30 < 15) {
+    rect(fx-6, fy-14, 2, 3, P.text);
+    rect(fx+2, fy-14, 2, 3, P.text);
+    rect(fx-2, fy-13, 2, 3, P.text);
+  }
+  // Name
+  pixelText(name, fx - name.length*3, fy-19, 8, color);
+  // Bubble
+  if (bubble && bubbleTimer > 0) {
+    const bw = Math.min(bubble.length*6 + 10, 200);
+    rect(fx+6, fy-35, bw, 16, '#fff');
+    pixelText(bubble.slice(0,30), fx+10, fy-23, 7, P.dark);
+  }
+}
+
+// ── Render Loop ──────────────────────────
+function render(ts) {
+  ANIM.frame++;
+  // Update agents
+  for (const id in agents) {
+    const a = agents[id];
+    // Move toward target
+    const dx = a.tx - a.x, dy = a.ty - a.y;
+    const dist = Math.sqrt(dx*dx + dy*dy);
+    if (dist > 0.5) {
+      a.x += dx * 0.08;
+      a.y += dy * 0.08;
+    } else {
+      a.x = a.tx; a.y = a.ty;
+    }
+    // Bubble timer
+    if (a.bubbleTimer > 0) a.bubbleTimer--;
+    else a.bubble = '';
+  }
+
+  // Clear
+  rect(0, 0, W, H, P.dark);
+
+  // Draw rooms
+  for (const key in ROOMS) drawRoom(ROOMS[key]);
+
+  // Doors (between rooms and corridor)
+  drawDoor(200, 210, 30, 10);  // computer → corridor
+  drawDoor(440, 210, 30, 10);  // library → corridor
+  drawDoor(580, 210, 30, 10);  // xlOffice → corridor
+  drawDoor(820, 210, 30, 10);  // storage → corridor
+  drawDoor(400, 300, 40, 10);  // corridor → meeting
+
+  // Bookshelves
+  SHELVES.forEach(s => drawBookshelf(s.x, s.y));
+
+  // Desks + chairs
+  DESKS.forEach(d => drawDesk(d.x, d.y));
+  CHAIRS.forEach(c => {
+    const occupied = Object.values(agents).some(a => a.action === 'work' && a.room === c.room);
+    drawChair(c.x, c.y, occupied);
+  });
+
+  // Meeting table
+  drawRoundTable(400, 430, 80);
+
+  // Meeting seats
+  MEETING_SEATS.forEach(s => rect(s.x-5, s.y-5, 10, 10, P.furniture));
+
+  // XL monitors
+  rect(560, 30, 15, 12, P.screenOff);
+  rect(580, 30, 15, 12, P.screenOn);
+  rect(600, 30, 15, 12, P.screenOff);
+
+  // Storage items indicator
+  pixelText(`🪑${STORAGE_ITEMS.chairs} 📦${STORAGE_ITEMS.desks}`, 750, 180, 10, P.furniture);
+
+  // Draw all agents
+  for (const id in agents) drawAgent(agents[id]);
+
+  // Info bar
+  pixelText(`Agents: ${Object.keys(agents).length} | FPS: ${Math.round(1000/(ts - ANIM.last + 1))}`, 10, H-10, 9, P.text+'66');
+  ANIM.last = ts;
+
+  requestAnimationFrame(render);
+}
+
+// ── SSE Events ───────────────────────────
+function connectSSE() {
+  const es = new EventSource('/events');
+  es.onmessage = (e) => {
+    try {
+      const data = JSON.parse(e.data);
+      handleEvent(data);
+    } catch(ex) {}
+  };
+  es.onerror = () => { setTimeout(connectSSE, 2000); };
+}
+
+function handleEvent(data) {
+  const {agent, event, name, topic, action, insights} = data;
+  const id = agent || 'xl';
+  const info = document.getElementById('info');
+  info.textContent = `${new Date().toLocaleTimeString()} | ${id}: ${event}`;
+
+  if (!agents[id]) {
+    let room = 'corridor';
+    let color = P.learnBlue;
+    if (id === 'xl') { room = 'xlOffice'; color = P.xlGold; }
+    else if (event && event.includes('debate')) { room = 'meeting'; color = P.debateGreen; }
+    else if (event && event.includes('review')) { room = 'meeting'; color = P.reviewGray; }
+    else if (event && event.includes('web')) { room = 'computer'; color = P.debateRed; }
+    else if (event && event.includes('local')) { room = 'library'; color = P.learnBlue; }
+    spawnAgent(id, name || id, color, room);
+  }
+
+  const a = agents[id];
+
+  switch(event) {
+    case 'search_start':
+    case 'web_search':
+      moveToRoom(a, 'computer');
+      a.action = 'work';
+      a.bubble = '搜索中...'; a.bubbleTimer = 80;
+      break;
+    case 'read_local':
+      moveToRoom(a, 'library');
+      a.action = 'work';
+      a.bubble = '读本地...'; a.bubbleTimer = 80;
+      break;
+    case 'fetch_article':
+      a.action = 'work';
+      a.bubble = '阅读文章...'; a.bubbleTimer = 60;
+      break;
+    case 'extract_done':
+      a.bubble = '✅ 提取完成'; a.bubbleTimer = 40;
+      break;
+    case 'enter_debate':
+      moveToRoom(a, 'meeting');
+      a.action = 'debate';
+      break;
+    case 'critique':
+      a.bubble = '质疑!'; a.bubbleTimer = 50;
+      break;
+    case 'rebut':
+      a.bubble = '反驳!'; a.bubbleTimer = 50;
+      break;
+    case 'score':
+      a.bubble = `评分:${action||'?'}`; a.bubbleTimer = 60;
+      break;
+    case 'save_memory':
+      a.bubble = '💾 存记忆'; a.bubbleTimer = 40;
+      moveToRoom(a, 'xlOffice');
+      break;
+    case 'learn_done':
+      a.action = 'idle';
+      a.bubble = '学完了'; a.bubbleTimer = 60;
+      break;
+    case 'periodic_nudge':
+      if (id === 'xl') a.bubble = '💡 检查记忆'; a.bubbleTimer = 50;
+      break;
+    case 'debate_start':
+      a.bubble = '⚔️ 开始辩论'; a.bubbleTimer = 40;
+      break;
+    default:
+      if (event && event.includes('start')) a.action = 'work';
+      if (event && event.includes('done')) a.action = 'idle';
+  }
+
+  // Update events log
+  events.unshift({time: Date.now(), ...data});
+  if (events.length > 50) events.length = 50;
+}
+
+function moveToRoom(a, roomKey) {
+  const r = ROOMS[roomKey] || ROOMS.corridor;
+  a.room = roomKey;
+  a.tx = r.x + r.w/2 + (Math.random() - 0.5) * 40;
+  a.ty = r.y + r.h/2 + (Math.random() - 0.5) * 20;
+}
+
+// ── Boot ─────────────────────────────────
+spawnAgent('xl', 'XL', P.xlGold, 'xlOffice');
+connectSSE();
+requestAnimationFrame(render);
+</script>
+</body>
+</html>

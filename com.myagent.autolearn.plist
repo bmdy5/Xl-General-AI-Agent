@@ -1,0 +1,46 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.myagent.autolearn</string>
+
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/.venv/bin/python</string>
+        <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/main.py</string>
+        <string>--auto-learn</string>
+    </array>
+
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Hour</key>
+        <integer>10</integer>
+        <key>Minute</key>
+        <integer>0</integer>
+    </dict>
+
+    <key>StandardOutPath</key>
+    <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/auto_learn.log</string>
+
+    <key>StandardErrorPath</key>
+    <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/auto_learn.err</string>
+
+    <key>WorkingDirectory</key>
+    <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent</string>
+
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/xiaofeng</string>
+    </dict>
+
+    <key>RunAtLoad</key>
+    <false/>
+
+    <key>KeepAlive</key>
+    <false/>
+</dict>
+</plist>

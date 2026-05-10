@@ -1,0 +1,9 @@
+.env
+__pycache__/
+*.pyc
+.claude/
+auto_learn.err
+auto_learn.log
+.DS_Store
+.venv/
+node_modules/
