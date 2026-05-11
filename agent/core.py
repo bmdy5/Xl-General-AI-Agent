@@ -21,11 +21,15 @@ from .evolution import audit_tool_call, select_relevant_memories, filter_memorie
 
 
 # ── 静态段（缓存安全，不随对话变化）──
-STATIC_PROMPT = """You are XiaoFeng's personal AI agent. You evolve with every interaction.
+STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI agent. You evolve with every interaction.
 
 ## Guidelines
 - Reply in Chinese unless I ask in English.
 - Be concise — no unnecessary explanations.
+- Plain text only, NO Markdown formatting. Never use bold, code blocks, headers.
+- Chat like a real person: short messages (1-3 sentences), not essays.
+- To break into multiple messages, insert [SPLIT] between them.
+- To pause between messages, use [WAIT:N] where N is seconds. Example: "好的。[WAIT:1.5][SPLIT]查到了。"
 - file_path MUST always be an absolute path.
 - Use save_memory for persistent facts. Check it before answering about my preferences.
 - When I correct you, save it as feedback via save_memory."""
@@ -104,16 +108,16 @@ class Agent:
 
             # ── Memory block ──
             system_prompt = cached_prompt
-            if turn == 0:
-                memory_block = cached_block
-            elif self._turn_count % 10 == 0:
+            if self._turn_count > 0 and self._turn_count % 10 == 0:
                 memory_block = await self._build_memory_block(user_input, turn)
             else:
-                memory_block = None
+                memory_block = cached_block  # 每轮注入
 
-            llm_messages = [{"role": "system", "content": system_prompt}]
+            # 合并 system prompt + memory block 为一条消息（DeepSeek 不兼容连续 system）
+            merged_system = system_prompt
             if memory_block:
-                llm_messages.append({"role": "system", "content": memory_block})
+                merged_system += "\n\n" + memory_block
+            llm_messages = [{"role": "system", "content": merged_system}]
             llm_messages.extend(self.messages)
 
             tools = self.registry.get_definitions()
@@ -146,7 +150,7 @@ class Agent:
                     return
             else:
                 content, reasoning, tool_calls_list = await self._llm_chat(llm_messages, tools)
-                if tool_calls_list is None:
+                if content is None:
                     yield {"type": "error", "content": "LLM call failed"}
                     return
 
@@ -180,6 +184,10 @@ class Agent:
                 self._plan_approved.clear()
                 await self._plan_approved.wait()
                 if self._abort.is_set():
+                    # 回滚孤儿 tool_calls 消息，否则下次 LLM 会报错
+                    self.messages.pop()
+                    if self.session:
+                        await self.session.replace_all(self.messages)
                     yield {"type": "aborted"}
                     return
 
@@ -242,13 +250,14 @@ class Agent:
                     pass
 
             if self._abort.is_set():
-                return "", "", None
+                return None, None, None
 
             response = llm_task.result()
             self._total_tokens += response.get("tokens_used", 0)
-            return response["content"], response.get("reasoning_content"), response["tool_calls"]
+            tc = response.get("tool_calls")
+            return response["content"], response.get("reasoning_content"), tc if tc else []
         except Exception:
-            return "", "", None
+            return None, None, None  # sentinel for error
 
     async def _llm_stream(self, messages: list[dict], tools: list[dict]) -> AsyncGenerator[dict, None]:
         """流式 LLM 调用，yield UI events，最后 yield _done 事件."""
@@ -296,6 +305,7 @@ class Agent:
 
     def abort(self):
         self._abort.set()
+        self._plan_approved.set()  # 防止 plan mode 死锁
 
     def clear_history(self):
         self.messages.clear()

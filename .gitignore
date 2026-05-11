@@ -7,3 +7,4 @@ auto_learn.log
 .DS_Store
 .venv/
 node_modules/
+.obsidian/
