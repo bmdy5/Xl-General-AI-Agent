@@ -76,8 +76,7 @@ class Agent:
         self._total_tokens = 0
 
         # ── 鲁棒性修护 ──
-        # 在处理新输入前，修护可能的“断链”历史（抄 CC + tinypace 容错逻辑）
-        await self._repair_history()
+        # (已移至 _run_loop 内部，确保每轮迭代前都修护)
 
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
@@ -131,7 +130,7 @@ class Agent:
                 "role": "tool",
                 "tool_call_id": item["id"],
                 "name": item["name"],
-                "content": "Error: Execution interrupted or task aborted before tool response."
+                "content": "已完成/执行中断"
             }
             self.messages.append(placeholder)
             if self.session:
@@ -143,6 +142,9 @@ class Agent:
         cached_block = await self._build_memory_block(user_input, 0)
 
         while turn < self.max_turns:
+            # ── 鲁棒性修护 ──
+            # 在每轮 LLM 调用前，确保对话历史符合规范（解决 DeepSeek 孤儿 tool_call 报错）
+            await self._repair_history()
             if self._abort.is_set():
                 yield {"type": "aborted"}
                 return

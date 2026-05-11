@@ -106,7 +106,7 @@ class QQGateway:
         buf = ""
         sent_ack = False
         try:
-            async for evt in agent.run(raw, stream=True, plan_mode=True):
+            async for evt in agent.run(raw, stream=True, plan_mode=False):
                 if evt["type"] == "text_delta":
                     buf += evt["content"]
                 elif evt["type"] == "tool_call" and evt.get("name"):
