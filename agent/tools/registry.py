@@ -4,7 +4,7 @@
 去掉 hermes 原版的 TTL 缓存、线程安全、toolset 管理——对单用户 agent 不需要。
 """
 
-from typing import Callable, Optional
+from typing import Any, Callable, Optional
 
 from .base_tool import BaseTool
 
