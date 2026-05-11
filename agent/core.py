@@ -20,6 +20,12 @@ from .compressor import ContextCompressor
 from .evolution import audit_tool_call, select_relevant_memories, filter_memories_by_relevance
 
 
+def _keyword_score(keywords: list[str], text: str) -> float:
+    """Simple keyword match score for memory ranking."""
+    text_lower = text.lower()
+    return sum(1.0 for kw in keywords if kw in text_lower)
+
+
 # ── 静态段（缓存安全，不随对话变化）──
 STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI agent. You evolve with every interaction.
 
@@ -69,6 +75,10 @@ class Agent:
         self._turn_count = 0
         self._total_tokens = 0
 
+        # ── 鲁棒性修护 ──
+        # 在处理新输入前，修护可能的“断链”历史（抄 CC + tinypace 容错逻辑）
+        await self._repair_history()
+
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
             await self.session.append_message({"role": "user", "content": user_input})
@@ -81,6 +91,51 @@ class Agent:
             yield {"type": "aborted"}
         finally:
             self._abort.clear()
+
+    async def _repair_history(self):
+        """确保对话历史符合 LLM 规范：assistant 的 tool_calls 必须跟有对应的 tool 结果。"""
+        if not self.messages:
+            return
+
+        import logging
+        repair_logger = logging.getLogger("agent.repair")
+
+        # 1. 扫描所有 assistant 发出的 tool_call_ids
+        assistant_calls = []
+        for m in self.messages:
+            if m.get("role") == "assistant" and m.get("tool_calls"):
+                for tc in m["tool_calls"]:
+                    if tc.get("id"):
+                        assistant_calls.append({
+                            "id": tc["id"],
+                            "name": tc.get("function", {}).get("name", "unknown")
+                        })
+
+        # 2. 扫描所有已有的 tool 结果 ids
+        existing_tool_ids = {
+            m["tool_call_id"] for m in self.messages
+            if m.get("role") == "tool" and m.get("tool_call_id")
+        }
+
+        # 3. 找出缺失结果的 IDs
+        missing = [c for c in assistant_calls if c["id"] not in existing_tool_ids]
+        
+        if not missing:
+            return
+
+        repair_logger.warning(f"检测到 {len(missing)} 个孤儿工具调用，正在自动补全占位符以修复对话链...")
+
+        # 4. 补全缺失的 tool 消息
+        for item in missing:
+            placeholder = {
+                "role": "tool",
+                "tool_call_id": item["id"],
+                "name": item["name"],
+                "content": "Error: Execution interrupted or task aborted before tool response."
+            }
+            self.messages.append(placeholder)
+            if self.session:
+                await self.session.append_message(placeholder)
 
     async def _run_loop(self, user_input: str, turn: int, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
@@ -312,6 +367,25 @@ class Agent:
 
     # ── internal ───────────────────────────────────────────────
 
+    async def _extract_keywords(self, user_input: str) -> list[str]:
+        """Flash 模型提取关键词，用于记忆排序."""
+        if len(user_input) < 10:
+            return []
+        try:
+            import os
+            flash_model = os.getenv("MYAGENT_LEARN_MODEL", "")
+            resp = await self.llm.chat(
+                messages=[{"role": "user", "content": (
+                    f"从用户输入提取3-5个关键词（空格分隔，只输出关键词）:\n{user_input[:200]}"
+                )}],
+                tools=None,
+                model_override=flash_model,
+            )
+            text = resp.get("content", "").strip()
+            return [kw.strip().lower() for kw in text.split() if kw.strip()][:5]
+        except Exception:
+            return []
+
     async def _build_system_prompt(self) -> str:
         """组装 system prompt = 静态段 + 当前上下文 + 自进化规则."""
         now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
@@ -331,18 +405,33 @@ class Agent:
         return self.static_prompt + dynamic
 
     async def _build_memory_block(self, user_input: str, turn: int) -> Optional[str]:
-        """构建 [MEMORY BLOCK]（抄 hermes 隔离注入 + openclaw 上限）."""
+        """构建 [MEMORY BLOCK]（抄 hermes 隔离注入 + openclaw 上限）.
+
+        v3: Flash 模型提取关键词 → Top-5 注入（降 Token 30%）.
+        """
         entries = self.memory._parse_index()
         if not entries:
             return None
 
         entries = filter_memories_by_relevance(entries, user_input)
-        entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
 
-        if turn == 0:
-            asyncio.create_task(select_relevant_memories(self, user_input, max_count=8))
+        # ── Flash 模型提取关键词 → Top-5 排序 ──
+        keywords = await self._extract_keywords(user_input)
+        if keywords:
+            entries = sorted(
+                entries,
+                key=lambda e: _keyword_score(
+                    keywords, e.get("description", "") + " " + e.get("filename", "")
+                ),
+                reverse=True,
+            )
+        else:
+            entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
 
-        # 去重取前 8 条
+        if turn == 0 and keywords:
+            asyncio.create_task(select_relevant_memories(self, user_input, max_count=5))
+
+        # 去重取前 5 条（v3 从 8 降到 5）
         seen = set()
         relevant = []
         for e in entries:
@@ -350,7 +439,7 @@ class Agent:
             if fname not in seen:
                 seen.add(fname)
                 relevant.append(e)
-            if len(relevant) >= 8:
+            if len(relevant) >= 5:
                 break
 
         lines = ["[MEMORY BLOCK]"]
@@ -359,11 +448,11 @@ class Agent:
 
         for i, e in enumerate(relevant):
             ts = e.get("timestamp", "")[:19]
-            if i < 2:
+            if i < 1:  # v3: 只展开第 1 条全文（从 2 降到 1）
                 content = await self.memory.get_entry(e["filename"])
                 if content:
                     clean = content.split("<!-- previous version -->")[0]
-                    clean = clean.split("<!-- updated:")[0].strip()[:500]
+                    clean = clean.split("<!-- updated:")[0].strip()[:400]
                     lines.append(f"### {e['description']} ({ts})\n{clean}\n")
                 else:
                     lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
@@ -377,7 +466,7 @@ class Agent:
         lines.append("[/MEMORY BLOCK]")
         block = "\n".join(lines)
 
-        max_chars = 4000
+        max_chars = 3000  # v3: 从 4000 降到 3000
         if len(block) > max_chars:
             block = block[:max_chars] + "\n... (truncated)\n[/MEMORY BLOCK]"
 
