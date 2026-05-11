@@ -124,17 +124,30 @@ class Agent:
 
         repair_logger.warning(f"检测到 {len(missing)} 个孤儿工具调用，正在自动补全占位符以修复对话链...")
 
-        # 4. 补全缺失的 tool 消息
+        # 4. 补全缺失的 tool 消息 (精准插队)
         for item in missing:
             placeholder = {
                 "role": "tool",
                 "tool_call_id": item["id"],
                 "name": item["name"],
-                "content": "已完成/执行中断"
+                "content": "正在等待人工确认/已恢复执行"
             }
-            self.messages.append(placeholder)
-            if self.session:
-                await self.session.append_message(placeholder)
+            # 找到对应的 assistant 消息位置，插在它后面
+            target_idx = -1
+            for idx, m in enumerate(self.messages):
+                if m.get("role") == "assistant" and m.get("tool_calls"):
+                    if any(tc.get("id") == item["id"] for tc in m["tool_calls"]):
+                        target_idx = idx
+                        break
+            
+            if target_idx != -1:
+                self.messages.insert(target_idx + 1, placeholder)
+                repair_logger.info(f"已在位置 {target_idx + 1} 插入占位符修复对话链")
+            else:
+                self.messages.append(placeholder)
+                
+        if self.session:
+            await self.session.replace_all(self.messages)
 
     async def _run_loop(self, user_input: str, turn: int, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
