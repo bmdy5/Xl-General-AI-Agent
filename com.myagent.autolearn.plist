@@ -7,8 +7,8 @@
 
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/.venv/bin/python</string>
-        <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/main.py</string>
+        <string>/Users/xiaofeng/bot-我的自搭建agent/肖亮搭建的agent/.venv/bin/python</string>
+        <string>/Users/xiaofeng/bot-我的自搭建agent/肖亮搭建的agent/main.py</string>
         <string>--auto-learn</string>
     </array>
 
@@ -21,13 +21,13 @@
     </dict>
 
     <key>StandardOutPath</key>
-    <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/auto_learn.log</string>
+    <string>/Users/xiaofeng/bot-我的自搭建agent/肖亮搭建的agent/auto_learn.log</string>
 
     <key>StandardErrorPath</key>
-    <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent/auto_learn.err</string>
+    <string>/Users/xiaofeng/bot-我的自搭建agent/肖亮搭建的agent/auto_learn.err</string>
 
     <key>WorkingDirectory</key>
-    <string>/Users/xiaofeng/Documents/个人博客/学习笔记/agent工程学习/搭建agent</string>
+    <string>/Users/xiaofeng/bot-我的自搭建agent/肖亮搭建的agent</string>
 
     <key>EnvironmentVariables</key>
     <dict>
