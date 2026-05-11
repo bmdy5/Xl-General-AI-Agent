@@ -33,6 +33,8 @@ class QQGateway:
     def __init__(self, agent_factory):
         self._factory = agent_factory          # () → Agent
         self._agents: dict[str, object] = {}   # user_id/group_id → Agent
+        self._http: Optional[aiohttp.ClientSession] = None
+        self._pending_perms: dict[str, asyncio.Event] = {}  # session_key → Event
 
     async def run(self):
         """连接 NapCat WebSocket，循环处理消息."""
@@ -71,7 +73,6 @@ class QQGateway:
         user_id = str(event.get("user_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
 
-        # 群聊：必须 @bot
         if msg_type == "group":
             self_id = str(event.get("self_id", ""))
             if f"[CQ:at,qq={self_id}]" not in raw:
@@ -83,41 +84,103 @@ class QQGateway:
         else:
             session_key = f"user_{user_id}"
 
+        # 检查是否在等权限确认
+        perm = self._pending_perms.get(session_key)
+        if perm is not None:
+            lower = raw.lower().strip()
+            if lower in ("允许", "y", "yes", "ok", "好", "可以", "行"):
+                self._perm_result = True
+            else:
+                self._perm_result = False
+            perm.set()
+            return
+
         logger.info(f"QQ [{session_key}]: {raw[:80]}")
 
-        # 获取或创建 per-user agent
         agent = self._agents.get(session_key)
         if agent is None:
             agent = self._factory()
             self._agents[session_key] = agent
 
-        # 调用 agent
-        reply_parts = []
-        tool_count = 0
+        # 流式调用 — plan mode 默认开启，工具执行前弹 macOS 对话框
+        buf = ""
+        sent_ack = False
         try:
-            async for evt in agent.run(raw, stream=False):
+            async for evt in agent.run(raw, stream=True, plan_mode=True):
                 if evt["type"] == "text_delta":
-                    reply_parts.append(evt["content"])
-                elif evt["type"] == "tool_call":
-                    tool_count += 1
+                    buf += evt["content"]
+                elif evt["type"] == "tool_call" and evt.get("name"):
+                    if buf.strip() and not sent_ack:
+                        sent_ack = True
+                        await self._send_chunk(msg_type, user_id, group_id, buf.strip())
+                        buf = ""
+                    await self._send(msg_type, user_id, group_id,
+                        f"正在{_tool_label(evt['name'])}...")
+                elif evt["type"] == "plan_ready":
+                    tools = evt.get("tools", [])
+                    plan_text = evt.get("content", "")[:300]
+                    approved = await self._ask_permission(msg_type, user_id, group_id, plan_text, tools)
+                    if approved:
+                        agent.approve_plan()
+                    else:
+                        agent.abort()
+                        await self._send(msg_type, user_id, group_id, "已取消。")
+                        return
                 elif evt["type"] == "error":
-                    reply_parts.append(f"\n[错误: {evt['content']}]")
+                    buf += f"\n[错误: {evt['content']}]"
         except Exception as e:
-            reply_parts.append(f"[异常: {e}]")
+            buf += f"[异常: {e}]"
 
-        reply = "".join(reply_parts).strip()
-        if not reply:
-            return
+        # 发送剩余文本（按 [SPLIT] 分段，处理 [WAIT:N]）
+        if buf.strip():
+            await self._send_chunk(msg_type, user_id, group_id, buf.strip())
 
-        # 截断过长回复
-        if len(reply) > MAX_REPLY_CHARS:
-            reply = reply[:MAX_REPLY_CHARS - 20] + "\n...(truncated)"
+    async def _send_chunk(self, msg_type, user_id, group_id, text):
+        """发送一个文本块，处理 [SPLIT] 和 [WAIT:N]."""
+        wait = 0
+        def _extract_wait(t):
+            nonlocal wait
+            m = re.search(r'\[WAIT:([\d.]+)\]', t)
+            if m:
+                wait = max(wait, float(m.group(1)))
+                t = re.sub(r'\[WAIT:[\d.]+\]', '', t)
+            return t
 
-        await self._send(msg_type, user_id, group_id, reply)
+        parts = text.split("[SPLIT]")
+        for i, part in enumerate(parts):
+            part = _extract_wait(part.strip())
+            if not part:
+                continue
+            if len(part) > MAX_REPLY_CHARS:
+                part = part[:MAX_REPLY_CHARS - 20] + "\n...(truncated)"
+            await self._send(msg_type, user_id, group_id, part)
+            if i < len(parts) - 1:
+                delay = max(0.5, wait) if wait > 0 else _natural_delay(part)
+                await asyncio.sleep(delay)
+                wait = 0
+
+    async def _ask_permission(self, msg_type, user_id, group_id, plan_text, tools) -> bool:
+        """QQ 上发确认消息，等用户回复."""
+        session_key = f"group_{group_id}" if group_id else f"user_{user_id}"
+        tool_list = ", ".join(tools)
+        await self._send(msg_type, user_id, group_id,
+            f"准备执行: {tool_list}\n{plan_text[:200]}\n\n回复「允许」继续，其他取消。")
+
+        evt = asyncio.Event()
+        self._pending_perms[session_key] = evt
+        try:
+            await asyncio.wait_for(evt.wait(), timeout=120)
+            return self._perm_result
+        except asyncio.TimeoutError:
+            await self._send(msg_type, user_id, group_id, "超时，已取消。")
+            return False
+        finally:
+            self._pending_perms.pop(session_key, None)
+
 
     async def _send(self, msg_type: str, user_id: str, group_id: str, text: str):
         """通过 NapCat HTTP API 发送消息."""
-        if msg_type == "private":
+        if msg_type in ("private", "temp"):
             endpoint = "/send_private_msg"
             payload = {"user_id": int(user_id), "message": text}
         else:
@@ -130,11 +193,41 @@ class QQGateway:
             headers["Authorization"] = f"Bearer {NC_TOKEN}"
 
         try:
-            async with self._http.post(url, json=payload, headers=headers) as resp:
-                if resp.status != 200:
-                    body = await resp.text()
-                    logger.warning(f"Send failed ({resp.status}): {body[:100]}")
-                else:
-                    logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
+            if self._http:
+                async with self._http.post(url, json=payload, headers=headers) as resp:
+                    if resp.status != 200:
+                        body = await resp.text()
+                        logger.warning(f"Send failed ({resp.status}): {body[:100]}")
+                    else:
+                        logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
+            else:
+                req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=10))
+                logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
         except Exception as e:
             logger.error(f"Send error: {e}")
+
+
+# ── 模块级工具 ─────────────────────────────────────────────
+
+
+def _tool_label(name: str) -> str:
+    return {
+        "web_search": "搜索资料", "web_fetch": "读取网页",
+        "read_file": "读取文件", "write_file": "写入文件",
+        "bash": "执行命令", "spawn_agent": "派子Agent干活",
+        "save_memory": "保存记忆", "read_image": "分析图片",
+    }.get(name, f"调用{name}")
+
+
+def _natural_delay(text: str) -> float:
+    """根据文本长度自然计算发送间隔."""
+    n = len(text)
+    if n < 10:
+        return 0.3
+    if n < 30:
+        return 0.6
+    if n < 80:
+        return 1.0
+    return 1.5
