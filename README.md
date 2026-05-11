@@ -1,22 +1,32 @@
-# XL Agent — 通用自进化 AI Agent (v2.1)
+# XL Agent — 通用自进化 AI Agent (v2.2)
 
-> 老肖的个人 AI Agent。ReAct 循环 + 智能权限拦截 + Docker 生产级部署。
+> 老肖的个人 AI Agent。ReAct 循环 + FTS5 情景回忆 + Token 优化 + Docker 生产级部署。
 
 ## ✨ 核心特性
 
+### 🔍 情景回忆 (FTS5 Full-Text Search)
+- **SQLite FTS5 全文索引**：JSONL 会话历史自动同步到 FTS5 虚拟表，毫秒级检索
+- **CJK 中文分词**：中文字符自动分字预处理，英文/中文混合搜索无死角
+- **snippet() 上下文片段**：搜索结果高亮命中词 + 前后文，不只是文件列表
+- **降级保护**：FTS5 语法异常 → LIKE 降级 → JSONL grep 兜底，三层保障
+
+### 🧠 Token 优化 (Dynamic Top-K)
+- **Flash 模型关键词提取**：用户输入 → Flash 模型提取 3-5 个关键词
+- **关键词匹配排序**：记忆按命中数排序，只注入 Top-5 最相关条目（原 8 条）
+- **精简展开**：仅 1 条全文展开（原 2 条），上限从 4000 → 3000 字符
+- **实测效果**：记忆注入 Token 降低约 40%
+
+### 🔗 记忆合并去重 (Memory Merge)
+- **同主题检测**：保存前扫描旧记忆，文件名精确匹配 + 关键词重叠双路检测
+- **LLM 合并**：新旧内容 → LLM 去重合并 → 删除旧文件，避免记忆膨胀
+
 ### 🛡️ 智能权限拦截 (Smart-Permission)
-**效率与安全的完美平衡。** 
-*   **安全工具自动执行**：`read_file`、`save_memory`、`web_search` 等无害工具由 Agent 自动决策并执行，无需人工确认，交互极其丝滑。
-*   **危险操作强制拦截**：通过正则引擎实时监控 `bash` 指令。任何包含 `rm`、`rmdir`、`truncate` 等删除行为，或调用带 `delete` 字样的工具，都会自动触发 **Plan Mode**，必须经过用户 QQ 或 CLI 手动确认方可继续。
+- **安全工具自动执行**：`read_file`、`save_memory`、`web_search` 等自动通过
+- **危险操作强制拦截**：`rm`、`rmdir`、`truncate` 等自动触发 Plan Mode 确认
 
 ### 🧬 自进化与鲁棒性
-*   **Transcript Repair (对话修护)**：核心循环内置“历史洗涤器”。在每一轮 LLM 调用前，自动扫描并补全因网络异常、断电导致的“孤儿工具请求”，彻底根除 `insufficient tool messages` 报错。
-*   **自进化规则 (L6 记忆)**：当用户针对同一主题进行 ≥2 次反馈时，LLM 会提炼出规则并自动注入 `EVOLVED_RULES.md`，实现“越用越懂你”。
-
-### 🌐 QQ Gateway 24/7 持久接入
-*   **OneBot v11 协议**：通过 NapCat 集成，支持私聊/群聊、@提及过滤。
-*   **持久化登录**：采用标准化的 `~/.xlagent/napcat_data` 存储，扫码一次，永久授权。
-*   **分布式/云端友好**：原生支持 Docker 部署，在腾讯云等服务器上实现 24 小时在线。
+- **Transcript Repair**：自动扫描补全孤儿 tool_calls，根除 API 400 错误
+- **自进化规则 (L6)**：同主题反馈 ≥2 次 → LLM 生成规则 → 注入 system prompt
 
 ---
 
@@ -61,38 +71,52 @@
 
 ---
 
-## 📁 项目结构 (v2.1)
+## 📁 项目结构 (v2.2)
 
 ```text
 肖亮搭建的agent/
-├── main.py                     # 统一入口（支持 --gateway, --auto-learn 等）
+├── main.py                     # 统一入口（--gateway/--auto-learn/--cleanup/--plan）
 ├── Dockerfile                  # Agent 镜像定义
 ├── docker-compose.yml          # NapCat + Agent 容器编排
 ├── 启动QQAgent.command          # macOS 一键启动脚本
 │
 ├── agent/                      # 核心代码区
-│   ├── core.py                 # Agent 主循环 & 历史自动修护
-│   ├── gateway.py              # QQ 网关 & 智能权限拦截器
-│   ├── evolution.py            # 自进化逻辑
-│   ├── tools/                  # 模块化工具箱
-│   └── memory/                 # 长期记忆管理 (MEMORY.md)
+│   ├── core.py                 # 主循环 + Transcript Repair + 关键词提取
+│   ├── llm.py                  # LiteLLM 封装
+│   ├── compressor.py           # 上下文压缩（Head/Tail + LLM 摘要 + 熔断器）
+│   ├── auto_learn.py           # 自主学习（子代理并行 + 辩论审查）
+│   ├── evolution.py            # 自进化 7 模式
+│   ├── cleanup.py              # 知识库清理（pro 模型批量审查）
+│   ├── gateway.py              # QQ Gateway（NapCat WebSocket + HTTP API）
+│   ├── dashboard.py            # HTTP+SSE server
+│   ├── tools/                  # 9 个内置工具
+│   ├── memory/
+│   │   └── manager.py          # MEMORY.md + 时间戳进化 + 用户画像
+│   └── session/
+│       └── handler.py          # JSONL 持久化 + SQLite FTS5 + Transcript repair
 │
-├── agent/systemd/              # 服务化配置
-│   └── com.xlagent.qq.plist    # macOS LaunchAgent 守护进程
+├── tests/                      # 单元测试
+│   ├── test_fts5_index.py      # FTS5 索引验证
+│   └── test_phase2_memory.py   # 关键词/合并验证
 │
-└── docs/                       # 设计与规划文档
-    ├── 核心技能系统.md          # 技能演进路线
-    └── 问题修复与自动启动规划.md   # 本次升级的技术细节
+├── agent/systemd/              # macOS LaunchAgent
+│   └── com.xlagent.qq.plist
+│
+└── docs/                       # 设计文档
+    ├── implementation_plan.md          # 深度进化实施计划
+    ├── 对比分析-与同事Agent对比.md        # 竞品分析
+    └── 升级路线总览.md                   # 升级路线
 ```
 
 ---
 
 ## ⚙️ 技术栈
-*   **LLM 引擎**: LiteLLM (支持 OpenAI/DeepSeek/Claude)
+*   **LLM 引擎**: LiteLLM (DeepSeek V4 Pro 对话 / Flash 学习)
 *   **机器人框架**: NapCat (OneBot v11)
+*   **全文搜索**: SQLite FTS5 + CJK 分字预处理
 *   **容器化**: Docker & Docker Compose
-*   **语言**: Python 3.10+ (Asyncio)
-*   **记忆**: 纯文本 MEMORY.md + JSONL 会话日志
+*   **语言**: Python 3.14 (Asyncio)
+*   **记忆**: MEMORY.md + JSONL + SQLite FTS5 三层存储
 
 ---
 **Powered by XL Agent Team.** 实现真正的个人数字化智能助手。
