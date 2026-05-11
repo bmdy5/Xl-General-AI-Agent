@@ -37,10 +37,27 @@ if [ ! -f ".env" ]; then
 fi
 
 # 4. 国内环境优化 (自动修复 Dockerfile 源)
-if [[ $(curl -s ipinfo.io/country) == "CN" ]]; then
-    echo -e "${GREEN}检测到国内网络环境，正在应用加速优化...${NC}"
+IS_CN=false
+if [[ $(curl -s --connect-timeout 2 ipinfo.io/country) == "CN" ]]; then
+    IS_CN=true
+elif ping -c 1 -W 2 baidu.com &> /dev/null; then
+    IS_CN=true
+fi
+
+if [ "$IS_CN" = true ]; then
+    echo -e "${GREEN}检测到国内网络环境，正在应用极致加速优化...${NC}"
+    # 修改 Dockerfile 里的系统源
     sed -i 's/deb.debian.org/mirrors.aliyun.com/g' Dockerfile 2>/dev/null || true
     sed -i 's/security.debian.org/mirrors.aliyun.com/g' Dockerfile 2>/dev/null || true
+    
+    # 注入 Pip 加速配置到 Dockerfile (如果还没注入)
+    if ! grep -q "mirrors.aliyun.com/pypi" Dockerfile; then
+        sed -i '/WORKDIR \/app/a RUN pip config set global.index-url https://mirrors.aliyun.com/pypi/simple/' Dockerfile
+    fi
+    
+    # 对 Debian 12 (Bookworm) 特殊处理，有些镜像使用新的 sources 格式
+    # 这部分通常在构建时通过 Dockerfile 里的 RUN 指令处理更稳，
+    # 我们已经在 Dockerfile 里加上了相关 RUN 指令。
 fi
 
 # 5. 停止旧容器 (如果存在)
