@@ -237,7 +237,7 @@ class Agent:
             # ── Plan mode: 等待用户确认 ──
             if plan_mode:
                 tool_names = [tc["function"]["name"] for tc in tool_calls_list]
-                yield {"type": "plan_ready", "content": content, "tools": tool_names}
+                yield {"type": "plan_ready", "content": content, "tools": tool_names, "full_calls": tool_calls_list}
                 self._plan_approved.clear()
                 await self._plan_approved.wait()
                 if self._abort.is_set():

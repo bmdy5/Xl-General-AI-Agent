@@ -1,0 +1,42 @@
+version: '3.8'
+
+services:
+  # QQ 协议端
+  napcat:
+    image: mlikiowa/napcat-docker:latest
+    container_name: napcat
+    restart: always
+    ports:
+      - "6099:6099"  # WebUI 端口
+      - "3000:3000"  # HTTP API
+      - "3001:3001"  # WebSocket
+    volumes:
+      - ./napcat_data:/app/.config/QQ
+      - ./napcat_data:/root/.config/QQ
+    environment:
+      - ACCOUNT=3870213248 # 你的 QQ 号
+    networks:
+      - agent-net
+
+  # AI Agent
+  xl-agent:
+    build: .
+    container_name: xl-agent
+    restart: always
+    depends_on:
+      - napcat
+    environment:
+      - NAPCAT_WS_URL=ws://napcat:3001
+      - NAPCAT_HTTP_URL=http://napcat:3000
+      - MYAGENT_MODEL=${MYAGENT_MODEL}
+      - MYAGENT_API_KEY=${MYAGENT_API_KEY}
+      - MYAGENT_API_BASE=${MYAGENT_API_BASE}
+    volumes:
+      - ./agent_mem:/root/.xlagent # 记忆持久化
+      - .:/app # 方便代码热更新
+    networks:
+      - agent-net
+
+networks:
+  agent-net:
+    driver: bridge
