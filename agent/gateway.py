@@ -21,8 +21,8 @@ import aiohttp
 
 logger = logging.getLogger(__name__)
 
-NC_WS_URL = os.getenv("NAPCAT_WS_URL", "ws://localhost:3001")
-NC_HTTP_URL = os.getenv("NAPCAT_HTTP_URL", "http://localhost:3000")
+NC_WS_URL = os.getenv("NAPCAT_WS_URL", "ws://127.0.0.1:3001")
+NC_HTTP_URL = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3000")
 NC_TOKEN = os.getenv("NAPCAT_TOKEN", "")
 MAX_REPLY_CHARS = 2000
 
@@ -106,7 +106,7 @@ class QQGateway:
         buf = ""
         sent_ack = False
         try:
-            async for evt in agent.run(raw, stream=True, plan_mode=False):
+            async for evt in agent.run(raw, stream=True, plan_mode=True):
                 if evt["type"] == "text_delta":
                     buf += evt["content"]
                 elif evt["type"] == "tool_call" and evt.get("name"):
@@ -118,14 +118,20 @@ class QQGateway:
                         f"正在{_tool_label(evt['name'])}...")
                 elif evt["type"] == "plan_ready":
                     tools = evt.get("tools", [])
+                    full_calls = evt.get("full_calls", [])
                     plan_text = evt.get("content", "")[:300]
-                    approved = await self._ask_permission(msg_type, user_id, group_id, plan_text, tools)
-                    if approved:
-                        agent.approve_plan()
+                    
+                    if self._is_dangerous(full_calls):
+                        approved = await self._ask_permission(msg_type, user_id, group_id, plan_text, tools)
+                        if approved:
+                            agent.approve_plan()
+                        else:
+                            agent.abort()
+                            await self._send(msg_type, user_id, group_id, "已取消。")
+                            return
                     else:
-                        agent.abort()
-                        await self._send(msg_type, user_id, group_id, "已取消。")
-                        return
+                        # 安全操作，自动通过
+                        agent.approve_plan()
                 elif evt["type"] == "error":
                     buf += f"\n[错误: {evt['content']}]"
         except Exception as e:
@@ -176,6 +182,30 @@ class QQGateway:
             return False
         finally:
             self._pending_perms.pop(session_key, None)
+
+    def _is_dangerous(self, tool_calls: list[dict]) -> bool:
+        """判断工具调用是否包含危险操作（主要是删除）.平衡效率与安全。"""
+        for tc in tool_calls:
+            name = tc.get("function", {}).get("name", "")
+            args_str = tc.get("function", {}).get("arguments", "")
+            
+            # 1. 直接命中删除工具
+            if "delete" in name.lower() or "remove" in name.lower():
+                return True
+            
+            # 2. 检查 bash 命令中的危险关键字
+            if name == "bash":
+                try:
+                    args = json.loads(args_str)
+                    cmd = args.get("command", "").lower()
+                    # 拦截 rm, rmdir 等
+                    if re.search(r'\b(rm|rmdir|truncate)\b', cmd):
+                        return True
+                except Exception:
+                    # 解析失败保守起见当做危险
+                    return True
+                    
+        return False
 
 
     async def _send(self, msg_type: str, user_id: str, group_id: str, text: str):
