@@ -147,6 +147,18 @@ class MemoryTool(BaseTool):
                 filename = input_args["filename"]
                 desc = input_args["description"]
                 content = input_args["content"]
+
+                # ── 冲突检测：检查是否存在同主题旧记忆 ──
+                existing = await _find_similar_memory(mm, desc, filename)
+                if existing:
+                    merged = await _merge_memories(context, existing, desc, content)
+                    if merged:
+                        content = merged
+                        desc = f"{desc} (merged)"
+                        # 不同文件名 → 删旧文件防重复
+                        if existing["filename"] != filename + ".md":
+                            await mm.remove(existing["filename"])
+
                 timestamp = await mm.save(filename, f"[{memory_type}] {desc}", content)
                 is_new = "新增" if "<!-- updated:" not in (await mm.get_entry(filename) or "") else "更新"
                 yield ToolResult(
@@ -231,3 +243,77 @@ class MemoryTool(BaseTool):
         except Exception as e:
             logger.error(f"Memory tool error: {e}")
             yield ToolResult(type="result", data=f"Error: {e}")
+
+
+# ── 记忆合并辅助 ─────────────────────────────────────────────
+
+MERGE_PROMPT = """You are merging two memories on the same topic. Produce a single, concise version that keeps all unique info from both.
+
+## Old memory
+{old_content}
+
+## New memory
+{new_content}
+
+## Rules
+- Keep everything unique from both
+- Remove duplicate info
+- Keep the most recent version when they conflict
+- Output only the merged content, no explanation."""
+
+
+async def _find_similar_memory(mm, new_desc: str, new_filename: str) -> dict | None:
+    """Find an existing memory with similar topic (not just filename match)."""
+    try:
+        entries = mm._parse_index()
+        new_keywords = set(new_desc.lower().split())
+        new_stem = new_filename.replace(".md", "").lower()
+
+        for e in entries:
+            fname = e.get("filename", "").replace(".md", "").lower()
+            desc = e.get("description", "").lower()
+
+            # Same filename → exact match
+            if fname == new_stem:
+                content = await mm.get_entry(e["filename"])
+                if content:
+                    return {
+                        "filename": e["filename"],
+                        "content": content.split("<!-- previous version -->")[0].strip(),
+                        "description": e["description"],
+                    }
+
+            # Same topic: ≥2 keyword overlap in description
+            desc_kw = set(desc.split())
+            overlap = new_keywords & desc_kw
+            if len(overlap) >= 2:
+                content = await mm.get_entry(e["filename"])
+                if content:
+                    return {
+                        "filename": e["filename"],
+                        "content": content.split("<!-- previous version -->")[0].strip(),
+                        "description": e["description"],
+                    }
+
+    except Exception:
+        pass
+    return None
+
+
+async def _merge_memories(context, old: dict, new_desc: str, new_content: str) -> str | None:
+    """Use LLM to merge old and new memory content."""
+    if not context or not hasattr(context, "llm"):
+        return None
+    try:
+        prompt = MERGE_PROMPT.format(
+            old_content=old["content"][:800],
+            new_content=new_content[:800],
+        )
+        resp = await context.llm.chat(
+            messages=[{"role": "user", "content": prompt}],
+            tools=None,
+        )
+        merged = resp.get("content", "").strip()
+        return merged if len(merged) > 20 else None
+    except Exception:
+        return None

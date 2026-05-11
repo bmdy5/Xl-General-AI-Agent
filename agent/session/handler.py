@@ -1,13 +1,14 @@
-"""Session persistence + cross-session search — adapted from tinypace + hermes FTS5.
+"""Session persistence + cross-session FTS5 search — adapted from tinypace + hermes FTS5.
 
-JSONL append-only + os.fsync crash-safe.
-Cross-session: grep all JSONL files, LLM summarize matches.
+JSONL append-only + os.fsync crash-safe + SQLite FTS5 full-text index.
+Cross-session: FTS5 MATCH with snippet() instead of grep.
 """
 
 import json
 import logging
 import os
 import re
+import sqlite3
 from datetime import datetime
 from pathlib import Path
 from typing import Optional
@@ -16,16 +17,17 @@ import aiofiles
 
 logger = logging.getLogger(__name__)
 
+# ── CJK tokenizer for FTS5 unicode61 compatibility ────────────
+_CJK_RE = re.compile(r'([一-鿿㐀-䶿　-〿＀-￯])')
+
+
+def _cjk_space(text: str) -> str:
+    """Insert spaces around CJK characters so unicode61 tokenizer splits each char."""
+    return _CJK_RE.sub(r' \1 ', text)
+
 
 class SessionHandler:
-    """会话 JSONL 持久化管理器.
-
-    用法：
-        handler = SessionHandler("session-001")
-        await handler.initialize()
-        await handler.append_message({"role": "user", "content": "hello"})
-        messages = await handler.load_messages()
-    """
+    """会话 JSONL 持久化 + SQLite FTS5 全文索引."""
 
     def __init__(self, session_id: str, storage_dir: Optional[str] = None):
         self.session_id = session_id
@@ -37,14 +39,73 @@ class SessionHandler:
 
         self.storage_dir.mkdir(parents=True, exist_ok=True)
         self.session_file = self.storage_dir / f"{session_id}.jsonl"
+        self.db_path = self.storage_dir / "sessions.db"
+        self._init_db()
+
+    # ── SQLite FTS5 ───────────────────────────────────────────
+
+    def _init_db(self):
+        """Create FTS5 virtual table if not exists."""
+        db = sqlite3.connect(str(self.db_path))
+        db.execute(
+            "CREATE VIRTUAL TABLE IF NOT EXISTS sessions_fts USING fts5("
+            "session_id, role, content, timestamp, tokenize='unicode61'"
+            ")"
+        )
+        db.commit()
+        db.close()
+
+    def _fts_insert(self, role: str, content: str):
+        """Insert a single message into FTS5 index."""
+        ts = datetime.now().isoformat()
+        db = sqlite3.connect(str(self.db_path))
+        db.execute(
+            "INSERT INTO sessions_fts(session_id, role, content, timestamp) "
+            "VALUES (?, ?, ?, ?)",
+            [self.session_id, role, _cjk_space(content), ts],
+        )
+        db.commit()
+        db.close()
+
+    def _fts_reindex(self, messages: list[dict]):
+        """Delete all entries for this session and re-insert from messages list."""
+        db = sqlite3.connect(str(self.db_path))
+        db.execute("DELETE FROM sessions_fts WHERE session_id = ?", [self.session_id])
+        ts = datetime.now().isoformat()
+        for m in messages:
+            role = m.get("role", "")
+            content = str(m.get("content", ""))
+            if content.strip():
+                db.execute(
+                    "INSERT INTO sessions_fts(session_id, role, content, timestamp) "
+                    "VALUES (?, ?, ?, ?)",
+                    [self.session_id, role, _cjk_space(content), ts],
+                )
+        db.commit()
+        db.close()
+
+    def _fts_ensure_indexed(self, messages: list[dict]):
+        """Index existing messages if not already in FTS5."""
+        db = sqlite3.connect(str(self.db_path))
+        cur = db.execute(
+            "SELECT COUNT(*) FROM sessions_fts WHERE session_id = ?",
+            [self.session_id],
+        )
+        count = cur.fetchone()[0]
+        db.close()
+        if count == 0 and messages:
+            self._fts_reindex(messages)
+
+    # ── session lifecycle ─────────────────────────────────────
 
     async def initialize(self) -> list[dict]:
-        """初始化（备份旧文件 + 加载消息）."""
+        """初始化（备份旧文件 + 加载消息 + 确保 FTS 索引）."""
         self._backup()
-        return await self.load_messages()
+        messages = await self.load_messages()
+        self._fts_ensure_indexed(messages)
+        return messages
 
     def _backup(self):
-        """如果会话文件存在，创建 .bak 备份."""
         if not self.session_file.exists():
             return
         bak = self.session_file.with_suffix(".jsonl.bak")
@@ -65,17 +126,10 @@ class SessionHandler:
                     except json.JSONDecodeError:
                         continue
 
-        # 修复孤儿 tool_calls（抄 openclaw transcript repair）
         return self._repair_orphan_tool_calls(messages)
 
     def _repair_orphan_tool_calls(self, messages: list[dict]) -> list[dict]:
-        """扫描并修复孤儿 tool_calls/tool 消息.
-
-        DeepSeek 要求：每个 assistant tool_call 必须有对应的 tool 消息，
-        每个 tool 消息必须有对应的 assistant tool_call。
-        缺任何一边都会报错。
-        """
-        # 1. 收集 assistant→tool_call 的映射
+        """扫描并修复孤儿 tool_calls/tool 消息."""
         assistant_tc_ids: set[str] = set()
         for m in messages:
             if m.get("role") == "assistant" and m.get("tool_calls"):
@@ -83,13 +137,11 @@ class SessionHandler:
                     if tc.get("id"):
                         assistant_tc_ids.add(tc["id"])
 
-        # 2. 收集 tool→tool_call_id 的映射
         tool_result_ids: set[str] = set()
         for m in messages:
             if m.get("role") == "tool" and m.get("tool_call_id"):
                 tool_result_ids.add(m["tool_call_id"])
 
-        # 3. 只保留双方都存在的配对
         valid_ids = assistant_tc_ids & tool_result_ids
 
         repaired = []
@@ -103,11 +155,9 @@ class SessionHandler:
                 if valid_calls:
                     repaired.append({**m, "tool_calls": valid_calls})
                 elif m.get("content"):
-                    # 有文本内容 → 保留文本，去掉无效 tool_calls
                     cleaned = {k: v for k, v in m.items() if k != "tool_calls"}
                     repaired.append(cleaned)
                 else:
-                    # 只有无效 tool_calls，没有文本 → 整条移除
                     removed += 1
                 continue
 
@@ -121,8 +171,6 @@ class SessionHandler:
             repaired.append(m)
 
         if removed > 0:
-            import logging
-            logger = logging.getLogger(__name__)
             logger.warning(
                 f"Transcript repair: removed {removed} orphan messages "
                 f"({len(messages)} → {len(repaired)} total)"
@@ -131,7 +179,7 @@ class SessionHandler:
         return repaired
 
     async def replace_all(self, messages: list[dict]) -> None:
-        """压缩后重写整个会话文件，清除已被压缩的旧消息."""
+        """压缩后重写整个会话文件 + 重建 FTS 索引."""
         async with aiofiles.open(self.session_file, mode="w", encoding="utf-8") as f:
             for msg in messages:
                 await f.write(json.dumps(msg, ensure_ascii=False) + "\n")
@@ -139,16 +187,86 @@ class SessionHandler:
             loop = __import__("asyncio").get_running_loop()
             await loop.run_in_executor(None, os.fsync, f.fileno())
 
+        # 重建 FTS 索引
+        self._fts_reindex(messages)
+
     async def append_message(self, message: dict) -> None:
-        """追加一条消息到 JSONL 文件末尾."""
+        """追加一条消息到 JSONL + FTS5 索引."""
         async with aiofiles.open(self.session_file, mode="a", encoding="utf-8") as f:
             await f.write(json.dumps(message, ensure_ascii=False) + "\n")
             await f.flush()
             loop = __import__("asyncio").get_running_loop()
             await loop.run_in_executor(None, os.fsync, f.fileno())
 
-    async def search_all_sessions(self, query: str, llm, max_results: int = 5) -> str:
-        """跨会话搜索：grep所有JSONL → LLM摘要（抄 hermes FTS5 模式）."""
+        # 同步 FTS5 索引
+        role = message.get("role", "")
+        content = str(message.get("content", ""))
+        if content.strip():
+            self._fts_insert(role, content)
+
+    # ── cross-session search (FTS5) ──────────────────────────
+
+    async def search_all_sessions(
+        self, query: str, llm, max_results: int = 5
+    ) -> str:
+        """FTS5 全文搜索历史会话，支持 snippet 上下文."""
+        db = sqlite3.connect(str(self.db_path))
+
+        # FTS5 MATCH 查询，排除当前会话
+        # CJK 字符需要分字处理以匹配 unicode61 索引
+        fts_query = _cjk_space(query)
+        try:
+            cur = db.execute(
+                "SELECT session_id, role, snippet(sessions_fts, 2, '<b>', '</b>', '...', 40) "
+                "FROM sessions_fts "
+                "WHERE sessions_fts MATCH ? AND session_id != ? "
+                "ORDER BY rank "
+                "LIMIT ?",
+                [fts_query, self.session_id, max_results * 3],
+            )
+            rows = cur.fetchall()
+        except sqlite3.OperationalError:
+            # FTS5 语法错误时（特殊字符），降级为 LIKE
+            # LIKE 查询 content 已分字，query 也需同样分字
+            like_q = f"%{_cjk_space(query)}%"
+            cur = db.execute(
+                "SELECT session_id, role, content "
+                "FROM sessions_fts "
+                "WHERE content LIKE ? AND session_id != ? "
+                "LIMIT ?",
+                [like_q, self.session_id, max_results * 3],
+            )
+            rows = cur.fetchall()
+        finally:
+            db.close()
+
+        if not rows:
+            # 降级：如果 FTS 里没数据，回退到 JSONL grep
+            return await self._grep_fallback(query, llm, max_results)
+
+        matches = []
+        for row in rows:
+            sid, role, snippet = row
+            matches.append(f"[{sid}] {role}: {snippet}")
+
+        try:
+            response = await llm.chat(
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"搜索'{query}'，找到以下历史对话片段。"
+                        f"请用3-5句话总结相关内容:\n"
+                        + "\n".join(matches[:max_results * 3])
+                    ),
+                }],
+                tools=None,
+            )
+            return response.get("content", "\n".join(matches[:max_results]))
+        except Exception:
+            return "\n".join(matches[:max_results])
+
+    async def _grep_fallback(self, query: str, llm, max_results: int = 5) -> str:
+        """原有 grep 逻辑作为降级方案."""
         if not self.storage_dir.exists():
             return ""
 
@@ -161,7 +279,6 @@ class SessionHandler:
                     content = await fh.read()
             except Exception:
                 continue
-            # 简单关键词匹配
             keywords = query.lower().split()
             lines = content.split("\n")
             for i, line in enumerate(lines):
@@ -179,13 +296,16 @@ class SessionHandler:
         if not matches:
             return "No past conversations found."
 
-        # LLM 摘要匹配结果
         try:
             response = await llm.chat(
-                messages=[{"role": "user", "content": (
-                    f"搜索'{query}'，找到以下历史对话片段。请用3-5句话总结相关内容:\n"
-                    + "\n".join(matches[:max_results * 3])
-                )}],
+                messages=[{
+                    "role": "user",
+                    "content": (
+                        f"搜索'{query}'，找到以下历史对话片段。"
+                        f"请用3-5句话总结相关内容:\n"
+                        + "\n".join(matches[:max_results * 3])
+                    ),
+                }],
                 tools=None,
             )
             return response.get("content", "\n".join(matches[:max_results]))
