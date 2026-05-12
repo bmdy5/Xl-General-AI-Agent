@@ -21,6 +21,9 @@ from dotenv import load_dotenv
 
 import logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+import warnings
+warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 load_dotenv()
 
 from agent.llm import LLMClient
@@ -60,6 +63,9 @@ def _read_multiline(prompt: str = "> ") -> str:
             rest = sys.stdin.read()
             if rest and rest.strip():
                 return first + rest.rstrip('\n')
+        except TypeError:
+            # 非阻塞模式下 codec decode 偶尔失败，忽略多行检测
+            pass
         finally:
             fcntl.fcntl(fd, fcntl.F_SETFL, fl)
     except (ImportError, AttributeError, OSError):
@@ -68,8 +74,8 @@ def _read_multiline(prompt: str = "> ") -> str:
 
 
 def _print_highlighted(text: str):
-    """流式输出 agent 回复，暖色区分."""
-    print(f"\033[38;5;252m{text}\033[0m", end="", flush=True)
+    """流式输出 agent 回复，亮白高亮."""
+    print(f"\033[1;97m{text}\033[0m", end="", flush=True)
 
 def _flush_highlighted():
     pass  # 当前无需 flush，保留接口
@@ -286,7 +292,7 @@ async def run_interactive(plan_mode: bool = False):
 
                 elif etype == "exploring_done":
                     _stop_spin()
-                    print(f"\r\033[K", end="")
+                    print(f"\r\033[K\n", end="")
 
                 elif etype == "completed":
                     _stop_spin()
