@@ -4,6 +4,7 @@ JSONL append-only + os.fsync crash-safe + SQLite FTS5 full-text index.
 Cross-session: FTS5 MATCH with snippet() instead of grep.
 """
 
+import asyncio
 import json
 import logging
 import os
@@ -41,6 +42,7 @@ class SessionHandler:
         self.session_file = self.storage_dir / f"{session_id}.jsonl"
         self.db_path = self.storage_dir / "sessions.db"
         self._init_db()
+        self._lock = asyncio.Lock()
 
     # ── SQLite FTS5 ───────────────────────────────────────────
 
@@ -180,29 +182,31 @@ class SessionHandler:
 
     async def replace_all(self, messages: list[dict]) -> None:
         """压缩后重写整个会话文件 + 重建 FTS 索引."""
-        async with aiofiles.open(self.session_file, mode="w", encoding="utf-8") as f:
-            for msg in messages:
-                await f.write(json.dumps(msg, ensure_ascii=False) + "\n")
-            await f.flush()
-            loop = __import__("asyncio").get_running_loop()
-            await loop.run_in_executor(None, os.fsync, f.fileno())
+        async with self._lock:
+            async with aiofiles.open(self.session_file, mode="w", encoding="utf-8") as f:
+                for msg in messages:
+                    await f.write(json.dumps(msg, ensure_ascii=False) + "\n")
+                await f.flush()
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, os.fsync, f.fileno())
 
-        # 重建 FTS 索引
-        self._fts_reindex(messages)
+            # 重建 FTS 索引
+            self._fts_reindex(messages)
 
     async def append_message(self, message: dict) -> None:
         """追加一条消息到 JSONL + FTS5 索引."""
-        async with aiofiles.open(self.session_file, mode="a", encoding="utf-8") as f:
-            await f.write(json.dumps(message, ensure_ascii=False) + "\n")
-            await f.flush()
-            loop = __import__("asyncio").get_running_loop()
-            await loop.run_in_executor(None, os.fsync, f.fileno())
+        async with self._lock:
+            async with aiofiles.open(self.session_file, mode="a", encoding="utf-8") as f:
+                await f.write(json.dumps(message, ensure_ascii=False) + "\n")
+                await f.flush()
+                loop = asyncio.get_running_loop()
+                await loop.run_in_executor(None, os.fsync, f.fileno())
 
-        # 同步 FTS5 索引
-        role = message.get("role", "")
-        content = str(message.get("content", ""))
-        if content.strip():
-            self._fts_insert(role, content)
+            # 同步 FTS5 索引
+            role = message.get("role", "")
+            content = str(message.get("content", ""))
+            if content.strip():
+                self._fts_insert(role, content)
 
     # ── cross-session search (FTS5) ──────────────────────────
 

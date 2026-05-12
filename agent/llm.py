@@ -122,7 +122,17 @@ class LLMClient:
         if self.api_base:
             kwargs["api_base"] = self.api_base
 
-        response = await acompletion(**kwargs)
+        try:
+            response = await acompletion(**kwargs)
+        except litellm.RateLimitError:
+            yield {"type": "error", "error": "rate_limit", "message": "Rate limit exceeded, please retry"}
+            return
+        except asyncio.TimeoutError:
+            yield {"type": "error", "error": "timeout", "message": "LLM request timed out"}
+            return
+        except Exception as e:
+            yield {"type": "error", "error": "api_error", "message": str(e)}
+            return
 
         tool_calls_acc: dict[int, dict] = {}
         async for chunk in response:
@@ -130,7 +140,10 @@ class LLMClient:
                 yield {"type": "aborted"}
                 return
 
-            delta = chunk.choices[0].delta
+            try:
+                delta = chunk.choices[0].delta
+            except (IndexError, AttributeError):
+                continue
 
             # DeepSeek reasoning (thinking process)
             if hasattr(delta, "reasoning_content") and delta.reasoning_content:
