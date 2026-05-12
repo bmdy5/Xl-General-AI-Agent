@@ -1,27 +1,40 @@
-# 使用轻量级 Python 镜像
-FROM python:3.10-slim
+# XL Agent — 工业级 Dockerfile (v3.0)
+# Debian 13 (Trixie) + ARG 镜像源切换
+FROM python:3.11-slim
 
-# 设置工作目录
+ARG USE_MIRROR=false
+
+ENV PYTHONUNBUFFERED=1
+ENV XLA_MEM_DIR=/root/.xlagent
+
 WORKDIR /app
 
-# 安装必要的系统依赖 (如需编译某些库)
+# ── 系统源：Debian 13 使用 debian.sources 格式 ──
+# 去掉协议头匹配，兼容 http/https 两种 URL
+RUN if [ "$USE_MIRROR" = "true" ]; then \
+      echo "切换腾讯云 Debian 镜像源..." && \
+      sed -i 's|deb.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list.d/debian.sources && \
+      sed -i 's|security.debian.org|mirrors.tencentyun.com|g' /etc/apt/sources.list.d/debian.sources; \
+    fi
+
+# ── 系统依赖 ──
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    gcc \
-    python3-dev \
+    gcc python3-dev \
     && rm -rf /var/lib/apt/lists/*
 
-# 复制依赖文件并安装
+# ── Pip 源 ──
+RUN if [ "$USE_MIRROR" = "true" ]; then \
+      pip config set global.index-url http://mirrors.tencentyun.com/pypi/simple/ && \
+      pip config set global.trusted-host mirrors.tencentyun.com; \
+    fi
+
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# 复制项目代码
 COPY . .
 
-# 创建记忆存储目录
-RUN mkdir -p /root/.xlagent
+RUN mkdir -p ${XLA_MEM_DIR}
 
-# 暴露端口 (如果有需要外部访问的端口，比如 Dashboard)
 EXPOSE 8765
 
-# 启动命令
 CMD ["python", "main.py", "--gateway"]
