@@ -34,6 +34,8 @@ services:
       - MYAGENT_MODEL=${MYAGENT_MODEL}
       - MYAGENT_API_KEY=${MYAGENT_API_KEY}
       - MYAGENT_API_BASE=${MYAGENT_API_BASE}
+    ports:
+      - "8765:8765"  # Dashboard + API
     volumes:
       - ./agent_mem:/root/.xlagent # 记忆持久化
       - .:/app # 方便代码热更新
