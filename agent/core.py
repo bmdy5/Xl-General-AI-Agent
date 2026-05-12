@@ -188,9 +188,10 @@ class Agent:
             if memory_block:
                 merged_system += "\n\n" + memory_block
             llm_messages = [{"role": "system", "content": merged_system}]
-            llm_messages.extend(self.messages)
-            for m in llm_messages:
-                m.pop("reasoning_content", None)
+            llm_messages.extend(
+                {k: v for k, v in m.items() if k != "reasoning_content"}
+                for m in self.messages
+            )
 
             tools = self.registry.get_definitions()
 

@@ -335,6 +335,7 @@ async def run_interactive(plan_mode: bool = False):
                         agent.approve_plan()
                         print("  → 执行中...")
                     else:
+                        agent.approve_plan()
                         agent.abort()
                         print("  → 已取消")
 
