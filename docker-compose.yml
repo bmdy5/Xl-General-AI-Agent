@@ -20,7 +20,10 @@ services:
 
   # AI Agent
   xl-agent:
-    build: .
+    build:
+      context: .
+      args:
+        - USE_MIRROR=${USE_MIRROR:-false}
     container_name: xl-agent
     restart: always
     depends_on:
