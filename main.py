@@ -192,10 +192,9 @@ async def run_interactive(plan_mode: bool = False):
             continue
 
         if user_input == "/exit":
-            print("🧠 整理记忆中...", end="", flush=True)
+            from agent.evolution import on_session_end
             try:
-                from agent.evolution import on_session_end
-                await asyncio.wait_for(on_session_end(agent), timeout=8)
+                await asyncio.wait_for(on_session_end(agent), timeout=3)
             except (asyncio.TimeoutError, Exception):
                 pass
             print("\r\033[KBye.\033[?25h")
