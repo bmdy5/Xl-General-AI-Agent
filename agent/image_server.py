@@ -47,6 +47,24 @@ GALLERY_HTML = """<!DOCTYPE html>
     text-shadow: 2px 2px #6b4c1a;
     letter-spacing: 4px;
   }
+  #upload-zone {
+    border: 2px dashed #533483;
+    border-radius: 8px;
+    padding: 30px;
+    margin: 10px 0 20px;
+    text-align: center;
+    cursor: pointer;
+    transition: border-color 0.2s, background 0.2s;
+    width: 100%;
+    max-width: 900px;
+  }
+  #upload-zone:hover, #upload-zone.drag-over {
+    border-color: #f4d058;
+    background: #16213e;
+  }
+  #upload-zone input { display: none; }
+  #upload-zone .hint { color: #888; font-size: 14px; }
+  #upload-zone .hint span { color: #f4d058; text-decoration: underline; }
   #gallery {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -61,6 +79,7 @@ GALLERY_HTML = """<!DOCTYPE html>
     overflow: hidden;
     cursor: pointer;
     transition: border-color 0.2s;
+    position: relative;
   }
   .thumb:hover { border-color: #f4d058; }
   .thumb img {
@@ -73,7 +92,25 @@ GALLERY_HTML = """<!DOCTYPE html>
     padding: 6px;
     font-size: 11px;
     color: #888;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
+  .thumb .delete-btn {
+    position: absolute;
+    top: 4px;
+    right: 4px;
+    background: #e74c3c;
+    color: #fff;
+    border: none;
+    border-radius: 3px;
+    width: 20px;
+    height: 20px;
+    font-size: 12px;
+    cursor: pointer;
+    display: none;
+  }
+  .thumb:hover .delete-btn { display: block; }
   .empty {
     grid-column: 1 / -1;
     text-align: center;
@@ -81,13 +118,121 @@ GALLERY_HTML = """<!DOCTYPE html>
     padding: 60px;
     font-size: 16px;
   }
+  .toast {
+    position: fixed;
+    bottom: 20px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: #f4d058;
+    color: #1a1a2e;
+    padding: 10px 24px;
+    border-radius: 4px;
+    font-size: 14px;
+    z-index: 999;
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  .toast.show { opacity: 1; }
 </style>
 </head>
 <body>
 <div id="header">XL IMAGE GALLERY</div>
-<div id="gallery">
-  <div class="empty">还没有图片，拖拽或点击上传</div>
+<div id="upload-zone">
+  <input type="file" id="file-input" accept="image/*" multiple>
+  <div class="hint">拖拽图片到此处 或 <span>点击选择文件</span></div>
 </div>
+<div id="gallery">
+  <div class="empty">加载中...</div>
+</div>
+<div id="toast" class="toast"></div>
+<script>
+const gallery = document.getElementById('gallery');
+const fileInput = document.getElementById('file-input');
+const uploadZone = document.getElementById('upload-zone');
+const toast = document.getElementById('toast');
+
+function showToast(msg) {
+  toast.textContent = msg;
+  toast.classList.add('show');
+  setTimeout(() => toast.classList.remove('show'), 2000);
+}
+
+async function loadGallery() {
+  try {
+    const res = await fetch('/api/list');
+    const data = await res.json();
+    gallery.innerHTML = '';
+    if (!data.images || data.images.length === 0) {
+      gallery.innerHTML = '<div class="empty">还没有图片，拖拽或点击上传</div>';
+      return;
+    }
+    data.images.forEach(img => {
+      const div = document.createElement('div');
+      div.className = 'thumb';
+      div.innerHTML = `
+        <img src="/images/${img.name}" alt="${img.name}" loading="lazy">
+        <div class="thumb-info">${img.name}</div>
+        <button class="delete-btn" data-name="${img.name}">&times;</button>
+      `;
+      div.querySelector('.delete-btn').onclick = (e) => {
+        e.stopPropagation();
+        deleteImage(img.name);
+      };
+      div.querySelector('img').onclick = () => window.open('/images/' + img.name);
+      gallery.appendChild(div);
+    });
+  } catch(e) {
+    gallery.innerHTML = '<div class="empty">加载失败</div>';
+  }
+}
+
+async function uploadFiles(files) {
+  for (const file of files) {
+    if (!file.type.startsWith('image/')) continue;
+    const form = new FormData();
+    form.append('file', file);
+    try {
+      const res = await fetch('/upload', { method: 'POST', body: form });
+      const data = await res.json();
+      if (data.ok) {
+        showToast('已上传: ' + file.name);
+      } else {
+        showToast('上传失败: ' + (data.error || 'unknown'));
+      }
+    } catch(e) {
+      showToast('上传失败: ' + e.message);
+    }
+  }
+  loadGallery();
+}
+
+async function deleteImage(name) {
+  try {
+    await fetch('/images/' + name, { method: 'DELETE' });
+  } catch(e) {}
+  loadGallery();
+}
+
+fileInput.onchange = () => uploadFiles(fileInput.files);
+
+uploadZone.onclick = () => fileInput.click();
+
+uploadZone.ondragover = (e) => {
+  e.preventDefault();
+  uploadZone.classList.add('drag-over');
+};
+uploadZone.ondragleave = () => uploadZone.classList.remove('drag-over');
+uploadZone.ondrop = (e) => {
+  e.preventDefault();
+  uploadZone.classList.remove('drag-over');
+  uploadFiles(e.dataTransfer.files);
+};
+
+document.ondragover = (e) => e.preventDefault();
+document.ondrop = (e) => e.preventDefault();
+
+loadGallery();
+</script>
 </body>
 </html>"""
 
