@@ -370,7 +370,7 @@ class ImageServer:
             await self._serve_json(writer, {"ok": False, "error": "invalid request"}, 400)
             return
 
-        body = await reader.read(content_length)
+        body = await reader.readexactly(content_length)
         parts = parse_multipart(body, boundary)
 
         saved = []
