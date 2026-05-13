@@ -168,7 +168,7 @@ GALLERY_HTML = """<!DOCTYPE html>
 <div id="upload-zone">
   <input type="file" id="file-input" accept="image/*" multiple>
   <span class="upload-icon">&#x1F5BC;</span>
-  <div class="hint">拖拽图片到此处 或 <span>点击选择文件</span></div>
+  <div class="hint">拖拽 / 粘贴(Ctrl+V) / <span>点击选择文件</span></div>
 </div>
 <div id="gallery">
   <div class="empty">加载中...</div>
@@ -262,6 +262,23 @@ uploadZone.ondrop = (e) => {
 
 document.ondragover = (e) => e.preventDefault();
 document.ondrop = (e) => e.preventDefault();
+
+// 粘贴上传
+document.addEventListener('paste', (e) => {
+  const items = e.clipboardData?.items;
+  if (!items) return;
+  const files = [];
+  for (const item of items) {
+    if (item.type.startsWith('image/')) {
+      files.push(item.getAsFile());
+    }
+  }
+  if (files.length > 0) {
+    e.preventDefault();
+    uploadFiles(files);
+    showToast('已粘贴 ' + files.length + ' 张图片');
+  }
+});
 
 loadGallery();
 </script>
