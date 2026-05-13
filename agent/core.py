@@ -8,6 +8,7 @@ v2 升级：
 
 import asyncio
 import json
+import logging
 import os
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
@@ -18,6 +19,8 @@ from .session.handler import SessionHandler
 from .tools.registry import ToolRegistry
 from .compressor import ContextCompressor
 from .evolution import audit_tool_call, select_relevant_memories, filter_memories_by_relevance
+
+logger = logging.getLogger(__name__)
 
 
 def _keyword_score(keywords: list[str], text: str) -> float:
@@ -73,9 +76,6 @@ class Agent:
         self._turn_count = 0
         self.compressor.reset_cooldown()
 
-        # ── 鲁棒性修护 ──
-        # (已移至 _run_loop 内部，确保每轮迭代前都修护)
-
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
             await self.session.append_message({"role": "user", "content": user_input})
@@ -93,9 +93,6 @@ class Agent:
         """确保对话历史符合 LLM 规范：assistant 的 tool_calls 必须跟有对应的 tool 结果。"""
         if not self.messages:
             return
-
-        import logging
-        repair_logger = logging.getLogger("agent.repair")
 
         # 1. 扫描所有 assistant 发出的 tool_call_ids
         assistant_calls = []
@@ -120,7 +117,7 @@ class Agent:
         if not missing:
             return
 
-        repair_logger.warning(f"检测到 {len(missing)} 个孤儿工具调用，正在自动补全占位符以修复对话链...")
+        logger.warning(f"检测到 {len(missing)} 个孤儿工具调用，正在自动补全占位符以修复对话链...")
 
         # 4. 补全缺失的 tool 消息 (精准插队)
         for item in missing:
@@ -140,7 +137,7 @@ class Agent:
             
             if target_idx != -1:
                 self.messages.insert(target_idx + 1, placeholder)
-                repair_logger.info(f"已在位置 {target_idx + 1} 插入占位符修复对话链")
+                logger.info(f"已在位置 {target_idx + 1} 插入占位符修复对话链")
             else:
                 self.messages.append(placeholder)
                 

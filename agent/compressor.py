@@ -7,7 +7,6 @@ openclaw 贡献：压缩前记忆刷新（pre-compression memory flush）
 
 import logging
 import time
-from typing import Optional
 
 logger = logging.getLogger(__name__)
 
