@@ -73,8 +73,11 @@ class LLMClient:
 
         choice = response.choices[0].message
 
-        # 保留 DeepSeek thinking 模式的 reasoning_content
-        reasoning = getattr(choice, "reasoning_content", None)
+        # 保留 DeepSeek thinking 模式的 reasoning_content (兼容 dict/object)
+        if isinstance(choice, dict):
+            reasoning = choice.get("reasoning_content")
+        else:
+            reasoning = getattr(choice, "reasoning_content", None)
 
         tool_calls = None
         if choice.tool_calls:
@@ -148,9 +151,14 @@ class LLMClient:
             except (IndexError, AttributeError):
                 continue
 
-            # DeepSeek reasoning (thinking process)
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                yield {"type": "reasoning", "content": delta.reasoning_content}
+            # DeepSeek reasoning (thinking process) - handles both dict and object deltas
+            reasoning = None
+            if isinstance(delta, dict):
+                reasoning = delta.get("reasoning_content")
+            else:
+                reasoning = getattr(delta, "reasoning_content", None)
+            if reasoning:
+                yield {"type": "reasoning", "content": reasoning}
 
             if delta.content:
                 yield {"type": "text_delta", "content": delta.content}
