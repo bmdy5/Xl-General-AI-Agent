@@ -414,8 +414,8 @@ async def run_dashboard_learn():
     result = await learner.run()
 
     await dash.send({"agent": "xl", "event": "learn_done", "name": "XL",
-                     "action": f"{result['articles_read']} articles, {result['skills_created']} skills"})
-    print(f"\n  完成: {result['articles_read']}篇, {result['skills_created']}技能")
+                     "action": f"{result['articles_read']} articles"})
+    print(f"\n  完成: {result['articles_read']}篇")
     await asyncio.sleep(5)  # 让 dashboard 看到最终状态
 
 
@@ -437,11 +437,10 @@ async def run_auto_learn():
     try:
         result = await learner.run()
     except KeyboardInterrupt:
-        result = {"articles_read": 0, "skills_created": 0, "topics": [], "summary": "用户中断", "errors": ["KeyboardInterrupt"]}
+        result = {"articles_read": 0, "topics": [], "summary": "用户中断", "errors": ["KeyboardInterrupt"]}
 
     print(f"\n  ===== 学习完成 =====")
     print(f"  阅读文章: {result['articles_read']} 篇")
-    print(f"  创建技能: {result['skills_created']} 个")
     if result["errors"]:
         print(f"  错误: {len(result['errors'])} 个")
     print(f"\n{result['summary']}")

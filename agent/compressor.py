@@ -147,7 +147,7 @@ class ContextCompressor:
 
             # ── 5. 组装新消息列表 ──
             summary_msg = {
-                "role": "user",
+                "role": "system",
                 "content": f"[历史对话摘要]\n{summary}",
             }
             new_messages = [summary_msg] + tail

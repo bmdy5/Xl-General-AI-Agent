@@ -193,6 +193,14 @@ class Agent:
             merged_system = system_prompt
             if memory_block:
                 merged_system += "\n\n" + memory_block
+
+            # 合并 compressor 摘要到 system prompt，避免连续 system 消息
+            if self.messages and self.messages[0].get("role") == "system":
+                summary_content = self.messages[0].get("content", "")
+                if summary_content and "[历史对话摘要]" in summary_content:
+                    merged_system = summary_content + "\n\n" + merged_system
+                    self.messages = self.messages[1:]
+
             llm_messages = [{"role": "system", "content": merged_system}]
             llm_messages.extend(
                 m if m.get("role") == "assistant" else {k: v for k, v in m.items() if k != "reasoning_content"}
@@ -378,8 +386,10 @@ class Agent:
                     yield event
                     return
 
-        except Exception:
-            pass  # errors handled inside the chat_stream loop
+        except Exception as e:
+            if first_token:
+                yield {"type": "exploring_done"}
+            yield {"type": "error", "content": f"Stream error: {e}"}
 
         yield {"type": "_done", "text_parts": text_parts, "reasoning_parts": reasoning_parts, "tool_calls": tool_calls}
 

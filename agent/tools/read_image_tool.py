@@ -7,6 +7,7 @@ import base64
 import json
 import logging
 import mimetypes
+import os
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
@@ -17,7 +18,7 @@ logger = logging.getLogger(__name__)
 # Mimo vision API 配置
 VISION_API_BASE = "https://api.xiaomimimo.com/v1"
 VISION_MODEL = "mimo-v2.5"
-VISION_API_KEY = "sk-ctmkgcfgihyjeqhiffvncoy2rqlyfeevrbshbwzuhmp1djmt"
+VISION_API_KEY = os.environ.get("VISION_API_KEY", "")
 
 IMAGE_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp", ".svg"}
 

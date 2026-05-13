@@ -53,13 +53,12 @@ class AutoLearner:
         """子代理学习: 拆分任务→spawn子代理并行→回收审查→入库."""
         start_time = asyncio.get_event_loop().time()
         articles_read = 0
-        skills_created = 0
         topics_learned = []
         errors = []
 
         interests = self._get_interests()
         if not interests:
-            return {"articles_read": 0, "skills_created": 0, "topics": [], "summary": "无学习主题", "errors": []}
+            return {"articles_read": 0, "topics": [], "summary": "无学习主题", "errors": []}
 
         # 拆分为 3 个方向
         directions = self._split_directions(interests)
@@ -84,7 +83,7 @@ class AutoLearner:
                 print(f"  ❌ {directions[i]}: {r}")
 
         if not all_findings:
-            return {"articles_read": 0, "skills_created": 0, "topics": [], "summary": "无发现", "errors": errors}
+            return {"articles_read": 0, "topics": [], "summary": "无发现", "errors": errors}
 
         # Phase 2: 辩论 + 双审查
         print(f"\n  ⚔️ Phase 2: 辩论审查 {len(all_findings)} 条发现...")
@@ -135,9 +134,9 @@ class AutoLearner:
                     continue
             print(f"  ❌ {f.get('title', '?')[:40]}")
 
-        summary = await self._generate_summary(articles_read, skills_created, topics_learned, errors)
-        return {"articles_read": articles_read, "skills_created": skills_created,
-                "topics": topics_learned, "summary": summary, "errors": errors}
+        summary = await self._generate_summary(articles_read, topics_learned, errors)
+        return {"articles_read": articles_read, "topics": topics_learned,
+                "summary": summary, "errors": errors}
 
     def _split_directions(self, interests: list) -> list:
         """把兴趣拆成 3 个学习方向."""
@@ -342,7 +341,7 @@ class AutoLearner:
         return f"{ts}-{clean}"
 
     async def _generate_summary(
-        self, articles: int, skills: int, topics: list, errors: list
+        self, articles: int, topics: list, errors: list
     ) -> str:
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
         topics_md = "\n".join(f"- {t}" for t in topics) if topics else "- 无"
@@ -351,8 +350,7 @@ class AutoLearner:
         summary = (
             f"# 自主学习摘要\n\n"
             f"**时间**: {now}\n"
-            f"**阅读文章**: {articles} 篇\n"
-            f"**创建技能**: {skills} 个\n\n"
+            f"**阅读文章**: {articles} 篇\n\n"
             f"## 学习主题\n{topics_md}\n\n"
             f"## 错误\n{errors_md}\n"
         )
