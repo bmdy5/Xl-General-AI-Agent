@@ -49,22 +49,52 @@ GALLERY_HTML = """<!DOCTYPE html>
   }
   #upload-zone {
     border: 2px dashed #533483;
-    border-radius: 8px;
-    padding: 30px;
-    margin: 10px 0 20px;
+    border-radius: 12px;
+    padding: 40px 30px;
+    margin: 10px 0 24px;
     text-align: center;
     cursor: pointer;
-    transition: border-color 0.2s, background 0.2s;
+    transition: all 0.3s ease;
     width: 100%;
     max-width: 900px;
+    position: relative;
+    overflow: hidden;
+    background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
   }
+  #upload-zone::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: radial-gradient(circle at 50% 50%, rgba(244,208,88,0.05) 0%, transparent 70%);
+    opacity: 0;
+    transition: opacity 0.3s;
+  }
+  #upload-zone:hover::before,
+  #upload-zone.drag-over::before { opacity: 1; }
   #upload-zone:hover, #upload-zone.drag-over {
     border-color: #f4d058;
-    background: #16213e;
+    border-style: solid;
+    box-shadow: 0 0 30px rgba(244,208,88,0.15), inset 0 0 30px rgba(244,208,88,0.03);
+    transform: translateY(-2px);
   }
   #upload-zone input { display: none; }
+  #upload-zone .upload-icon {
+    font-size: 40px;
+    margin-bottom: 12px;
+    display: block;
+    transition: transform 0.3s;
+  }
+  #upload-zone:hover .upload-icon,
+  #upload-zone.drag-over .upload-icon { transform: scale(1.1); }
   #upload-zone .hint { color: #888; font-size: 14px; }
-  #upload-zone .hint span { color: #f4d058; text-decoration: underline; }
+  #upload-zone .hint span { color: #f4d058; text-decoration: underline; cursor: pointer; }
+  @keyframes pulse-border {
+    0%, 100% { border-color: #533483; }
+    50% { border-color: #7b5ea7; }
+  }
+  #upload-zone.empty-gallery {
+    animation: pulse-border 2s infinite;
+  }
   #gallery {
     display: grid;
     grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
@@ -139,6 +169,7 @@ GALLERY_HTML = """<!DOCTYPE html>
 <div id="header">XL IMAGE GALLERY</div>
 <div id="upload-zone">
   <input type="file" id="file-input" accept="image/*" multiple>
+  <span class="upload-icon">&#x1F5BC;</span>
   <div class="hint">拖拽图片到此处 或 <span>点击选择文件</span></div>
 </div>
 <div id="gallery">
