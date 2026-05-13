@@ -53,6 +53,9 @@ class ContextCompressor:
         self._circuit_open = False
         self._max_failures = 3
 
+        # 压缩冷却：避免连续多轮反复压缩
+        self._last_compress_turn = -10
+
     def estimate_tokens(self, messages: list[dict]) -> int:
         """混合 token 估算：中文~2字/token，英文~4字/token."""
         total = 0
@@ -65,7 +68,7 @@ class ContextCompressor:
                 total += len(str(m["tool_calls"])) // 4
         return total
 
-    def should_compress(self, messages: list[dict]) -> bool:
+    def should_compress(self, messages: list[dict], turn: int = 0) -> bool:
         """判断是否触发压缩."""
         self._should_unstick_circuit()
         if self._circuit_open:
@@ -73,10 +76,16 @@ class ContextCompressor:
         if len(messages) < 6:  # 太少消息不值得压
             return False
         estimated = self.estimate_tokens(messages)
-        return estimated >= self.compress_at
+        if estimated < self.compress_at:
+            return False
+        # 冷却期：上次压缩后 5 轮内不再压缩，除非接近 90% 上限
+        if turn - self._last_compress_turn < 5:
+            if estimated < int(self.max_tokens * 0.90):
+                return False
+        return True
 
     async def compress(
-        self, messages: list[dict], memory=None
+        self, messages: list[dict], memory=None, turn: int = 0
     ) -> tuple[list[dict], bool]:
         """执行压缩，返回 (新消息列表, 是否执行了压缩).
 
@@ -143,8 +152,9 @@ class ContextCompressor:
             }
             new_messages = [summary_msg] + tail
 
-            # 成功 → 重置熔断器
+            # 成功 → 重置熔断器 + 记录压缩轮次
             self._consecutive_failures = 0
+            self._last_compress_turn = turn
 
             logger.info(
                 f"Compression done: {len(messages)} → {len(new_messages)} messages "
