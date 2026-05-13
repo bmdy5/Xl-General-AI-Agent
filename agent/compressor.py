@@ -223,6 +223,10 @@ class ContextCompressor:
 
         return "\n".join(lines)
 
+    def reset_cooldown(self):
+        """重置压缩冷却计时器（每次 agent.run() 调用时重置）."""
+        self._last_compress_turn = -10
+
     def reset(self):
         """重置熔断器状态."""
         self._consecutive_failures = 0
