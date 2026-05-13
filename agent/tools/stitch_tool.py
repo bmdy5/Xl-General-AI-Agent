@@ -275,11 +275,39 @@ class StitchTool(BaseTool):
             except Exception:
                 proc.kill()
 
-            # Extract HTML/CSS from result
+            # Extract and simplify Stitch result for XL
             content = result.get("result", {}).get("content", [])
             for item in content:
                 if item.get("type") == "text":
-                    return item.get("text", "")
+                    raw = item.get("text", "")
+                    try:
+                        data = json.loads(raw)
+                        # Extract key info from Stitch response
+                        summary = {
+                            "sessionId": data.get("sessionId", ""),
+                            "projectId": data.get("projectId", ""),
+                        }
+                        outputs = data.get("outputComponents", [])
+                        for out in outputs:
+                            designs = out.get("design", {}).get("screens", [])
+                            for d in designs:
+                                sc = d.get("screenshot", {})
+                                code = d.get("htmlCode", {})
+                                if "downloadUrl" in sc:
+                                    sc_url = sc["downloadUrl"][:80]
+                                else:
+                                    sc_url = ""
+                                if "downloadUrl" in code:
+                                    code_url = code["downloadUrl"][:80]
+                                else:
+                                    code_url = ""
+                                summary["screenshot_url"] = sc_url
+                                summary["code_url"] = code_url
+                        if "title" in data:
+                            summary["title"] = data.get("title", "")
+                        return f"[Stitch 完成] 预览: {sc_url}... 代码: {code_url}... (project: {summary['projectId']})"
+                    except (json.JSONDecodeError, KeyError):
+                        return raw[:500]  # Fallback: show first 500 chars
             return None
 
         except asyncio.TimeoutError:
