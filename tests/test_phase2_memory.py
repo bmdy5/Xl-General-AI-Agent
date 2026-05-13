@@ -1,6 +1,5 @@
 """Verify Phase 2: Token optimization (keyword extraction) + Memory merge."""
 import asyncio
-import os
 import sys
 import tempfile
 from pathlib import Path

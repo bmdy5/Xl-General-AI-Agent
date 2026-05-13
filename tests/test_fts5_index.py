@@ -1,6 +1,5 @@
 """Verify SQLite FTS5 index layer works correctly."""
 import asyncio
-import json
 import sqlite3
 import sys
 import tempfile

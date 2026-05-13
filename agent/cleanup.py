@@ -3,7 +3,6 @@
 用法: python main.py --cleanup
 """
 
-import asyncio
 import json
 import logging
 import re
