@@ -20,8 +20,9 @@ import sys
 from dotenv import load_dotenv
 
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+logging.getLogger("httpx").setLevel(logging.WARNING)
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 load_dotenv()
@@ -79,6 +80,13 @@ def _print_highlighted(text: str):
 
 def _flush_highlighted():
     pass  # 当前无需 flush，保留接口
+
+import re
+_WAIT_SPLIT_RE = re.compile(r'\[WAIT:[\d.]+\]|\[SPLIT\]')
+
+def _clean_tokens(text: str) -> str:
+    """Strip [WAIT:N] and [SPLIT] tokens from displayed text."""
+    return _WAIT_SPLIT_RE.sub('', text)
 
 
 def build_agent(session_id: str = "default") -> Agent:
@@ -307,7 +315,7 @@ async def run_interactive(plan_mode: bool = False):
                     print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
 
                 elif etype == "text_delta":
-                    _print_highlighted(event["content"])
+                    _print_highlighted(_clean_tokens(event["content"]))
 
                 elif etype in ("tool_call", "tool_exec"):
                     name = event.get("name") or event.get("data", {}).get("function", {}).get("name", "?")
@@ -316,13 +324,13 @@ async def run_interactive(plan_mode: bool = False):
 
                 elif etype == "tool_result":
                     _stop_tool_spin()
-                    short = str(event.get("result", ""))[:200].replace("\n", " ")
+                    short = _clean_tokens(str(event.get("result", ""))[:200].replace("\n", " "))
                     icon = "\033[32m✓\033[0m" if "error" not in str(event.get("result", "")).lower()[:50] else "\033[31m✗\033[0m"
                     print(f"\r\033[K  {icon} {short}")
 
                 elif etype == "plan_ready":
                     _stop_spin()
-                    plan = event.get("content", "")[:500]
+                    plan = _clean_tokens(event.get("content", "")[:500])
                     tools = event.get("tools", [])
                     print(f"\r\033[K\033[1;36m--- 计划 ---\033[0m\n{plan}")
                     print(f"\033[33m工具: {', '.join(tools)}\033[0m")
@@ -382,11 +390,11 @@ async def run_single(query: str):
         elif etype == "reasoning":
             print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
         elif etype == "text_delta":
-            print(event["content"], end="", flush=True)
+            print(_clean_tokens(event["content"]), end="", flush=True)
         elif etype == "tool_call":
             print(f"\n[TOOL] {event.get('name', '?')}")
         elif etype == "tool_result":
-            short = event["result"][:300].replace("\n", " ")
+            short = _clean_tokens(event["result"][:300].replace("\n", " "))
             print(f"  → {short}")
         elif etype == "error":
             print(f"\n[ERROR] {event['content']}")
@@ -538,9 +546,9 @@ async def run_dashboard():
             async for event in agent.run(user_input):
                 etype = event.get("type", "")
                 if etype == "compacted": print(f"\n  [上下文压缩]")
-                elif etype == "text_delta": print(event["content"], end="", flush=True)
+                elif etype == "text_delta": print(_clean_tokens(event["content"]), end="", flush=True)
                 elif etype == "tool_call": print(f"\n  [TOOL] {event['name']}")
-                elif etype == "tool_result": print(f"  → {str(event['result'])[:200]}")
+                elif etype == "tool_result": print(f"  → {_clean_tokens(str(event['result'])[:200])}")
                 elif etype == "nudge": print(f"\n  [💡 Nudge]")
                 elif etype == "aborted": print("\n  [aborted]")
                 elif etype == "error": print(f"\n  [ERROR] {event['content']}")

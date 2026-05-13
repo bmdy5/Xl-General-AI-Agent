@@ -123,7 +123,7 @@ class SpawnAgentTool(BaseTool):
             tool_calls_made = []
             try:
                 sub._abort = asyncio.Event()
-                async for event in asyncio.wait_for(
+                async for event in self._iter_with_timeout(
                     self._collect_output(sub, full_task), timeout=120
                 ):
                     if isinstance(event, str):
@@ -150,6 +150,17 @@ class SpawnAgentTool(BaseTool):
         except Exception as e:
             logger.error(f"Spawn failed: {e}")
             yield ToolResult(type="result", data=f"Error: {e}")
+
+    async def _iter_with_timeout(self, agen, timeout=120):
+        """Iterate an async generator with a per-item timeout."""
+        while True:
+            try:
+                item = await asyncio.wait_for(agen.__anext__(), timeout=timeout)
+                yield item
+            except StopAsyncIteration:
+                break
+            except asyncio.TimeoutError:
+                break
 
     async def _collect_output(self, sub, full_task):
         """收集子代理输出事件."""
