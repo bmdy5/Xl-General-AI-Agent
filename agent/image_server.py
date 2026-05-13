@@ -221,14 +221,18 @@ async function loadGallery() {
 }
 
 async function uploadFiles(files) {
+  const count = files.length || (files instanceof FileList ? files.length : files.length);
+  let uploaded = 0;
   for (const file of files) {
     if (!file.type.startsWith('image/')) continue;
     const form = new FormData();
     form.append('file', file);
+    showToast('上传中: ' + file.name + '...');
     try {
       const res = await fetch('/upload', { method: 'POST', body: form });
       const data = await res.json();
       if (data.ok) {
+        uploaded++;
         showToast('已上传: ' + file.name);
       } else {
         showToast('上传失败: ' + (data.error || 'unknown'));
@@ -237,13 +241,23 @@ async function uploadFiles(files) {
       showToast('上传失败: ' + e.message);
     }
   }
+  if (uploaded > 0) showToast('共上传 ' + uploaded + ' 张图片');
   loadGallery();
 }
 
 async function deleteImage(name) {
+  if (!confirm('确定删除这张图片？')) return;
   try {
-    await fetch('/images/' + name, { method: 'DELETE' });
-  } catch(e) {}
+    const res = await fetch('/images/' + name, { method: 'DELETE' });
+    const data = await res.json();
+    if (data.ok) {
+      showToast('已删除');
+    } else {
+      showToast('删除失败: ' + (data.error || 'unknown'));
+    }
+  } catch(e) {
+    showToast('删除失败: ' + e.message);
+  }
   loadGallery();
 }
 
