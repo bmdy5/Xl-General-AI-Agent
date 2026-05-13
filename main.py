@@ -11,9 +11,9 @@
 """
 
 import asyncio
+import json
 import os
 import readline  # 启用退格键和行编辑
-import select
 import signal
 import sys
 
@@ -27,7 +27,7 @@ warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 load_dotenv()
 
 from agent.llm import LLMClient
-from agent.core import Agent
+from agent.core import Agent, AgentMode
 from agent.memory.manager import MemoryManager
 from agent.session.handler import SessionHandler
 from agent.tools.bash_tool import BashTool
@@ -113,9 +113,10 @@ def build_agent(session_id: str = "default") -> Agent:
     )
 
 
-async def run_interactive(plan_mode: bool = False):
+async def run_interactive():
     """交互模式：持续对话直到用户输入 /exit."""
     agent = build_agent()
+    _mode = AgentMode.NORMAL
 
     # 后台加载历史，不阻塞启动
     async def load_history():
@@ -155,7 +156,7 @@ async def run_interactive(plan_mode: bool = False):
   ║  Tools   : {tools_list:<43}║
   ║  History : {len(agent.messages)} messages{' ':<34}║
   ╠══════════════════════════════════════════════════════╣
-  ║  /exit   /clear   /memory   /tools                  ║
+  ║  /exit   /clear   /memory   /tools   /mode          ║
   ╚══════════════════════════════════════════════════════╝
 
   亮哥，我是你的小弟 XL，有什么吩咐？
@@ -169,8 +170,11 @@ async def run_interactive(plan_mode: bool = False):
             if load_task.exception():
                 print(f"\n  ⚠️ 历史加载失败: {load_task.exception()}")
 
+        def _mode_label(m: AgentMode) -> str:
+            return "Normal" if m == AgentMode.NORMAL else "Deep"
+
         try:
-            user_input = _read_multiline()
+            user_input = _read_multiline(f"[{_mode_label(_mode)}] > ")
         except (EOFError, KeyboardInterrupt):
             print("\r\033[K🧠 整理记忆中...", end="", flush=True)
             try:
@@ -223,6 +227,17 @@ async def run_interactive(plan_mode: bool = False):
                 tool = agent.registry.get(name)
                 desc = await tool.description() if tool else ""
                 print(f"  {name}: {desc}")
+            continue
+
+        if user_input.startswith("/mode"):
+            parts = user_input.split()
+            if len(parts) == 2 and parts[1] in ("normal", "deep"):
+                _mode = AgentMode.NORMAL if parts[1] == "normal" else AgentMode.DEEP
+                agent.set_mode(_mode)
+                ts = "5 min" if _mode == AgentMode.NORMAL else "2 hours"
+                print(f"  Mode: {parts[1]} (timeout: {ts})")
+            else:
+                print("  Usage: /mode normal | /mode deep")
             continue
 
         # 历史在后台加载，不阻塞首条消息
@@ -281,7 +296,7 @@ async def run_interactive(plan_mode: bool = False):
             except Exception: pass
 
         try:
-            async for event in agent.run(user_input, stream=True, plan_mode=plan_mode):
+            async for event in agent.run(user_input, stream=True):
                 etype = event["type"]
 
                 if etype == "compacted":
@@ -320,23 +335,48 @@ async def run_interactive(plan_mode: bool = False):
                     icon = "\033[32m✓\033[0m" if "error" not in str(event.get("result", "")).lower()[:50] else "\033[31m✗\033[0m"
                     print(f"\r\033[K  {icon} {short}")
 
-                elif etype == "plan_ready":
+                elif etype == "permission_request":
                     _stop_spin()
-                    plan = event.get("content", "")[:500]
-                    tools = event.get("tools", [])
-                    print(f"\r\033[K\033[1;36m--- 计划 ---\033[0m\n{plan}")
-                    print(f"\033[33m工具: {', '.join(tools)}\033[0m")
-                    print("\033[1;36m执行? [Y/n]\033[0m ", end="", flush=True)
+                    _stop_tool_spin()
+                    cat = event.get("category", "?")
+                    name = event.get("tool_name", "?")
+                    msg = event.get("message", "")
+                    if cat == "dangerous":
+                        args_str = json.dumps(event.get("tool_args", {}), ensure_ascii=False)[:200]
+                        print(f"\r\033[K\033[1;31m⚠ DANGEROUS: {name}\033[0m")
+                        print(f"  {args_str}")
+                        print(f"\033[1;31m  Execute? [y/N]\033[0m ", end="", flush=True)
+                    else:
+                        print(f"\r\033[K\033[1;33m✎ WRITE: {name}\033[0m")
+                        print(f"  {msg}")
+                        print(f"\033[1;33m  Allow write for this task? [Y/n]\033[0m ", end="", flush=True)
                     try:
                         ans = await asyncio.get_event_loop().run_in_executor(None, input)
                     except (EOFError, KeyboardInterrupt):
                         ans = "n"
-                    if ans.strip().lower() in ("", "y", "yes"):
-                        agent.approve_plan()
-                        print("  → 执行中...")
+                    if cat == "dangerous":
+                        if ans.strip().lower() in ("y", "yes"):
+                            agent.approve_permission()
+                            print("  → Approved")
+                        else:
+                            agent.deny_permission()
+                            print("  → Denied")
                     else:
-                        agent.abort()
-                        print("  → 已取消")
+                        if ans.strip().lower() in ("", "y", "yes"):
+                            agent.approve_permission()
+                            print("  → Approved for this task")
+                        else:
+                            agent.deny_permission()
+                            print("  → Denied. Task aborted.")
+                    _req_start = asyncio.get_event_loop().time()
+
+                elif etype == "timeout":
+                    _stop_spin()
+                    _stop_tool_spin()
+                    mode = event.get("mode", "?")
+                    limit = event.get("limit", 0)
+                    ls = f"{limit}s" if limit < 120 else f"{limit // 60}min"
+                    print(f"\n  \033[33m⏱ Timeout: {mode} mode limit ({ls}) reached.\033[0m")
 
                 elif etype == "ctx_warning":
                     print(f"\n  ⚠️ 上下文已用 {event.get('pct',90)}%，建议 /clear 或等压缩")
@@ -387,6 +427,9 @@ async def run_single(query: str):
         elif etype == "tool_result":
             short = event["result"][:300].replace("\n", " ")
             print(f"  → {short}")
+        elif etype == "permission_request":
+            print(f"\n[PERM] {event.get('tool_name', '?')} — 自动批准")
+            agent.approve_permission()
         elif etype == "error":
             print(f"\n[ERROR] {event['content']}")
 
@@ -552,23 +595,20 @@ def _run_safe(coro):
     except (KeyboardInterrupt, asyncio.CancelledError): pass
 
 if __name__ == "__main__":
-    plan_mode = "--plan" in sys.argv
-    argv = [a for a in sys.argv if a != "--plan"]
-
-    if len(argv) > 1:
-        if argv[1] == "--gateway":
+    if len(sys.argv) > 1:
+        if sys.argv[1] == "--gateway":
             _run_safe(run_gateway())
-        elif argv[1] == "--auto-learn":
+        elif sys.argv[1] == "--auto-learn":
             _run_safe(run_auto_learn())
-        elif argv[1] == "--cleanup":
+        elif sys.argv[1] == "--cleanup":
             from agent.cleanup import run_cleanup
             agent = build_agent()
             _run_safe(run_cleanup(agent))
-        elif argv[1] == "--dashboard":
+        elif sys.argv[1] == "--dashboard":
             _run_safe(run_dashboard())
-        elif argv[1] == "--dashboard-learn":
+        elif sys.argv[1] == "--dashboard-learn":
             _run_safe(run_dashboard_learn())
         else:
-            _run_safe(run_single(" ".join(argv[1:])))
+            _run_safe(run_single(" ".join(sys.argv[1:])))
     else:
-        _run_safe(run_interactive(plan_mode=plan_mode))
+        _run_safe(run_interactive())
