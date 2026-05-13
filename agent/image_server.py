@@ -374,6 +374,8 @@ class ImageServer:
                 await self._serve_get(path, writer)
             elif method == "POST" and path == "/upload":
                 await self._handle_upload(request, reader, writer)
+            elif method == "DELETE" and path.startswith("/images/"):
+                await self._handle_delete(path, writer)
             else:
                 await self._serve_404(writer)
         except Exception as e:
@@ -508,6 +510,15 @@ class ImageServer:
 
     async def _serve_404(self, writer):
         await self._serve_json(writer, {"error": "not found"}, 404)
+
+    async def _handle_delete(self, path: str, writer):
+        filename = path.split("/images/", 1)[1]
+        filepath = IMAGES_DIR / filename
+        if not filepath.exists() or not filepath.is_file():
+            await self._serve_json(writer, {"error": "not found"}, 404)
+            return
+        filepath.unlink()
+        await self._serve_json(writer, {"ok": True, "deleted": filename})
 
 
 if __name__ == "__main__":
