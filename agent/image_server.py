@@ -370,7 +370,17 @@ class ImageServer:
             await self._serve_json(writer, {"ok": False, "error": "invalid request"}, 400)
             return
 
-        body = await reader.readexactly(content_length)
+        # 循环读取确保读够 content_length（TCP 分包兼容）
+        body = b""
+        remaining = content_length
+        while remaining > 0:
+            chunk = await reader.read(remaining)
+            if not chunk:
+                logger.warning(f"Upload: connection closed after {len(body)}/{content_length} bytes")
+                break
+            body += chunk
+            remaining -= len(chunk)
+        logger.info(f"Upload: read {len(body)}/{content_length} bytes, boundary={boundary[:40]}")
         parts = parse_multipart(body, boundary)
 
         saved = []
