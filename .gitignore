@@ -8,3 +8,5 @@ auto_learn.log
 .venv/
 node_modules/
 .obsidian/
+images/
+test_blue.png
