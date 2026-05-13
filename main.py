@@ -22,6 +22,7 @@ import logging
 logging.basicConfig(level=logging.WARNING, format='%(asctime)s - %(levelname)s - %(message)s')
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 logging.getLogger("httpx").setLevel(logging.WARNING)
+logger = logging.getLogger(__name__)
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 load_dotenv()
@@ -180,6 +181,7 @@ async def run_interactive(plan_mode: bool = False):
             try:
                 await asyncio.wait_for(on_session_end(agent), timeout=5)
             except (asyncio.TimeoutError, Exception):
+                logger.debug("on_session_end failed on KeyboardInterrupt", exc_info=True)
                 pass
             print("\r\033[KBye.\033[?25h")
             break
@@ -192,6 +194,7 @@ async def run_interactive(plan_mode: bool = False):
             try:
                 await asyncio.wait_for(on_session_end(agent), timeout=3)
             except (asyncio.TimeoutError, Exception):
+                logger.debug("on_session_end failed on /exit", exc_info=True)
                 pass
             print("\r\033[KBye.\033[?25h")
             break
@@ -388,12 +391,17 @@ async def run_single(query: str):
         elif etype == "tool_call":
             print(f"\n[TOOL] {event.get('name', '?')}")
         elif etype == "tool_result":
-            short = _clean_tokens(event["result"][:300].replace("\n", " "))
+            short = _clean_tokens(event.get("result", "")[:300].replace("\n", " "))
             print(f"  → {short}")
         elif etype == "error":
             error_text = event.get('content') or event.get('message', str(event))
             print(f"\n[ERROR] {_clean_tokens(error_text)}")
 
+    from agent.evolution import on_session_end
+    try:
+        await asyncio.wait_for(on_session_end(agent), timeout=5)
+    except Exception:
+        pass
     print()
 
 
@@ -523,13 +531,13 @@ async def run_dashboard():
             print("\nBye.")
             from agent.evolution import on_session_end
             try: await asyncio.wait_for(on_session_end(agent), timeout=8)
-            except: pass
+            except Exception: pass
             break
         if not user_input: continue
         if user_input == "/exit":
             from agent.evolution import on_session_end
             try: await asyncio.wait_for(on_session_end(agent), timeout=8)
-            except: pass
+            except Exception: pass
             break
         if user_input == "/clear": agent.clear_history(); continue
         if user_input == "/memory":
@@ -541,8 +549,8 @@ async def run_dashboard():
                 etype = event.get("type", "")
                 if etype == "compacted": print(f"\n  [上下文压缩]")
                 elif etype == "text_delta": print(_clean_tokens(event["content"]), end="", flush=True)
-                elif etype == "tool_call": print(f"\n  [TOOL] {event['name']}")
-                elif etype == "tool_result": print(f"  → {_clean_tokens(str(event['result'])[:200])}")
+                elif etype == "tool_call": print(f"\n  [TOOL] {event.get('name', '?')}")
+                elif etype == "tool_result": print(f"  → {_clean_tokens(str(event.get('result', ''))[:200])}")
                 elif etype == "nudge": print(f"\n  [💡 Nudge]")
                 elif etype == "aborted": print("\n  [aborted]")
                 elif etype == "error":

@@ -5,14 +5,16 @@
 
 import json
 import logging
+import os
 import re
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_BASE = Path(
+KNOWLEDGE_BASE = Path(os.environ.get(
+    "MYAGENT_KB",
     "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西"
-)
+))
 
 # 清理审查 prompt
 CLEANUP_PROMPT = """你是一个知识库管理员。请审查以下知识文件，决定是否保留。

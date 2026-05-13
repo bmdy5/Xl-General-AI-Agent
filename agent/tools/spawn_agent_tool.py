@@ -84,6 +84,7 @@ class SpawnAgentTool(BaseTool):
 
     # 递归深度追踪 (hermes 模式: 最多 3 层)
     _depth: int = 0
+    _depth_lock = asyncio.Lock()
 
     async def call(
         self, input_args: dict, context: Any = None
@@ -92,18 +93,20 @@ class SpawnAgentTool(BaseTool):
         task = input_args["task"]
         ctx = input_args.get("context", "")
 
-        # hermes: 防递归
-        if SpawnAgentTool._depth >= 3:
-            yield ToolResult(type="result", data="Error: max spawn depth reached")
-            return
-
-        yield ToolResult(type="progress", data=f"🤖 {role} 子代理工作中...")
+        # hermes: 防递归 (lock 防并发竞态)
+        async with SpawnAgentTool._depth_lock:
+            if SpawnAgentTool._depth >= 3:
+                yield ToolResult(type="result", data="Error: max spawn depth reached")
+                return
+            SpawnAgentTool._depth += 1
 
         try:
             main = context if context else None
             if not main or not hasattr(main, "llm"):
                 yield ToolResult(type="result", data="Error: no agent context")
                 return
+
+            yield ToolResult(type="progress", data=f"🤖 {role} 子代理工作中...")
 
             from agent.core import Agent
 
@@ -116,7 +119,6 @@ class SpawnAgentTool(BaseTool):
                 full_task = f"{task}\n\n上下文:\n{ctx}"
 
             # hermes: 超时 120s
-            SpawnAgentTool._depth += 1
             output_parts = []
             tool_calls_made = []
             try:
@@ -130,8 +132,6 @@ class SpawnAgentTool(BaseTool):
                         tool_calls_made.append(event.get("name", "?"))
             except asyncio.TimeoutError:
                 output_parts.append("\n[timeout: 120s]")
-            finally:
-                SpawnAgentTool._depth -= 1
 
             result_text = "".join(output_parts).strip() or "(no output)"
             summary = f" (用了 {len(tool_calls_made)} 次工具)" if tool_calls_made else ""
@@ -148,6 +148,9 @@ class SpawnAgentTool(BaseTool):
         except Exception as e:
             logger.error(f"Spawn failed: {e}")
             yield ToolResult(type="result", data=f"Error: {e}")
+        finally:
+            async with SpawnAgentTool._depth_lock:
+                SpawnAgentTool._depth -= 1
 
     async def _iter_with_timeout(self, agen, timeout=120):
         """Iterate an async generator with a per-item timeout."""

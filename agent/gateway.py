@@ -33,8 +33,10 @@ class QQGateway:
     def __init__(self, agent_factory):
         self._factory = agent_factory          # () → Agent
         self._agents: dict[str, object] = {}   # user_id/group_id → Agent
+        self._agent_cache_order: list[str] = []  # LRU eviction order
         self._http: Optional[aiohttp.ClientSession] = None
         self._pending_perms: dict[str, asyncio.Event] = {}  # session_key → Event
+        self._perm_results: dict[str, bool] = {}  # per-session permission results
 
     async def run(self):
         """连接 NapCat WebSocket，循环处理消息."""
@@ -89,9 +91,9 @@ class QQGateway:
         if perm is not None:
             lower = raw.lower().strip()
             if lower in ("允许", "y", "yes", "ok", "好", "可以", "行"):
-                self._perm_result = True
+                self._perm_results[session_key] = True
             else:
-                self._perm_result = False
+                self._perm_results[session_key] = False
             perm.set()
             return
 
@@ -101,6 +103,13 @@ class QQGateway:
         if agent is None:
             agent = self._factory()
             self._agents[session_key] = agent
+            # LRU eviction: keep cache bounded at 50 entries
+            if session_key in self._agent_cache_order:
+                self._agent_cache_order.remove(session_key)
+            self._agent_cache_order.append(session_key)
+            if len(self._agent_cache_order) > 50:
+                old_key = self._agent_cache_order.pop(0)
+                self._agents.pop(old_key, None)
 
         # 流式调用 — plan mode 默认开启，工具执行前弹 macOS 对话框
         buf = ""
@@ -141,6 +150,7 @@ class QQGateway:
         if buf.strip():
             await self._send_chunk(msg_type, user_id, group_id, buf.strip())
 
+
     async def _send_chunk(self, msg_type, user_id, group_id, text):
         """发送一个文本块，处理 [SPLIT] 和 [WAIT:N]."""
         wait = 0
@@ -176,7 +186,7 @@ class QQGateway:
         self._pending_perms[session_key] = evt
         try:
             await asyncio.wait_for(evt.wait(), timeout=120)
-            return self._perm_result
+            return self._perm_results.get(session_key, False)
         except asyncio.TimeoutError:
             await self._send(msg_type, user_id, group_id, "超时，已取消。")
             return False

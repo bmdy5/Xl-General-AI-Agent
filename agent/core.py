@@ -175,11 +175,15 @@ class Agent:
             system_prompt = cached_prompt
             if self._turn_count > 0 and self._turn_count % 10 == 0:
                 memory_block = await self._build_memory_block(user_input, turn)
+                # 取消旧的 prefetch 任务，启动新一轮预取
+                if not memory_block_task.done():
+                    memory_block_task.cancel()
+                memory_block_task = asyncio.create_task(self._build_memory_block(user_input, turn))
             elif memory_block_task is not None:
                 if not memory_block_task.done():
                     try:
                         memory_block = await asyncio.wait_for(memory_block_task, timeout=0.5)
-                    except asyncio.TimeoutError:
+                    except (asyncio.TimeoutError, Exception):
                         memory_block = ""
                 else:
                     try:
@@ -199,7 +203,8 @@ class Agent:
                 summary_content = self.messages[0].get("content", "")
                 if summary_content and "[历史对话摘要]" in summary_content:
                     merged_system = summary_content + "\n\n" + merged_system
-                    self.messages = self.messages[1:]
+                    self.messages.pop(0)  # Remove from messages to avoid duplicate
+                    cached_prompt = merged_system  # Persist in cached_prompt so it survives
 
             llm_messages = [{"role": "system", "content": merged_system}]
             llm_messages.extend(
@@ -406,8 +411,9 @@ class Agent:
 
     async def _extract_keywords(self, user_input: str) -> list[str]:
         """Flash 模型提取关键词，用于记忆排序."""
+        keywords = [w.strip().lower() for w in user_input.split() if len(w) > 1][:5]
         if len(user_input) < 10:
-            return []
+            return keywords
         try:
             flash_model = os.getenv("MYAGENT_LEARN_MODEL", "")
             resp = await self.llm.chat(
@@ -420,7 +426,8 @@ class Agent:
             text = resp.get("content", "").strip()
             return [kw.strip().lower() for kw in text.split() if kw.strip()][:5]
         except Exception:
-            return []
+            logger.debug("Keyword extraction via LLM failed, using fallback", exc_info=True)
+            return keywords
 
     async def _build_system_prompt(self) -> str:
         """组装 system prompt = 静态段 + 当前上下文 + 自进化规则."""
