@@ -191,12 +191,32 @@ class StitchTool(BaseTool):
     async def _generate_via_mcp(self, prompt: str, style: str) -> Optional[str]:
         """通过 MCP 协议调用 Stitch Server."""
         try:
+            # 获取 OAuth Access Token（优先于 API Key，项目操作需要）
+            import subprocess as _sp
+            loop = asyncio.get_running_loop()
+            env = os.environ.copy()
+            env.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
+                "/Users/xiaofeng/.config/gcloud/application_default_credentials.json")
+            env.setdefault("CLOUDSDK_CONFIG", "/Users/xiaofeng/.stitch-mcp/config")
+            try:
+                proc_token = await loop.run_in_executor(None,
+                    lambda: _sp.run(
+                        ["/Users/xiaofeng/.stitch-mcp/google-cloud-sdk/bin/gcloud",
+                         "auth", "application-default", "print-access-token"],
+                        capture_output=True, text=True, timeout=10, env=env))
+                if proc_token.returncode == 0 and proc_token.stdout.strip():
+                    env["STITCH_ACCESS_TOKEN"] = proc_token.stdout.strip()
+                    env.pop("STITCH_API_KEY", None)
+            except Exception:
+                pass  # Keep API key as fallback
+
             cmd = STITCH_SERVER_CMD.split()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
                 stdin=asyncio.subprocess.PIPE,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                env=env,
             )
 
             # MCP initialize
