@@ -308,7 +308,7 @@ async def run_interactive(plan_mode: bool = False):
                     _elapsed = asyncio.get_event_loop().time() - _req_start
                     _tokens = sum(len(str(m.get("content","")))//4 for m in agent.messages[-10:])
                     _ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000
-                    print(f"\033[90m({_elapsed:.1f}s · ~{_tokens}t · {_ctx_pct}% ctx)\033[0m")
+                    print(f"\n\033[90m({_elapsed:.1f}s · ~{_tokens}t · {_ctx_pct}% ctx)\033[0m")
                     _req_start = asyncio.get_event_loop().time()
 
                 elif etype == "reasoning":
@@ -359,7 +359,7 @@ async def run_interactive(plan_mode: bool = False):
                 elif etype == "error":
                     _stop_spin()
                     _stop_tool_spin()
-                    print(f"\n  \033[31m[ERROR]\033[0m {event['content']}")
+                    print(f"\n  \033[31m[ERROR]\033[0m {_clean_tokens(event['content'])}")
 
                 elif etype == "aborted":
                     _stop_spin()
@@ -397,7 +397,7 @@ async def run_single(query: str):
             short = _clean_tokens(event["result"][:300].replace("\n", " "))
             print(f"  → {short}")
         elif etype == "error":
-            print(f"\n[ERROR] {event['content']}")
+            print(f"\n[ERROR] {_clean_tokens(event['content'])}")
 
     print()
 
@@ -551,7 +551,7 @@ async def run_dashboard():
                 elif etype == "tool_result": print(f"  → {_clean_tokens(str(event['result'])[:200])}")
                 elif etype == "nudge": print(f"\n  [💡 Nudge]")
                 elif etype == "aborted": print("\n  [aborted]")
-                elif etype == "error": print(f"\n  [ERROR] {event['content']}")
+                elif etype == "error": print(f"\n  [ERROR] {_clean_tokens(event['content'])}")
         except Exception as e: print(f"\n  [ERROR] {e}")
         print()
 
