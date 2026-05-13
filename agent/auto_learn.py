@@ -165,7 +165,6 @@ class AutoLearner:
             if tr.type == "result":
                 text = str(tr.data)
                 # 提取 JSON
-                import re
                 json_match = re.search(r'\{[\s\S]*\}', text)
                 if json_match:
                     try:

@@ -7,7 +7,6 @@ openclaw 贡献：强制召回步骤（Mandatory recall step）
 
 import logging
 import re
-_re = re
 from typing import Any, AsyncGenerator, Optional
 
 from .base_tool import BaseTool, ToolResult
@@ -189,7 +188,7 @@ class MemoryTool(BaseTool):
                     found = None
                     for m in mm.list_memories():
                         if old in m:
-                            fname = _re.search(r'\(([^)]+\.md)\)', m)
+                            fname = re.search(r'\(([^)]+\.md)\)', m)
                             if fname:
                                 found = fname.group(1)
                                 break
@@ -215,7 +214,7 @@ class MemoryTool(BaseTool):
                 if not target_file and old_text:
                     for m in mm.list_memories():
                         if old_text in m:
-                            fname = _re.search(r'\(([^)]+\.md)\)', m)
+                            fname = re.search(r'\(([^)]+\.md)\)', m)
                             if fname:
                                 target_file = fname.group(1).replace(".md", "")
                                 break

@@ -352,7 +352,8 @@ async def run_interactive(plan_mode: bool = False):
                 elif etype == "error":
                     _stop_spin()
                     _stop_tool_spin()
-                    print(f"\n  \033[31m[ERROR]\033[0m {_clean_tokens(event['content'])}")
+                    error_text = event.get('content') or event.get('message', str(event))
+                    print(f"\n  \033[31m[ERROR]\033[0m {_clean_tokens(error_text)}")
 
                 elif etype == "aborted":
                     _stop_spin()
@@ -390,7 +391,8 @@ async def run_single(query: str):
             short = _clean_tokens(event["result"][:300].replace("\n", " "))
             print(f"  → {short}")
         elif etype == "error":
-            print(f"\n[ERROR] {_clean_tokens(event['content'])}")
+            error_text = event.get('content') or event.get('message', str(event))
+            print(f"\n[ERROR] {_clean_tokens(error_text)}")
 
     print()
 
@@ -544,7 +546,9 @@ async def run_dashboard():
                 elif etype == "tool_result": print(f"  → {_clean_tokens(str(event['result'])[:200])}")
                 elif etype == "nudge": print(f"\n  [💡 Nudge]")
                 elif etype == "aborted": print("\n  [aborted]")
-                elif etype == "error": print(f"\n  [ERROR] {_clean_tokens(event['content'])}")
+                elif etype == "error":
+                    error_text = event.get('content') or event.get('message', str(event))
+                    print(f"\n  [ERROR] {_clean_tokens(error_text)}")
         except Exception as e: print(f"\n  [ERROR] {e}")
         print()
 
