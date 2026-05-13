@@ -106,15 +106,15 @@ GALLERY_HTML = """<!DOCTYPE html>
     max-width: 900px;
   }
   .thumb {
-    background: #16213e;
-    border: 2px solid #533483;
-    border-radius: 4px;
+    background: #1c1b1b;
+    border: 2px solid #00ff00;
+    border-radius: 0;
     overflow: hidden;
     cursor: pointer;
     transition: border-color 0.2s;
     position: relative;
   }
-  .thumb:hover { border-color: #f4d058; }
+  .thumb:hover { border-color: #00ff00; box-shadow: 0 0 10px rgba(0,255,0,0.15); }
   .thumb img {
     width: 100%;
     height: 150px;
@@ -133,16 +133,18 @@ GALLERY_HTML = """<!DOCTYPE html>
     position: absolute;
     top: 4px;
     right: 4px;
-    background: #e74c3c;
-    color: #fff;
-    border: none;
-    border-radius: 3px;
+    background: #00ff00;
+    color: #131313;
+    border: 2px solid #00ff00;
+    border-radius: 0;
     width: 20px;
     height: 20px;
     font-size: 12px;
     cursor: pointer;
     display: none;
+    box-shadow: 2px 2px 0px 0px #000;
   }
+  .thumb .delete-btn:hover { background: #131313; color: #00ff00; }
   .thumb:hover .delete-btn { display: block; }
   .empty {
     grid-column: 1 / -1;

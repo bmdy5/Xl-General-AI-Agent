@@ -135,8 +135,11 @@ class EditFileTool(BaseTool):
                 type="result",
                 data=(
                     f"Error: search text found {count} times in file. "
-                    f"It must appear exactly once. Provide more context in `search` "
-                    f"to make it unique."
+                    f"It must appear exactly once. \n\n"
+                    f"提示：search 文本太短了，加上前后几行上下文让它唯一。\n"
+                    f"例如改成：\n"
+                    f"  search='background: #16213e;\\n    border: 2px solid #533483;\\n    border-radius: 4px;\\n    overflow: hidden;'\n"
+                    f"  search='background: #1a1a2e;\\n    border-radius: 4px;\\n    color: #e0e0e0;'"
                 ),
             )
             return
