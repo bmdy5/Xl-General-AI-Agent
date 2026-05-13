@@ -257,6 +257,8 @@ class Agent:
                     yield {"type": "text_delta", "content": content}
 
             if not tool_calls_list:
+                if stream and not content.strip():
+                    yield {"type": "text_delta", "content": "好的。"}
                 yield {"type": "completed"}
                 return
 
