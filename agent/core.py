@@ -253,7 +253,8 @@ class Agent:
             assistant_msg = {"role": "assistant", "content": content}
             if tool_calls_list:
                 assistant_msg["tool_calls"] = tool_calls_list
-            # reasoning_content is output-only — don't store it, DeepSeek will demand it back
+            if reasoning:
+                assistant_msg["reasoning_content"] = reasoning
             self.messages.append(assistant_msg)
             if self.session:
                 await self.session.append_message(assistant_msg)
