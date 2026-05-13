@@ -7,8 +7,10 @@ v2 升级：
 """
 
 import asyncio
+import enum
 import json
 import os
+import re
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
 
@@ -41,6 +43,21 @@ STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI agent. You evolve with e
 - When I correct you, save it as feedback via save_memory."""
 
 
+class AgentMode(enum.Enum):
+    NORMAL = "normal"
+    DEEP = "deep"
+
+
+class PermissionCategory(enum.Enum):
+    SAFE = "safe"        # 读操作，自动放行
+    WRITE = "write"      # 写操作，每任务问一次
+    DANGEROUS = "dangerous"  # 删除操作，每次都问
+
+
+NORMAL_TIMEOUT = 300    # 5 分钟
+DEEP_TIMEOUT = 7200     # 2 小时
+
+
 class Agent:
     """通用 Agent — while-true 核心循环 + 三层记忆注入."""
 
@@ -64,19 +81,21 @@ class Agent:
 
         self.messages: list[dict] = []
         self._abort = asyncio.Event()
-        self._plan_approved = asyncio.Event()
+        self._permission_granted = asyncio.Event()
         self._turn_count = 0
+        self._mode = AgentMode.NORMAL
+        self._task_write_approved = False
+        self._task_start_time = 0.0
 
     # ── public API ─────────────────────────────────────────────
 
-    async def run(self, user_input: str, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
+    async def run(self, user_input: str, stream: bool = False) -> AsyncGenerator[dict, None]:
         self._abort.clear()
-        self._plan_approved.clear()
+        self._permission_granted.clear()
         self._turn_count = 0
         self._total_tokens = 0
-
-        # ── 鲁棒性修护 ──
-        # (已移至 _run_loop 内部，确保每轮迭代前都修护)
+        self._task_write_approved = False
+        self._task_start_time = asyncio.get_event_loop().time()
 
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
@@ -84,7 +103,7 @@ class Agent:
 
         turn = 0
         try:
-            async for event in self._run_loop(user_input, turn, stream=stream, plan_mode=plan_mode):
+            async for event in self._run_loop(user_input, turn, stream=stream):
                 yield event
         except asyncio.CancelledError:
             yield {"type": "aborted"}
@@ -149,12 +168,19 @@ class Agent:
         if self.session:
             await self.session.replace_all(self.messages)
 
-    async def _run_loop(self, user_input: str, turn: int, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
+    async def _run_loop(self, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
         cached_prompt = await self._build_system_prompt()
         cached_block = await self._build_memory_block(user_input, 0)
 
         while turn < self.max_turns:
+            # ── 超时检查 ──
+            timeout = NORMAL_TIMEOUT if self._mode == AgentMode.NORMAL else DEEP_TIMEOUT
+            elapsed = asyncio.get_event_loop().time() - self._task_start_time
+            if elapsed > timeout:
+                yield {"type": "timeout", "mode": self._mode.value, "limit": timeout, "elapsed": elapsed}
+                return
+
             # ── 鲁棒性修护 ──
             # 在每轮 LLM 调用前，确保对话历史符合规范（解决 DeepSeek 孤儿 tool_call 报错）
             await self._repair_history()
@@ -191,6 +217,7 @@ class Agent:
             llm_messages.extend(self.messages)
             for m in llm_messages:
                 m.pop("reasoning_content", None)
+                m.pop("tool_calls", None)
 
             tools = self.registry.get_definitions()
 
@@ -249,21 +276,7 @@ class Agent:
                 yield {"type": "completed"}
                 return
 
-            # ── Plan mode: 等待用户确认 ──
-            if plan_mode:
-                tool_names = [tc["function"]["name"] for tc in tool_calls_list]
-                yield {"type": "plan_ready", "content": content, "tools": tool_names, "full_calls": tool_calls_list}
-                self._plan_approved.clear()
-                await self._plan_approved.wait()
-                if self._abort.is_set():
-                    # 回滚孤儿 tool_calls 消息，否则下次 LLM 会报错
-                    self.messages.pop()
-                    if self.session:
-                        await self.session.replace_all(self.messages)
-                    yield {"type": "aborted"}
-                    return
-
-            # ── 执行工具 ──
+            # ── 权限检查 + 工具执行（合并循环）──
             for tc in tool_calls_list:
                 if self._abort.is_set():
                     for remaining in tool_calls_list[tool_calls_list.index(tc):]:
@@ -281,9 +294,51 @@ class Agent:
                     tool_args = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     tool_args = {}
+                category = self._classify_permission(tool_name, tool_args)
 
+                if category == PermissionCategory.DANGEROUS:
+                    yield {
+                        "type": "permission_request",
+                        "category": "dangerous",
+                        "tool_name": tool_name,
+                        "tool_args": tool_args,
+                        "message": f"DANGEROUS: '{tool_name}' destructive operation. Execute?",
+                    }
+                    self._permission_granted.clear()
+                    await self._permission_granted.wait()
+                    if self._abort.is_set():
+                        self.messages.append({
+                            "role": "tool", "tool_call_id": tc["id"],
+                            "name": tool_name, "content": "Permission denied by user",
+                        })
+                        if self.session:
+                            await self.session.append_message(self.messages[-1])
+                        continue
+
+                elif category == PermissionCategory.WRITE and not self._task_write_approved:
+                    yield {
+                        "type": "permission_request",
+                        "category": "write",
+                        "tool_name": tool_name,
+                        "tool_args": tool_args,
+                        "message": "Agent wants to write/modify. Allow write operations for this task?",
+                    }
+                    self._permission_granted.clear()
+                    await self._permission_granted.wait()
+                    if self._abort.is_set():
+                        for remaining in tool_calls_list[tool_calls_list.index(tc):]:
+                            err_msg = {"role": "tool", "tool_call_id": remaining["id"],
+                                       "name": remaining["function"]["name"],
+                                       "content": "Permission denied"}
+                            self.messages.append(err_msg)
+                            if self.session:
+                                await self.session.append_message(err_msg)
+                        yield {"type": "aborted"}
+                        return
+                    self._task_write_approved = True
+
+                # ── 执行工具 ──
                 yield {"type": "tool_call", "id": tc["id"], "name": tool_name, "args": tool_args}
-
                 result_str = await self.registry.dispatch(tool_name, tool_args, context=self)
                 yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
 
@@ -372,15 +427,44 @@ class Agent:
 
         yield {"type": "_done", "text_parts": text_parts, "reasoning_parts": reasoning_parts, "tool_calls": tool_calls}
 
-    def approve_plan(self):
-        self._plan_approved.set()
+    def set_mode(self, mode: AgentMode) -> None:
+        self._mode = mode
+
+    @property
+    def mode(self) -> AgentMode:
+        return self._mode
+
+    def approve_permission(self) -> None:
+        self._permission_granted.set()
+
+    def deny_permission(self) -> None:
+        self._abort.set()
+        self._permission_granted.set()
 
     def abort(self):
         self._abort.set()
-        self._plan_approved.set()  # 防止 plan mode 死锁
+        self._permission_granted.set()
 
     def clear_history(self):
         self.messages.clear()
+
+    # ── 权限分类 ────────────────────────────────────────────────
+
+    def _classify_permission(self, tool_name: str, tool_args: dict) -> PermissionCategory:
+        tool = self.registry.get(tool_name)
+        if tool is None:
+            return PermissionCategory.SAFE
+        if not tool.needs_permissions(tool_args):
+            return PermissionCategory.SAFE
+        if tool_name == "bash":
+            from .tools.bash_tool import BashTool
+            category_str = BashTool.classify_command(tool_args.get("command", ""))
+            return {
+                "safe": PermissionCategory.SAFE,
+                "write": PermissionCategory.WRITE,
+                "dangerous": PermissionCategory.DANGEROUS,
+            }[category_str]
+        return PermissionCategory.WRITE
 
     # ── internal ───────────────────────────────────────────────
 

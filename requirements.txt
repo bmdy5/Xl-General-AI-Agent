@@ -1,7 +1,7 @@
-aiohttp==3.11.11
-python-dotenv==1.0.1
-litellm==1.59.3
-requests==2.32.3
-beautifulsoup4==4.12.3
-playwright==1.49.1
+aiohttp>=3.11.11
+python-dotenv>=1.0.1
+litellm>=1.59.3
+requests>=2.32.3
+beautifulsoup4>=4.12.3
+playwright>=1.52
 # 根据需要添加其他库

@@ -8,7 +8,7 @@
 """
 
 import asyncio
-import shlex
+import re
 from typing import Any, AsyncGenerator, Optional
 
 from .base_tool import BaseTool, ToolResult
@@ -36,6 +36,72 @@ class BashTool(BaseTool):
 
     def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
         return True  # 所有 bash 命令都需要审批
+
+    # ── 命令分类 ───────────────────────────────────────────────
+
+    SAFE_PREFIXES: frozenset = frozenset({
+        'ls', 'cat', 'grep', 'find', 'wc', 'echo', 'head', 'tail',
+        'sort', 'uniq', 'which', 'pwd', 'date', 'whoami', 'id',
+        'env', 'printenv', 'uname', 'hostname', 'uptime', 'df', 'du',
+        'ps', 'top', 'free', 'pgrep', 'stat', 'file', 'type',
+    })
+
+    DANGEROUS_PATTERNS: list = [
+        re.compile(r'\brm\b'),
+        re.compile(r'\brmdir\b'),
+        re.compile(r'\btruncate\b'),
+        re.compile(r'\bdd\b'),
+        re.compile(r'\bshred\b'),
+        re.compile(r'>\s*/dev/(sd|hd|nvme|mmcblk|loop|dm-)'),
+        re.compile(r'\bchmod\s+[0-7]'),
+        re.compile(r'\bchown\b'),
+        re.compile(r'\bkill(all)?\b'),
+        re.compile(r'\bpkill\b'),
+        re.compile(r'\breboot\b'),
+        re.compile(r'\bshutdown\b'),
+        re.compile(r'\bfdisk\b'),
+        re.compile(r'\bmount\b'),
+        re.compile(r'\bumount\b'),
+        re.compile(r'\bsudo\b'),
+        re.compile(r'\bsu\b'),
+        re.compile(r'\bpasswd\b'),
+        re.compile(r'\buseradd\b|\buserdel\b'),
+        re.compile(r'\biptables\b'),
+        re.compile(r'\bsystemctl\s+(stop|disable|mask)\b'),
+        re.compile(r'`.*rm\b'),
+    ]
+
+    SAFE_REGEX: list = [
+        re.compile(r'^git\s+(status|log|diff|show|branch|tag|remote\b|stash\s+list|rev-parse|config\s+--get)', re.IGNORECASE),
+        re.compile(r'^(pip|pip3)\s+(list|show|freeze)\b'),
+        re.compile(r'^(npm|yarn|pnpm)\s+(list|view|info|outdated|why)\b'),
+        re.compile(r'^docker\s+(ps|images|info|logs|stats|inspect)\b'),
+        re.compile(r'^gh\s+(pr\s+view|issue\s+view|api\s+get|auth\s+status)\b'),
+    ]
+
+    @staticmethod
+    def classify_command(command: str) -> str:
+        """返回 'safe', 'write', 或 'dangerous'."""
+        cmd = command.strip()
+        if not cmd:
+            return "safe"
+
+        for pat in BashTool.DANGEROUS_PATTERNS:
+            if pat.search(cmd):
+                return "dangerous"
+
+        first_word = cmd.split()[0] if cmd.split() else ""
+        first_word = first_word.lstrip('\\')
+        if first_word in BashTool.SAFE_PREFIXES:
+            return "safe"
+
+        for pat in BashTool.SAFE_REGEX:
+            if pat.match(cmd):
+                return "safe"
+
+        return "write"
+
+    # ── tool definition ────────────────────────────────────────
 
     def get_tool_definition(self) -> dict:
         return {

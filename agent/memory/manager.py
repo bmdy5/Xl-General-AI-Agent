@@ -1,13 +1,13 @@
 """Memory system - CC MEMORY.md pattern + timestamp evolution + knowledge index."""
 
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-KNOWLEDGE_INDEX = Path(
-    "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西/知识索引.md"
-)
+KB_DIR = os.getenv("MYAGENT_KB_DIR", "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西")
+KNOWLEDGE_INDEX = Path(KB_DIR) / "知识索引.md"
 
 
 def update_knowledge_index(section: str, entry: str):
