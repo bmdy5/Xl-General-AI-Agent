@@ -20,7 +20,7 @@ from .base_tool import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-STITCH_SERVER_CMD = os.getenv("STITCH_SERVER_CMD", "npx @google-labs/stitch-mcp-server")
+STITCH_SERVER_CMD = os.getenv("STITCH_SERVER_CMD", "npx stitch-mcp")
 STITCH_TIMEOUT = int(os.getenv("STITCH_TIMEOUT", "60"))
 
 
