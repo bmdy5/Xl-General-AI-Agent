@@ -82,10 +82,10 @@ def _flush_highlighted():
     pass  # 当前无需 flush，保留接口
 
 import re
-_WAIT_SPLIT_RE = re.compile(r'\[WAIT:[\d.]+\]|\[SPLIT\]')
+_WAIT_SPLIT_RE = re.compile(r'\[WAIT:[\d.]+\]|\[SPLIT\]|\r')
 
 def _clean_tokens(text: str) -> str:
-    """Strip [WAIT:N] and [SPLIT] tokens from displayed text."""
+    """Strip [WAIT:N], [SPLIT], and \r from displayed text."""
     return _WAIT_SPLIT_RE.sub('', text)
 
 
