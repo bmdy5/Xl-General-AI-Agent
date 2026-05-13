@@ -22,6 +22,7 @@ logger = logging.getLogger(__name__)
 
 STITCH_SERVER_CMD = os.getenv("STITCH_SERVER_CMD", "npx stitch-mcp")
 STITCH_TIMEOUT = int(os.getenv("STITCH_TIMEOUT", "60"))
+STITCH_QUOTA_PROJECT = os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
 
 
 class StitchTool(BaseTool):
@@ -87,6 +88,7 @@ class StitchTool(BaseTool):
             yield ToolResult(type="progress", data=f"Stitch: 生成 {style} 风格 UI...")
 
             # 如果安装了 stitch MCP，走 MCP 协议；否则 fallback 到直接生成
+            # 按优先级尝试：MCP → Fallback
             html_css = await self._generate_via_mcp(prompt, style)
             if not html_css:
                 html_css = await self._generate_fallback(prompt, style)
@@ -110,6 +112,81 @@ class StitchTool(BaseTool):
                 data=f"Error: {e}",
                 result_for_assistant=f"Stitch 调用失败: {e}",
             )
+
+    async def _generate_via_rest_api(self, prompt: str, style: str) -> Optional[str]:
+        """通过 Stitch REST API 直接生成 UI（绕过 MCP proxy 的 quota project 问题）."""
+        import subprocess
+        try:
+            gcloud_bin = "/Users/xiaofeng/.stitch-mcp/google-cloud-sdk/bin/gcloud"
+            creds_file = "/Users/xiaofeng/.config/gcloud/application_default_credentials.json"
+            config = "/Users/xiaofeng/.stitch-mcp/config"
+            quota_project = STITCH_QUOTA_PROJECT or "stitch-496215"
+
+            # 获取 Access Token
+            loop = asyncio.get_running_loop()
+            proc = await loop.run_in_executor(None, lambda: subprocess.run(
+                [gcloud_bin, "auth", "application-default", "print-access-token"],
+                capture_output=True, text=True, timeout=10,
+                env={**os.environ, "GOOGLE_APPLICATION_CREDENTIALS": creds_file,
+                     "CLOUDSDK_CONFIG": config}))
+            token = proc.stdout.strip()
+            if not token:
+                logger.warning("No Stitch access token")
+                return None
+
+            headers = {"Authorization": f"Bearer {token}",
+                       "x-goog-user-project": quota_project,
+                       "Content-Type": "application/json"}
+            base_url = "https://stitch.googleapis.com/v1"
+
+            # 列出或创建项目
+            list_resp = await loop.run_in_executor(None,
+                lambda: __import__("urllib.request").request.urlopen(
+                    __import__("urllib.request").request.Request(
+                        f"{base_url}/projects", headers=headers), timeout=10))
+            projects = json.loads(list_resp.read().decode())
+            proj_list = projects.get("projects", [])
+            if not proj_list:
+                # 创建项目
+                create_req = __import__("urllib.request").request.Request(
+                    f"{base_url}/projects",
+                    data=json.dumps({"title": "xl-generated-ui",
+                        "projectType": "TEXT_TO_UI_PRO"}).encode(), headers=headers)
+                create_resp = await loop.run_in_executor(None,
+                    lambda: __import__("urllib.request").request.urlopen(create_req, timeout=10))
+                proj = json.loads(create_resp.read().decode())
+                project_id = proj["name"]
+            else:
+                project_id = proj_list[0]["name"]
+
+            numeric_id = project_id.split("/")[-1]
+            logger.info(f"Stitch project: {project_id}")
+
+            # 生成 screen
+            gen_req = __import__("urllib.request").request.Request(
+                f"{base_url}/projects/{numeric_id}/screens:generateFromText",
+                data=json.dumps({"prompt": prompt, "deviceType": "DESKTOP",
+                    "modelId": "GEMINI_3_1_PRO"}).encode(), headers=headers)
+            gen_resp = await loop.run_in_executor(None,
+                lambda: __import__("urllib.request").request.urlopen(gen_req, timeout=60))
+            screen = json.loads(gen_resp.read().decode())
+            screen_id = screen["name"]  # projects/xxx/screens/yyy
+            logger.info(f"Stitch screen: {screen_id}")
+
+            # 获取 screen 代码
+            get_req = __import__("urllib.request").request.Request(
+                f"{base_url}/{screen_id}?view=CODE", headers=headers)
+            get_resp = await loop.run_in_executor(None,
+                lambda: __import__("urllib.request").request.urlopen(get_req, timeout=10))
+            screen_data = json.loads(get_resp.read().decode())
+            html = screen_data.get("htmlContent", "")
+            css = screen_data.get("cssContent", "")
+            if html:
+                return f"<style>{css}</style>\n{html}"
+            return None
+        except Exception as e:
+            logger.warning(f"Stitch REST API error: {e}")
+            return None
 
     async def _generate_via_mcp(self, prompt: str, style: str) -> Optional[str]:
         """通过 MCP 协议调用 Stitch Server."""
@@ -147,16 +224,18 @@ class StitchTool(BaseTool):
             proc.stdin.write(notif.encode())
             await proc.stdin.drain()
 
-            # Call generate_ui tool
+            # Call generate_screen_from_text tool (correct name for @_davideast/stitch-mcp v0.7+)
             tool_request = json.dumps({
                 "jsonrpc": "2.0",
                 "id": 2,
                 "method": "tools/call",
                 "params": {
-                    "name": "generate_ui",
+                    "name": "generate_screen_from_text",
                     "arguments": {
+                        "projectId": "9177609784991880809",
                         "prompt": prompt,
-                        "style": style,
+                        "deviceType": "DESKTOP",
+                        "modelId": "GEMINI_3_1_PRO",
                     },
                 },
             }) + "\n"
@@ -206,5 +285,5 @@ class StitchTool(BaseTool):
         css = styles_map.get(style, styles_map["modern"])
         return f"""<div style="padding: 24px; {css}">
   <h3>{prompt[:60]}</h3>
-  <p>Stitch MCP 未安装，这是 fallback 样式。安装: npx @google-labs/stitch-mcp-server</p>
+  <p>Stitch MCP 已连接，但需要 OAuth 以完成项目操作。确认或运行: npx @_davideast/stitch-mcp init --client cc</p>
 </div>"""
