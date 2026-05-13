@@ -16,6 +16,7 @@ logger = logging.getLogger(__name__)
 HOST = "0.0.0.0"
 PORT = 8866
 IMAGES_DIR = Path(__file__).parent.parent / "images"
+MANIFEST_FILE = IMAGES_DIR / "manifest.json"
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 # ── HTML 页面 ──────────────────────────────────────────────────
@@ -200,9 +201,10 @@ async function loadGallery() {
     data.images.forEach(img => {
       const div = document.createElement('div');
       div.className = 'thumb';
+      const displayName = img.original_name || img.name;
       div.innerHTML = `
-        <img src="/images/${img.name}" alt="${img.name}" loading="lazy">
-        <div class="thumb-info">${img.name}</div>
+        <img src="/images/${img.name}" alt="${displayName}" loading="lazy" title="${displayName}">
+        <div class="thumb-info">${displayName}</div>
         <button class="delete-btn" data-name="${img.name}">&times;</button>
       `;
       div.querySelector('.delete-btn').onclick = (e) => {
@@ -354,9 +356,23 @@ class ImageServer:
     def __init__(self, host: str = HOST, port: int = PORT):
         self.host = host
         self.port = port
+        self.manifest: dict[str, str] = {}
         IMAGES_DIR.mkdir(parents=True, exist_ok=True)
 
+    def _load_manifest(self):
+        """加载原始文件名映射."""
+        if MANIFEST_FILE.exists():
+            try:
+                self.manifest = json.loads(MANIFEST_FILE.read_text())
+            except (json.JSONDecodeError, OSError):
+                self.manifest = {}
+
+    def _save_manifest(self):
+        """保存原始文件名映射."""
+        MANIFEST_FILE.write_text(json.dumps(self.manifest, ensure_ascii=False))
+
     async def start(self):
+        self._load_manifest()
         """启动 HTTP 服务."""
         server = await asyncio.start_server(self._handle, self.host, self.port)
         print(f"\n  🖼️  Image Gallery: http://localhost:{self.port}")
@@ -440,7 +456,9 @@ class ImageServer:
             filepath = IMAGES_DIR / name
             filepath.write_bytes(part["data"])
             saved.append({"name": name, "original": part["filename"], "size": len(part["data"])})
+            self.manifest[name] = part["filename"]
 
+        self._save_manifest()
         await self._serve_json(writer, {"ok": True, "files": saved})
 
     async def _serve_image(self, path: str, writer):
@@ -464,8 +482,10 @@ class ImageServer:
         if IMAGES_DIR.exists():
             for f in sorted(IMAGES_DIR.iterdir(), key=lambda x: x.stat().st_mtime, reverse=True):
                 if f.is_file() and f.suffix.lower() in ALLOWED_EXTENSIONS:
+                    original = self.manifest.get(f.name, f.name)
                     images.append({
                         "name": f.name,
+                        "original_name": original,
                         "size": f.stat().st_size,
                         "time": f.stat().st_mtime,
                     })
@@ -518,6 +538,8 @@ class ImageServer:
             await self._serve_json(writer, {"error": "not found"}, 404)
             return
         filepath.unlink()
+        self.manifest.pop(filename, None)
+        self._save_manifest()
         await self._serve_json(writer, {"ok": True, "deleted": filename})
 
 
