@@ -10,6 +10,7 @@
 
 import json
 import logging
+import os
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -93,7 +94,10 @@ async def on_session_end(agent):
 
     # 技能改进：检测最近创建的技能文件，自动追踪使用
     try:
-        skill_dir = Path("/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西/技能")
+        skill_dir = Path(os.environ.get(
+            "MYAGENT_KB",
+            "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西"
+        )) / "技能"
         if skill_dir.exists():
             for sf in skill_dir.glob("*.md"):
                 mtime = sf.stat().st_mtime
@@ -101,6 +105,7 @@ async def on_session_end(agent):
                 if __import__("time").time() - mtime < 3600:
                     track_skill_usage(str(sf), success=True)
     except Exception:
+        logger.debug("Skill tracking scan skipped", exc_info=True)
         pass
 
     recent = agent.messages[-10:]
@@ -146,7 +151,10 @@ async def on_session_end(agent):
             trigger = pattern.get("trigger", "")
             if name and len(steps) >= 2:
                 skill_dir = Path(
-                    "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西/技能"
+                    os.environ.get(
+                        "MYAGENT_KB",
+                        "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西"
+                    ) + "/技能"
                 )
                 skill_dir.mkdir(parents=True, exist_ok=True)
                 safe_name = re.sub(r'[^\w一-鿿-]', '_', name)[:40]
@@ -210,6 +218,7 @@ async def detect_task_pattern(agent):
             return None
         return json.loads(json_match.group(0))
     except Exception:
+        logger.debug("Task pattern detection failed", exc_info=True)
         return None
 
 
@@ -251,6 +260,7 @@ async def select_relevant_memories(agent, query: str, max_count: int = 5) -> lis
         filenames = re.findall(r'([\w一-鿿-]+\.md)', text)
         return filenames[:max_count]
     except Exception:
+        logger.debug("Memory relevance selection failed, using fallback", exc_info=True)
         pass
 
     # Fallback: 时间戳排序

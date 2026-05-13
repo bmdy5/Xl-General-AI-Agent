@@ -20,9 +20,10 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_BASE = Path(
+KNOWLEDGE_BASE = Path(os.environ.get(
+    "MYAGENT_KB",
     "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西"
-)
+))
 
 CATEGORIES = ["后端", "前端", "AI", "运维", "技能"]
 
