@@ -195,8 +195,10 @@ async function loadGallery() {
     gallery.innerHTML = '';
     if (!data.images || data.images.length === 0) {
       gallery.innerHTML = '<div class="empty">还没有图片，拖拽或点击上传</div>';
+      uploadZone.classList.add('empty-gallery');
       return;
     }
+    uploadZone.classList.remove('empty-gallery');
     data.images.forEach(img => {
       const div = document.createElement('div');
       div.className = 'thumb';
@@ -214,6 +216,7 @@ async function loadGallery() {
     });
   } catch(e) {
     gallery.innerHTML = '<div class="empty">加载失败</div>';
+    uploadZone.classList.add('empty-gallery');
   }
 }
 
