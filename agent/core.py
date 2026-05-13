@@ -150,7 +150,8 @@ class Agent:
     async def _run_loop(self, user_input: str, turn: int, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
         cached_prompt = await self._build_system_prompt()
-        cached_block = await self._build_memory_block(user_input, 0)
+        cached_block = None
+        memory_block_task = asyncio.create_task(self._build_memory_block(user_input, 0))
 
         while turn < self.max_turns:
             # ── 鲁棒性修护 ──
@@ -163,9 +164,9 @@ class Agent:
                 yield {"type": "ctx_warning", "pct": 90}
 
             # ── 上下文压缩 ──
-            if self.compressor.should_compress(self.messages):
+            if self.compressor.should_compress(self.messages, turn=turn):
                 new_messages, was_compressed = await self.compressor.compress(
-                    self.messages, memory=self.memory
+                    self.messages, memory=self.memory, turn=turn
                 )
                 if was_compressed:
                     self.messages = new_messages
@@ -178,8 +179,15 @@ class Agent:
             system_prompt = cached_prompt
             if self._turn_count > 0 and self._turn_count % 10 == 0:
                 memory_block = await self._build_memory_block(user_input, turn)
+            elif memory_block_task is not None and memory_block_task.done():
+                if cached_block is None:
+                    try:
+                        cached_block = memory_block_task.result()
+                    except Exception:
+                        cached_block = ""
+                memory_block = cached_block
             else:
-                memory_block = cached_block  # 每轮注入
+                memory_block = ""
 
             # 合并 system prompt + memory block 为一条消息（DeepSeek 不兼容连续 system）
             merged_system = system_prompt
