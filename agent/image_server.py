@@ -169,7 +169,7 @@ GALLERY_HTML = """<!DOCTYPE html>
 </style>
 </head>
 <body>
-<div id="header">XL IMAGE GALLERY</div>
+<div id="header">XL 图片空间</div>
 <div id="upload-zone">
   <input type="file" id="file-input" accept="image/*" multiple>
   <span class="upload-icon">&#x1F5BC;</span>
