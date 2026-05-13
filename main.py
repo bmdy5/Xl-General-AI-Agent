@@ -13,7 +13,6 @@
 import asyncio
 import os
 import readline  # 启用退格键和行编辑
-import select
 import signal
 import sys
 
@@ -77,9 +76,6 @@ def _read_multiline(prompt: str = "> ") -> str:
 def _print_highlighted(text: str):
     """流式输出 agent 回复，亮白高亮."""
     print(f"\033[1;97m{text}\033[0m", end="", flush=True)
-
-def _flush_highlighted():
-    pass  # 当前无需 flush，保留接口
 
 import re
 _WAIT_SPLIT_RE = re.compile(r'\[WAIT:[\d.]+\]|\[SPLIT\]|\r')
@@ -341,7 +337,6 @@ async def run_interactive(plan_mode: bool = False):
                         agent.approve_plan()
                         print("  → 执行中...")
                     else:
-                        agent.approve_plan()
                         agent.abort()
                         print("  → 已取消")
 

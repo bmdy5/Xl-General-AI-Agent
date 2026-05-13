@@ -4,6 +4,7 @@
 """
 
 import base64
+import json
 import logging
 import mimetypes
 from pathlib import Path
@@ -153,7 +154,6 @@ class ReadImageTool(BaseTool):
     def _call_vision_api(self, b64: str, mime_type: str, user_prompt: str) -> Optional[str]:
         """同步调用 Mimo vision API."""
         import urllib.request
-        import json
 
         body = json.dumps({
             "model": VISION_MODEL,

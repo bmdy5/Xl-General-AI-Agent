@@ -6,7 +6,6 @@
 import asyncio
 import json
 import logging
-import uuid
 from typing import Any, AsyncGenerator, Optional
 
 from .base_tool import BaseTool, ToolResult

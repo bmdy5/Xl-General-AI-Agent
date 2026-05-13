@@ -71,7 +71,6 @@ class Agent:
         self._abort.clear()
         self._plan_approved.clear()
         self._turn_count = 0
-        self._total_tokens = 0
         self.compressor.reset_cooldown()
 
         # ── 鲁棒性修护 ──
@@ -338,7 +337,6 @@ class Agent:
                 return None, None, None
 
             response = llm_task.result()
-            self._total_tokens += response.get("tokens_used", 0)
             tc = response.get("tool_calls")
             return response["content"], response.get("reasoning_content"), tc if tc else []
         except Exception:
@@ -372,16 +370,19 @@ class Agent:
                 elif event["type"] == "tool_call":
                     tool_calls.append(event["data"])
                     yield event
+                elif event["type"] == "error":
+                    if first_token:
+                        yield {"type": "exploring_done"}
+                    yield event
+                    return
                 elif event["type"] == "aborted":
                     if first_token:
                         yield {"type": "exploring_done"}
                     yield event
                     return
-        except Exception as e:
-            if first_token:
-                yield {"type": "exploring_done"}
-            yield {"type": "error", "content": f"LLM call failed: {e}"}
-            return
+
+        except Exception:
+            pass  # errors handled inside the chat_stream loop
 
         yield {"type": "_done", "text_parts": text_parts, "reasoning_parts": reasoning_parts, "tool_calls": tool_calls}
 
@@ -402,7 +403,6 @@ class Agent:
         if len(user_input) < 10:
             return []
         try:
-            import os
             flash_model = os.getenv("MYAGENT_LEARN_MODEL", "")
             resp = await self.llm.chat(
                 messages=[{"role": "user", "content": (
