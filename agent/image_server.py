@@ -30,7 +30,7 @@ GALLERY_HTML = """<!DOCTYPE html>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #1a1a2e;
+    background: #131313;
     color: #e0e0e0;
     font-family: 'Courier New', monospace;
     min-height: 100vh;
@@ -40,53 +40,57 @@ GALLERY_HTML = """<!DOCTYPE html>
     padding: 20px;
   }
   #header {
-    color: #f4d058;
+    color: #00ff00;
     font-size: 24px;
     padding: 20px;
-    text-shadow: 2px 2px #6b4c1a;
+    text-shadow: 2px 2px #003300;
     letter-spacing: 4px;
   }
   #upload-zone {
-    border: 2px dashed #533483;
-    border-radius: 12px;
+    border: 3px dashed #00ff00;
+    border-radius: 4px;
     padding: 40px 30px;
     margin: 10px 0 24px;
     text-align: center;
     cursor: pointer;
-    transition: all 0.3s ease;
+    transition: all 0.15s ease;
     width: 100%;
     max-width: 900px;
     position: relative;
     overflow: hidden;
-    background: linear-gradient(135deg, #16213e 0%, #1a1a2e 100%);
+    background: #131313;
+    box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
+    font-family: 'Courier New', 'Space Mono', monospace;
   }
   #upload-zone::before {
     content: '';
     position: absolute;
     inset: 0;
-    background: radial-gradient(circle at 50% 50%, rgba(244,208,88,0.05) 0%, transparent 70%);
+    background: rgba(0,255,0,0.02);
     opacity: 0;
-    transition: opacity 0.3s;
+    transition: opacity 0.15s;
   }
   #upload-zone:hover::before,
   #upload-zone.drag-over::before { opacity: 1; }
   #upload-zone:hover, #upload-zone.drag-over {
-    border-color: #f4d058;
+    border-color: #00ff00;
     border-style: solid;
-    box-shadow: 0 0 30px rgba(244,208,88,0.15), inset 0 0 30px rgba(244,208,88,0.03);
-    transform: translateY(-2px);
+    box-shadow: 0 0 20px rgba(0,255,0,0.2), 2px 2px 0px 0px rgba(0,0,0,1);
+    transform: none;
   }
   #upload-zone input { display: none; }
   #upload-zone .upload-icon {
     font-size: 40px;
     margin-bottom: 12px;
     display: block;
-    transition: transform 0.3s;
+    color: #00ff00;
+    text-shadow: 0 0 10px rgba(0,255,0,0.3);
+    transition: transform 0.15s;
   }
   #upload-zone:hover .upload-icon,
-  #upload-zone.drag-over .upload-icon { transform: scale(1.1); }
-  #upload-zone .hint { color: #888; font-size: 14px; }
-  #upload-zone .hint span { color: #f4d058; text-decoration: underline; cursor: pointer; }
+  #upload-zone.drag-over .upload-icon { transform: scale(1.05); }
+  #upload-zone .hint { color: #84967c; font-size: 13px; font-family: 'Courier New', monospace; }
+  #upload-zone .hint span { color: #00ff00; text-decoration: underline; cursor: pointer; text-shadow: 0 0 5px rgba(0,255,0,0.3); }
   @keyframes pulse-border {
     0%, 100% { border-color: #533483; }
     50% { border-color: #7b5ea7; }
