@@ -88,7 +88,8 @@ def build_agent(session_id: str = "default") -> Agent:
     api_key = os.getenv("MYAGENT_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
     api_base = os.getenv("MYAGENT_API_BASE") or os.getenv("OPENAI_API_BASE")
 
-    llm = LLMClient(model=model, api_key=api_key, api_base=api_base)
+    max_tokens = int(os.getenv("MYAGENT_MAX_TOKENS", "16384"))
+    llm = LLMClient(model=model, api_key=api_key, api_base=api_base, max_tokens=max_tokens)
 
     # 注册工具
     if not registry.list_names():
