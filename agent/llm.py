@@ -66,7 +66,10 @@ class LLMClient:
             if abort_event and abort_event.is_set():
                 return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
             await asyncio.sleep(2)
-            response = await acompletion(**kwargs)
+            try:
+                response = await acompletion(**kwargs)
+            except Exception:
+                return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
 
         choice = response.choices[0].message
 

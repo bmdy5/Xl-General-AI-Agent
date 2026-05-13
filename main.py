@@ -180,10 +180,9 @@ async def run_interactive(plan_mode: bool = False):
         try:
             user_input = _read_multiline()
         except (EOFError, KeyboardInterrupt):
-            print("\r\033[K🧠 整理记忆中...", end="", flush=True)
+            from agent.evolution import on_session_end
             try:
-                from agent.evolution import on_session_end
-                await asyncio.wait_for(on_session_end(agent), timeout=8)
+                await asyncio.wait_for(on_session_end(agent), timeout=5)
             except (asyncio.TimeoutError, Exception):
                 pass
             print("\r\033[KBye.\033[?25h")

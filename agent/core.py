@@ -72,6 +72,7 @@ class Agent:
         self._plan_approved.clear()
         self._turn_count = 0
         self._total_tokens = 0
+        self.compressor.reset_cooldown()
 
         # ── 鲁棒性修护 ──
         # (已移至 _run_loop 内部，确保每轮迭代前都修护)
@@ -150,7 +151,6 @@ class Agent:
     async def _run_loop(self, user_input: str, turn: int, stream: bool = False, plan_mode: bool = False) -> AsyncGenerator[dict, None]:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
         cached_prompt = await self._build_system_prompt()
-        cached_block = None
         memory_block_task = asyncio.create_task(self._build_memory_block(user_input, 0))
 
         while turn < self.max_turns:
@@ -179,13 +179,17 @@ class Agent:
             system_prompt = cached_prompt
             if self._turn_count > 0 and self._turn_count % 10 == 0:
                 memory_block = await self._build_memory_block(user_input, turn)
-            elif memory_block_task is not None and memory_block_task.done():
-                if cached_block is None:
+            elif memory_block_task is not None:
+                if not memory_block_task.done():
                     try:
-                        cached_block = memory_block_task.result()
+                        memory_block = await asyncio.wait_for(memory_block_task, timeout=0.5)
+                    except asyncio.TimeoutError:
+                        memory_block = ""
+                else:
+                    try:
+                        memory_block = memory_block_task.result()
                     except Exception:
-                        cached_block = ""
-                memory_block = cached_block
+                        memory_block = ""
             else:
                 memory_block = ""
 
