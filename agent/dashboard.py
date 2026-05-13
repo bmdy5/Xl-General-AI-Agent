@@ -11,7 +11,6 @@ import asyncio
 import json
 import logging
 import os
-from http import HTTPStatus
 from pathlib import Path
 
 logger = logging.getLogger(__name__)

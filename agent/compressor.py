@@ -6,6 +6,7 @@ openclaw 贡献：压缩前记忆刷新（pre-compression memory flush）
 """
 
 import logging
+import time
 from typing import Optional
 
 logger = logging.getLogger(__name__)
@@ -182,7 +183,6 @@ class ContextCompressor:
 
     def _should_unstick_circuit(self) -> bool:
         """超过 30 分钟自动重置熔断器."""
-        import time
         if self._circuit_open and self._consecutive_failures >= self._max_failures:
             if not hasattr(self, '_circuit_opened_at'):
                 self._circuit_opened_at = time.time()

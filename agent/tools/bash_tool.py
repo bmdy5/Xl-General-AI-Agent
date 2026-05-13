@@ -8,7 +8,6 @@
 """
 
 import asyncio
-import shlex
 from typing import Any, AsyncGenerator, Optional
 
 from .base_tool import BaseTool, ToolResult

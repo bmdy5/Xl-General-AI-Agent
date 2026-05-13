@@ -26,96 +26,6 @@ KNOWLEDGE_BASE = Path(
 
 CATEGORIES = ["后端", "前端", "AI", "运维", "技能"]
 
-# LLM 分析文章的 prompt
-ANALYZE_PROMPT = """你是一个知识提取专家。请分析以下网页文章，提取有价值的知识。
-
-## 文章内容
-{content}
-
-## 请按以下 JSON 格式输出（只输出 JSON，不要其他内容）：
-{{
-  "title": "文章标题（中文，20字以内）",
-  "category": "后端/前端/AI/运维 之一",
-  "key_insights": ["核心发现1", "核心发现2", "核心发现3"],
-  "summary": "3-5条要点提炼，每条不超过30字，只写下次真能用上的",
-  "is_skill": true/false,
-  "skill_score": 1-10,
-  "skill_name": "如果is_skill为true，给技能起一个名字",
-  "skill_steps": ["如果is_skill为true，列出3-5个关键步骤"]
-}}
-
-## 分类规则
-- 后端: API、数据库、服务器、Python/FastAPI/Go/Rust、性能优化
-- 前端: React/Vue/TypeScript/CSS/UI设计/Next.js
-- AI: LLM、Agent、机器学习、Prompt工程、RAG、向量数据库
-- 运维: Docker/K8s、部署、CI/CD、Linux、监控
-
-## 技能判断规则（从严）
-is_skill 为 true 需要同时满足三个条件：
-1. 有明确的、可复用的步骤（不是"最佳实践"这种泛泛而谈）
-2. 下次遇到同类任务可以直接按这个流程操作，不用再想
-3. 步骤必须具体（"用 Ruff check 检查代码风格"而不是"注意代码风格"）
-
-以下情况 is_skill 必须为 false：
-- PEP 8、代码风格、注释规范 → 不是技能，是常识
-- "学习路线"、"入门指南" → 不是技能，是教程大纲
-- 纯概念解释（"什么是闭包"） → 是知识点不是技能
-- 商业推广、课程介绍 → 垃圾
-
-skill_score 评分：
-- 8-10：高度可复用，步骤具体可执行（如"部署检查清单"）
-- 5-7：有参考价值但不够实操
-- 1-4：不应创建技能
-
-**默认 is_skill=false，只有非常确定才给 true。**
-
-只输出 JSON，不要其他任何文字。"""
-
-# Pro 模型审查 prompt
-REVIEW_PROMPT = """你是一个知识质量控制专家。flash 模型从文章中提取了一些知识，请审查是否值得存入长期记忆。
-
-## flash 提取的内容
-标题: {title}
-分类: {category}
-核心发现: {insights}
-摘要: {summary}
-是否创建技能: {is_skill}
-技能评分: {skill_score}
-技能步骤: {skill_steps}
-
-## 审查标准（极严，默认不通过）
-**以下情况直接拒绝，不要犹豫：**
-- 商业推广（课程、社区、工具推销）→ approved=false
-- 过时内容（2025年及以前的"最新"对比/排名）→ approved=false
-- 没有具体代码/命令/数字 → approved=false
-- 纯介绍、纯概念、没有操作步骤 → approved=false
-- 信息太稀（500字就一句话有用）→ approved=false
-- bit.ly、短链接、推广链接 → approved=false
-- "零基础也可"、"无需编程" → approved=false（营销话术）
-- 内容少于200字 → approved=false
-
-**只有同时满足才通过：**
-1. 包含具体代码/命令/配置/数字
-2. 下次真实会遇到并打开看
-3. 不是常识，不是营销
-
-## 请按以下 JSON 输出
-{{
-  "approved": true/false,
-  "reason": "一句话说明通过/不通过的原因",
-  "corrected_insights": ["如果原insight不够准确，修正后的版本。否则用原版"],
-  "create_skill": true/false,
-  "final_skill_score": 1-10
-}}
-
-## 记忆审查规则
-- approved=false: 小众知识、广告软文、不准确内容、老生常谈
-- approved=true: 通用且可操作的实用知识
-- create_skill: 仅当技能评分>=7且确实可复用时才为true
-
-只输出 JSON，不要其他文字。"""
-
-
 class AutoLearner:
     """自主学习器 v2 — LLM 参与全过程."""
 
@@ -129,12 +39,8 @@ class AutoLearner:
         self.agent = agent
         self.max_duration = max_duration_minutes * 60
         self.kb = KNOWLEDGE_BASE
-        self._seen_topics: set = set()
-        self._seen_urls: set = set()
-        self._seen_files: set = set()
         self._learn_model = learn_model or agent.llm.model
         self._review_model = os.getenv("MYAGENT_REVIEW_MODEL") or agent.llm.model
-        self._agent_scores: dict = {}
         self._dash = dashboard  # 可选 dashboard
         self._ensure_dirs()
 
@@ -268,18 +174,6 @@ class AutoLearner:
                         pass
         return {"findings": findings, "count": len(findings)}
 
-    async def _review_finding(self, f: dict) -> Optional[dict]:
-        """主 agent 审查一条发现."""
-        return await self._ask_json(
-            f"审查这条学习发现，判断是否值得存入知识库：\n"
-            f"标题: {f.get('title','')}\n"
-            f"分类: {f.get('category','AI')}\n"
-            f"要点: {json.dumps(f.get('insights',[]), ensure_ascii=False)[:500]}\n\n"
-            "标准：通用性、可操作性、准确性、非商业推广。\n"
-            'JSON: {"approved":true/false,"reason":"","corrected_insights":["要点"]}',
-            use_review=True
-        )
-
     # ── 辩论方法 ──────────────────────────────────────────
 
     async def _generate_debate_roles(self, topic: str) -> list[dict]:
@@ -360,21 +254,6 @@ class AutoLearner:
         except Exception:
             pass
         return []
-
-    # ── 辩论学习系统 ──────────────────────────────────────
-
-    async def _call_tool(self, tool_name: str, args: dict) -> Optional[str]:
-        """直接调用工具（web_search / web_fetch 不需要 LLM 参与）."""
-        tool = self.agent.registry.get(tool_name)
-        if not tool:
-            return None
-        try:
-            async for tr in tool.call(args, context=self.agent):
-                if tr.type == "result":
-                    return str(tr.data)
-        except Exception as e:
-            logger.warning(f"Tool {tool_name} failed: {e}")
-        return None
 
     # ── 辅助方法 ──────────────────────────────────────────────
 
@@ -457,11 +336,6 @@ class AutoLearner:
         # 提取前几个有意义的词
         cleaned = feedback_desc.replace("[feedback]", "").strip()
         return cleaned[:60] if cleaned else ""
-
-    def _extract_urls(self, text: str) -> list[str]:
-        urls = re.findall(r'https?://[^\s,)\]]+', text)
-        skip = ["youtube.com", "github.com/", "twitter.com", "x.com", "linkedin.com"]
-        return [u for u in urls if not any(s in u for s in skip)]
 
     def _safe_filename(self, title: str) -> str:
         ts = datetime.now(timezone.utc).strftime("%Y-%m-%d")

@@ -6,6 +6,8 @@ openclaw 贡献：强制召回步骤（Mandatory recall step）
 """
 
 import logging
+import re
+_re = re
 from typing import Any, AsyncGenerator, Optional
 
 from .base_tool import BaseTool, ToolResult
@@ -187,7 +189,6 @@ class MemoryTool(BaseTool):
                     found = None
                     for m in mm.list_memories():
                         if old in m:
-                            import re as _re
                             fname = _re.search(r'\(([^)]+\.md)\)', m)
                             if fname:
                                 found = fname.group(1)
@@ -212,7 +213,6 @@ class MemoryTool(BaseTool):
                 # 找到要替换的文件名
                 target_file = filename
                 if not target_file and old_text:
-                    import re as _re
                     for m in mm.list_memories():
                         if old_text in m:
                             fname = _re.search(r'\(([^)]+\.md)\)', m)
