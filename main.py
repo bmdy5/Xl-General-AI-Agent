@@ -37,6 +37,7 @@ from agent.tools.memory_tool import MemoryTool
 from agent.tools.read_image_tool import ReadImageTool
 from agent.tools.registry import registry
 from agent.tools.spawn_agent_tool import SpawnAgentTool
+from agent.tools.stitch_tool import StitchTool
 from agent.tools.web_fetch_tool import WebFetchTool
 from agent.tools.web_search_tool import WebSearchTool
 
@@ -99,6 +100,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(ReadImageTool())
         registry.register(Image2GenerateTool())
         registry.register(SpawnAgentTool())
+        registry.register(StitchTool())
         registry.register(MemoryTool())
 
     memory = MemoryManager()
