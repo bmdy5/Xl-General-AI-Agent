@@ -21,105 +21,16 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 # ── HTML 页面 ──────────────────────────────────────────────────
 
-GALLERY_HTML = """<!DOCTYPE html>
+GALLERY_HTML = """
+<!DOCTYPE html>
 
 <html class="light" lang="zh-CN"><head>
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>像素花园 - 上传</title>
-<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600&amp;family=Plus+Jakarta+Sans:wght@700;800&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
-<script id="tailwind-config">
-        tailwind.config = {
-            darkMode: "class",
-            theme: {
-                extend: {
-                    colors: {
-                        "on-tertiary-container": "#636565",
-                        "inverse-on-surface": "#f5eff7",
-                        "secondary-container": "#fed33a",
-                        "secondary-fixed-dim": "#ecc228",
-                        "on-secondary": "#ffffff",
-                        "on-background": "#1c1b20",
-                        "surface-variant": "#e6e1e8",
-                        "on-primary": "#ffffff",
-                        "on-surface-variant": "#414940",
-                        "secondary-fixed": "#ffe082",
-                        "on-secondary-fixed-variant": "#564500",
-                        "tertiary-fixed": "#e2e2e2",
-                        "tertiary": "#5d5f5f",
-                        "outline": "#717970",
-                        "outline-variant": "#c0c9be",
-                        "on-tertiary-fixed-variant": "#454747",
-                        "error-container": "#ffdad6",
-                        "surface-container": "#f2ecf4",
-                        "surface-container-high": "#ece6ee",
-                        "on-secondary-container": "#715b00",
-                        "on-error": "#ffffff",
-                        "on-primary-fixed-variant": "#145129",
-                        "primary": "#2f6a3f",
-                        "tertiary-container": "#e3e3e3",
-                        "primary-container": "#b2f2bb",
-                        "surface-bright": "#fdf7ff",
-                        "tertiary-fixed-dim": "#c6c6c7",
-                        "surface": "#fdf7ff",
-                        "on-primary-fixed": "#00210b",
-                        "on-surface": "#1c1b20",
-                        "on-primary-container": "#367044",
-                        "primary-fixed-dim": "#96d5a0",
-                        "background": "#fdf7ff",
-                        "error": "#ba1a1a",
-                        "on-secondary-fixed": "#231b00",
-                        "surface-dim": "#ded8e0",
-                        "inverse-surface": "#322f35",
-                        "on-error-container": "#93000a",
-                        "surface-container-low": "#f8f2fa",
-                        "surface-container-lowest": "#ffffff",
-                        "primary-fixed": "#b2f2bb",
-                        "inverse-primary": "#96d5a0",
-                        "surface-container-highest": "#e6e1e8",
-                        "on-tertiary": "#ffffff",
-                        "secondary": "#725c00",
-                        "surface-tint": "#2f6a3f",
-                        "on-tertiary-fixed": "#1a1c1c"
-                    },
-                    borderRadius: {
-                        "DEFAULT": "0.25rem",
-                        "lg": "0.5rem",
-                        "xl": "0.75rem",
-                        "full": "9999px"
-                    },
-                    spacing: {
-                        "margin-desktop": "32px",
-                        "gutter": "16px",
-                        "margin-mobile": "16px",
-                        "unit": "4px",
-                        "container-max": "1200px"
-                    },
-                    fontFamily: {
-                        "body-md": ["Be Vietnam Pro"],
-                        "label-md": ["Be Vietnam Pro"],
-                        "headline-lg": ["Plus Jakarta Sans"],
-                        "headline-md": ["Plus Jakarta Sans"],
-                        "body-lg": ["Be Vietnam Pro"],
-                        "display-lg": ["Plus Jakarta Sans"],
-                        "headline-lg-mobile": ["Plus Jakarta Sans"]
-                    },
-                    fontSize: {
-                        "body-md": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
-                        "label-md": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.05em", "fontWeight": "600" }],
-                        "headline-lg": ["32px", { "lineHeight": "1.3", "fontWeight": "700" }],
-                        "headline-md": ["24px", { "lineHeight": "1.4", "fontWeight": "700" }],
-                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
-                        "display-lg": ["40px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "800" }],
-                        "headline-lg-mobile": ["28px", { "lineHeight": "1.3", "fontWeight": "700" }]
-                    }
-                }
-            }
-        }
-    </script>
 <style>
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
@@ -181,7 +92,7 @@ GALLERY_HTML = """<!DOCTYPE html>
 <span class="material-symbols-outlined text-primary text-3xl">history</span>
 <h3 class="font-headline-md text-headline-md text-on-surface">最近上传</h3>
 </div>
-<div class="grid grid-cols-2 md:grid-cols-4 gap-gutter">
+<div id="gallery" class="grid grid-cols-2 md:grid-cols-4 gap-gutter">
 <!-- Card 1 -->
 <div class="bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden hover:translate-y-[-2px] transition-transform duration-200 cursor-pointer flex flex-col">
 <div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb]">
@@ -254,7 +165,7 @@ GALLERY_HTML = """<!DOCTYPE html>
 <script>
 var _tt;
 function toast(m){var t=document.getElementById('toast');t.textContent=m;t.style.opacity='1';clearTimeout(_tt);_tt=setTimeout(function(){t.style.opacity='0'},2000);}
-function fmtName(n){try{return decodeURIComponent(n).replace(/\.\\w+$/,'').slice(0,18)}catch(e){return n.slice(0,18)}}
+function fmtName(n){try{return decodeURIComponent(n).replace(/\.\w+$/,'').slice(0,18)}catch(e){return n.slice(0,18)}}
 function fmtSize(s){if(s<1024)return s+' B';if(s<1024*1024)return (s/1024).toFixed(1)+' KB';return (s/1024/1024).toFixed(1)+' MB'}
 
 async function loadGallery(){
@@ -272,12 +183,12 @@ async function loadGallery(){
       var dn=fmtName(img.original_name||img.name);
       h+='<div class="thumb-card bg-surface-container-lowest border-2 border-\[\#ffdeeb\] shadow-\[0_4px_0_0_\#ffdeeb\] rounded-xl overflow-hidden flex flex-col">'+
         '<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-\[\#ffdeeb\] flex items-center justify-center overflow-hidden">'+
-        '<img src="/images/'+img.name+'" alt="'+dn+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;" onerror="this.outerHTML='<span class=\"material-symbols-outlined text-outline text-4xl block\">image</span>'">'+
+        '<img src="/images/'+img.name+'" alt="'+dn+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=`none`">'+
         '</div>'+
         '<div class="p-4 flex flex-col gap-1 relative">'+
         '<span class="font-label-md text-label-md text-on-surface truncate">'+dn+'</span>'+
         '<span class="font-body-md text-body-md text-outline text-sm">'+fmtSize(img.size)+'</span>'+
-        '<button class="card-del" onclick="deleteImg(''+img.name+'',this)">&times;</button>'+
+        '<button class="card-del" data-name="'+img.name+'" onclick="deleteImg(this)">&times;</button>'+
         '</div></div>';
     }
     g.querySelectorAll('.thumb-card').forEach(function(c){c.remove()});
