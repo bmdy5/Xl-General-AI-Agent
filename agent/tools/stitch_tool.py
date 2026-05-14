@@ -309,7 +309,36 @@ MCP_INPUT"""
             if result.returncode != 0:
                 logger.warning(f"Stitch shell failed: {result.stderr[:200]}")
                 return None
-            return result.stdout
+
+            # 解析输出：找到 tools/call 响应并下载 HTML
+            for line in result.stdout.split("\n"):
+                try:
+                    data = json.loads(line)
+                    if data.get("id") == 2:
+                        for item in data.get("result", {}).get("content", []):
+                            if item.get("type") == "text":
+                                raw = item.get("text", "")
+                                try:
+                                    inner = json.loads(raw)
+                                    for comp in inner.get("outputComponents", []):
+                                        for screen in comp.get("design", {}).get("screens", []):
+                                            code_url = screen.get("htmlCode", {}).get("downloadUrl", "")
+                                            if code_url:
+                                                import urllib.request, ssl
+                                                ctx = ssl.create_default_context()
+                                                ctx.check_hostname = False
+                                                ctx.verify_mode = ssl.CERT_NONE
+                                                full_url = code_url if code_url.startswith("http") else f"https:{code_url}"
+                                                req = urllib.request.Request(full_url)
+                                                with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                                                    html = resp.read().decode("utf-8", errors="replace")
+                                                if html and len(html) > 100:
+                                                    return html
+                                except json.JSONDecodeError:
+                                    pass
+                except json.JSONDecodeError:
+                    pass
+            return None
             cmd = STITCH_SERVER_CMD.split()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
