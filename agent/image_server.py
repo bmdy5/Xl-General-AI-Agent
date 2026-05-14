@@ -30,9 +30,9 @@ GALLERY_HTML = """<!DOCTYPE html>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #131313;
-    color: #e0e0e0;
-    font-family: 'Courier New', monospace;
+    background: #FFF8F0;
+    color: #5D4E37;
+    font-family: 'Courier New', 'Space Mono', monospace;
     min-height: 100vh;
     display: flex;
     flex-direction: column;
@@ -40,10 +40,10 @@ GALLERY_HTML = """<!DOCTYPE html>
     padding: 20px;
   }
   #header {
-    color: #00ff00;
+    color: #FF69B4;
     font-size: 24px;
     padding: 20px;
-    text-shadow: 2px 2px #003300;
+    text-shadow: 2px 2px #FFB6C1;
     letter-spacing: 4px;
   }
   #upload-zone {
@@ -58,7 +58,7 @@ GALLERY_HTML = """<!DOCTYPE html>
     max-width: 900px;
     position: relative;
     overflow: hidden;
-    background: #131313;
+    background: #FFF8F0;
     box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
     font-family: 'Courier New', 'Space Mono', monospace;
   }
@@ -66,16 +66,16 @@ GALLERY_HTML = """<!DOCTYPE html>
     content: '';
     position: absolute;
     inset: 0;
-    background: rgba(0,255,0,0.02);
+    background: rgba(255,182,193,0.1);
     opacity: 0;
     transition: opacity 0.15s;
   }
   #upload-zone:hover::before,
   #upload-zone.drag-over::before { opacity: 1; }
   #upload-zone:hover, #upload-zone.drag-over {
-    border-color: #00ff00;
+    border-color: #FF69B4;
     border-style: solid;
-    box-shadow: 0 0 20px rgba(0,255,0,0.2), 2px 2px 0px 0px rgba(0,0,0,1);
+    box-shadow: 0 0 20px rgba(255,105,180,0.2), 2px 2px 0px 0px #FFDAB9;
     transform: none;
   }
   #upload-zone input { display: none; }
@@ -83,14 +83,14 @@ GALLERY_HTML = """<!DOCTYPE html>
     font-size: 40px;
     margin-bottom: 12px;
     display: block;
-    color: #00ff00;
-    text-shadow: 0 0 10px rgba(0,255,0,0.3);
+    color: #FF69B4;
+    text-shadow: 0 0 10px rgba(255,105,180,0.3);
     transition: transform 0.15s;
   }
   #upload-zone:hover .upload-icon,
   #upload-zone.drag-over .upload-icon { transform: scale(1.05); }
-  #upload-zone .hint { color: #84967c; font-size: 13px; font-family: 'Courier New', monospace; }
-  #upload-zone .hint span { color: #00ff00; text-decoration: underline; cursor: pointer; text-shadow: 0 0 5px rgba(0,255,0,0.3); }
+  #upload-zone .hint { color: #C9A48A; font-size: 13px; }
+  #upload-zone .hint span { color: #FF69B4; text-decoration: underline; cursor: pointer; }
   @keyframes pulse-border {
     0%, 100% { border-color: #533483; }
     50% { border-color: #7b5ea7; }
@@ -106,15 +106,15 @@ GALLERY_HTML = """<!DOCTYPE html>
     max-width: 900px;
   }
   .thumb {
-    background: #201f1f;
-    border: 2px solid #00ff00;
-    border-radius: 0;
+    background: #FFF0F5;
+    border: 2px solid #FFB6C1;
+    border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
     transition: border-color 0.2s;
     position: relative;
   }
-  .thumb:hover { border-color: #00ff00; box-shadow: 0 0 10px rgba(0,255,0,0.15); }
+  .thumb:hover { border-color: #FF69B4; box-shadow: 0 0 10px rgba(255,105,180,0.15); }
   .thumb img {
     width: 100%;
     height: 150px;
@@ -124,7 +124,7 @@ GALLERY_HTML = """<!DOCTYPE html>
   .thumb-info {
     padding: 6px;
     font-size: 11px;
-    color: #888;
+    color: #8B7355;
     overflow: hidden;
     text-overflow: ellipsis;
     white-space: nowrap;
@@ -133,23 +133,22 @@ GALLERY_HTML = """<!DOCTYPE html>
     position: absolute;
     top: 4px;
     right: 4px;
-    background: #00ff00;
-    color: #131313;
-    border: 2px solid #00ff00;
-    border-radius: 0;
+    background: #FFB6C1;
+    color: #FFF;
+    border: none;
+    border-radius: 4px;
     width: 20px;
     height: 20px;
     font-size: 12px;
     cursor: pointer;
     display: none;
-    box-shadow: 2px 2px 0px 0px #000;
   }
-  .thumb .delete-btn:hover { background: #131313; color: #00ff00; }
+  .thumb .delete-btn:hover { background: #FF69B4; }
   .thumb:hover .delete-btn { display: block; }
   .empty {
     grid-column: 1 / -1;
     text-align: center;
-    color: #555;
+    color: #C9A48A;
     padding: 60px;
     font-size: 16px;
   }
@@ -158,8 +157,8 @@ GALLERY_HTML = """<!DOCTYPE html>
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
-    background: #f4d058;
-    color: #1a1a2e;
+    background: #FF69B4;
+    color: #FFF;
     padding: 10px 24px;
     border-radius: 4px;
     font-size: 14px;
