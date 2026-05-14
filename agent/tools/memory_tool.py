@@ -73,7 +73,7 @@ class MemoryTool(BaseTool):
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["add", "replace", "remove", "read"],
+                            "enum": ["add", "replace", "remove", "read", "search"],
                             "description": "add=save new memory, replace=update existing, remove=delete, read=list all",
                         },
                         "memory_type": {
@@ -89,10 +89,7 @@ class MemoryTool(BaseTool):
                             "type": "string",
                             "description": "One-line summary for MEMORY.md index. Only for 'add' action.",
                         },
-                        "content": {
-                            "type": "string",
-                            "description": "The memory content. For 'add'=full text, for 'replace'=new text.",
-                        },
+                        "content": {"type": "string", "description": "The memory content. For 'add'=full text, for 'replace'=new text."}, "query": {"type": "string", "description": "Search query for action=search."},
                         "old_text": {
                             "type": "string",
                             "description": "Text to match for replace/remove. Substring match is OK.",
@@ -105,8 +102,10 @@ class MemoryTool(BaseTool):
 
     async def validate_input(self, input_args: dict, context: Any = None) -> dict:
         action = input_args.get("action", "")
-        if action not in ("add", "replace", "remove", "read"):
+        if action not in ("add", "replace", "remove", "read", "search"):
             return {"result": False, "message": f"Invalid action: {action}"}
+        if action == "search" and not input_args.get("query"):
+            return {"result": False, "message": "query required for search action"}
         if action in ("add", "replace") and not input_args.get("content"):
             return {"result": False, "message": "content is required for add/replace"}
         if action == "add":
@@ -128,6 +127,18 @@ class MemoryTool(BaseTool):
             else:
                 from agent.memory.manager import MemoryManager
                 mm = MemoryManager()
+
+            if action == "search":
+                query = input_args.get("query", "")
+                results = mm.search_memories(query, limit=5)
+                if not results:
+                    yield ToolResult(type="result", data=f"No memories found for: {query}")
+                else:
+                    lines = [f"Found {len(results)} memories:"]
+                    for r in results:
+                        lines.append(f"- [{r.get('memory_type','?')}] {r.get('description','')[:80]}")
+                    yield ToolResult(type="result", data="\n".join(lines))
+                return
 
             if action == "read":
                 memories = mm.list_memories()
