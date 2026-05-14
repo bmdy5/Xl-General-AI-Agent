@@ -9,10 +9,13 @@ v2 升级：
 import asyncio
 import enum
 import json
+import logging
 import os
 import re
 from datetime import datetime, timezone
 from typing import AsyncGenerator, Optional
+
+logger = logging.getLogger(__name__)
 
 from .llm import LLMClient
 from .memory.manager import MemoryManager
@@ -334,9 +337,24 @@ class Agent:
                         return
                     self._task_write_approved = True
 
-                # ── 执行工具 ──
+                # ── 执行工具（带超时） ──
                 yield {"type": "tool_call", "id": tc["id"], "name": tool_name, "args": tool_args}
-                result_str = await self.registry.dispatch(tool_name, tool_args, context=self)
+                try:
+                    result_str = await asyncio.wait_for(
+                        self.registry.dispatch(tool_name, tool_args, context=self),
+                        timeout=40,
+                    )
+                except asyncio.TimeoutError:
+                    result_str = f'{{"error": "Tool call timed out after 40s: {tool_name}"}}'
+                    logger.warning(f"Tool timeout: {tool_name} exceeded 40s")
+                    yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
+                    self.messages.append({
+                        "role": "tool", "tool_call_id": tc["id"],
+                        "name": tool_name, "content": result_str,
+                    })
+                    if self.session:
+                        await self.session.append_message(self.messages[-1])
+                    continue
                 yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
 
                 asyncio.create_task(audit_tool_call(self, tool_name, tool_args, result_str))
