@@ -33,6 +33,7 @@ from agent.session.handler import SessionHandler
 from agent.tools.bash_tool import BashTool
 from agent.tools.edit_file_tool import EditFileTool
 from agent.tools.file_tools import ReadFileTool, WriteFileTool
+from agent.tools.run_sequence_tool import RunSequenceTool
 from agent.tools.image2_tool import Image2GenerateTool
 from agent.tools.memory_tool import MemoryTool
 from agent.tools.read_image_tool import ReadImageTool
@@ -97,6 +98,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(ReadFileTool())
         registry.register(WriteFileTool())
         registry.register(EditFileTool())
+        registry.register(RunSequenceTool())
         registry.register(BashTool(work_dir=os.getcwd()))
         registry.register(WebSearchTool())
         registry.register(WebFetchTool())
