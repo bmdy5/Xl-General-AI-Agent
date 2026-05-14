@@ -126,6 +126,7 @@ GALLERY_HTML = """
             font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         }
       #upload-zone.drag-over{background:#e8f5e9!important;border-color:#2f6a3f!important}
+  .gallery-card:hover .card-del{display:block!important}
 </style>
 </head>
 <body class="bg-surface text-on-surface font-body-md min-h-screen">
@@ -155,7 +156,7 @@ GALLERY_HTML = """
 <span class="material-symbols-outlined text-4xl block">local_florist</span>
 </div>
 <!-- Drop Area -->
-<div class="border-4 border-dashed border-primary-container bg-primary-container/10 hover:bg-primary-container/20 transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center gap-6 cursor-pointer group">
+<div id="upload-zone" class="border-4 border-dashed border-primary-container bg-primary-container/10 hover:bg-primary-container/20 transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center gap-6 cursor-pointer group">
 <div class="bg-surface p-4 rounded-full border-2 border-primary shadow-[0_4px_0_0_#2f6a3f] group-hover:translate-y-1 group-hover:shadow-[0_2px_0_0_#2f6a3f] transition-all">
 <span class="material-symbols-outlined text-display-lg text-primary block" style="font-size: 64px;">cloud_upload</span>
 </div>
@@ -225,21 +226,21 @@ async function loadGallery(){
   var e=document.getElementById('gallery-empty');
   try{
     var r=await fetch('/api/list');var d=await r.json();var imgs=d.images||[];
-    g.querySelectorAll('.thumb-card').forEach(function(c){c.remove()});
+    g.innerHTML='';
     if(imgs.length===0){if(e)e.style.display='block';return}
     if(e)e.remove();
     for(var i=0;i<imgs.length;i++){
       var img=imgs[i];
       var dn=fmtName(img.original_name||img.name);
       var div=document.createElement('div');
-      div.className='bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden flex flex-col';
+      div.className='gallery-card bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden flex flex-col';
       div.innerHTML='<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb] flex items-center justify-center overflow-hidden">'+
         '<img src="/images/'+img.name+'" alt="'+dn+'" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.remove()">'+
         '</div>'+
         '<div class="p-4 flex flex-col gap-1 relative">'+
         '<span class="font-label-md text-label-md text-on-surface truncate">'+dn+'</span>'+
         '<span class="font-body-md text-body-md text-outline text-sm">'+fmtSize(img.size)+'</span>'+
-        '<button class="card-del" style="position:absolute;top:6px;right:6px;width:24px;height:24px;background:#fff;border:2px solid #2f6a3f;border-radius:6px;cursor:pointer;font-size:14px;line-height:20px;text-align:center;color:#2f6a3f;display:none;box-shadow:0 2px 0 #145129;z-index:10" onclick="deleteImg(this.dataset.name)" data-name="'+img.name+'">&times;</button>'+
+        '<button class="card-del" class="card-del" style="position:absolute;top:6px;right:6px;width:24px;height:24px;background:#fff;border:2px solid #2f6a3f;border-radius:6px;cursor:pointer;font-size:14px;line-height:20px;text-align:center;color:#2f6a3f;display:none;box-shadow:0 2px 0 #145129;z-index:10" onclick="deleteImg(this.dataset.name)" data-name="'+img.name+'">&times;</button>'+
         '</div>';
       div.onmouseenter=function(){this.querySelector('.card-del').style.display='block'};
       div.onmouseleave=function(){this.querySelector('.card-del').remove()};
@@ -258,7 +259,7 @@ async function uploadFiles(files){
       if(j.ok){toast('已上传: '+f.name)}else{toast('上传失败')}
     }catch(e){toast('上传出错')}
   }
-  loadGallery();
+  await loadGallery();
 }
 
 async function deleteImg(name){
