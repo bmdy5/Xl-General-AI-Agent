@@ -190,8 +190,9 @@ async def run_interactive():
         ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000 if agent.compressor else 0
         prompt_style = "Normal" if _mode == AgentMode.NORMAL else "Deep"
         ctx_bar = "█" * (ctx_pct // 5) + "░" * (20 - ctx_pct // 5)
-        print(f"  [bright_blue]{prompt_style}[/bright_blue] [dim]ctx: {ctx_bar} {ctx_pct}%[/dim]")
-        print(f"  [dim]│[/dim] ", end="")
+        from agent.tui import console as tui_console
+        tui_console.print(f"  [bright_blue]{prompt_style}[/bright_blue] [dim]ctx: {ctx_bar} {ctx_pct}%[/dim]")
+        tui_console.print(f"  [dim]│[/dim] ", end="")
         try:
             user_input = _read_multiline("")
         except (EOFError, KeyboardInterrupt):

@@ -53,6 +53,7 @@ async def run_with_tui(agent, user_input: str):
     text_buffer = ""
     tool_count = 0
     reason_preview = ""
+    _exploring = True  # exploring_done 后才处理 tool_call
 
     # 用户消息
     console.print()
@@ -68,6 +69,7 @@ async def run_with_tui(agent, user_input: str):
 
         # ── 思考结束 → 停止计时 ──
         elif etype == "exploring_done":
+            _exploring = False
             await think.stop_timer()
 
         # ── 推理内容 → 显示简短摘要（流式飞过）──
@@ -86,6 +88,8 @@ async def run_with_tui(agent, user_input: str):
 
         # ── 工具调用 → 暂停计时 → 打印 → 重启计时 ──
         elif etype == "tool_call":
+            if _exploring:
+                continue  # 跳过 LLM 流中的 tool_call（等 exploring_done）
             tool_count += 1
             await think.stop_timer()
             name = event.get("name", "?")
