@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DuoAgent 圆桌讨论</title>
+<style>
+*{margin:0;padding:0;box-sizing:border-box}
+body{font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,'Noto Sans SC',sans-serif;background:linear-gradient(135deg,#fef3c7,#fde68a 30%,#fbbf24 70%,#f59e0b);min-height:100vh;color:#1f2937}
+.container{max-width:800px;margin:0 auto;padding:20px}
+
+/* Header */
+header{text-align:center;padding:40px 0 20px}
+header h1{font-size:2rem;font-weight:700;color:#1e293b;letter-spacing:-.02em}
+header p{color:#475569;margin-top:6px;font-size:.95rem}
+
+/* Setup panel */
+#setup{background:rgba(255,255,255,.85);backdrop-filter:blur(12px);border-radius:20px;padding:30px;box-shadow:0 8px 32px rgba(0,0,0,.08);margin-bottom:24px}
+#setup label{display:block;font-size:.85rem;font-weight:600;color:#374151;margin-bottom:6px}
+#topic-input{width:100%;padding:12px 16px;border:2px solid #e5e7eb;border-radius:12px;font-size:1rem;outline:none;transition:border-color .2s;background:rgba(255,255,255,.5)}
+#topic-input:focus{border-color:#f59e0b}
+
+.agent-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;margin:16px 0}
+.agent-card{padding:14px;border:2px solid #e5e7eb;border-radius:14px;cursor:pointer;text-align:center;transition:all .2s;background:rgba(255,255,255,.5)}
+.agent-card:hover{border-color:#f59e0b;transform:translateY(-2px)}
+.agent-card.selected{border-color:#f59e0b;background:rgba(251,191,36,.12);box-shadow:0 0 0 3px rgba(251,191,36,.2)}
+.agent-card .emoji{font-size:1.8rem;display:block;margin-bottom:4px}
+.agent-card .name{font-size:.85rem;font-weight:600;color:#1f2937}
+.agent-card .role{font-size:.75rem;color:#6b7280;margin-top:2px}
+
+.rounds-row{display:flex;align-items:center;gap:12px;margin:16px 0}
+.rounds-row input[type=range]{flex:1}
+.rounds-row span{font-size:.9rem;color:#374151;font-weight:600;min-width:30px}
+
+#start-btn{width:100%;padding:14px;border:none;border-radius:14px;font-size:1.05rem;font-weight:600;cursor:pointer;background:linear-gradient(135deg,#f59e0b,#d97706);color:#fff;transition:transform .15s,box-shadow .2s}
+#start-btn:hover{transform:translateY(-1px);box-shadow:0 4px 16px rgba(245,158,11,.35)}
+#start-btn:disabled{opacity:.5;cursor:not-allowed;transform:none}
+
+/* Discussion panel */
+#discussion{display:none;background:rgba(255,255,255,.85);backdrop-filter:blur(12px);border-radius:20px;padding:30px;box-shadow:0 8px 32px rgba(0,0,0,.08);margin-bottom:24px}
+.topic-badge{display:inline-block;padding:6px 16px;border-radius:20px;background:linear-gradient(135deg,#fef3c7,#fde68a);font-size:.85rem;font-weight:600;color:#92400e;margin-bottom:16px}
+.round-info{font-size:.9rem;color:#6b7280;margin-bottom:16px;display:flex;align-items:center;gap:8px}
+
+.messages{padding:0}
+.message{display:flex;gap:12px;margin-bottom:16px;padding:14px 16px;border-radius:14px;animation:fadeIn .3s ease}
+@keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
+.message.system{background:rgba(107,114,128,.08);justify-content:center;font-size:.9rem;color:#6b7280;padding:8px 16px}
+.message.speaker .avatar{font-size:1.5rem;min-width:36px;height:36px;display:flex;align-items:center;justify-content:center;border-radius:50%}
+.message.speaker .name{font-size:.8rem;font-weight:600;margin-bottom:4px}
+.message.speaker .text{font-size:.95rem;line-height:1.6;color:#1f2937}
+.message.thinking{opacity:.6}
+.typing-dots::after{content:'...';animation:dots 1.5s steps(3,end) infinite}
+@keyframes dots{0%{content:'.'}33%{content:'..'}66%{content:'...'}}
+
+/* Controls */
+#controls{display:none;text-align:center;padding:10px 0}
+#new-btn{padding:12px 28px;border:2px solid #d1d5db;border-radius:12px;font-size:.95rem;cursor:pointer;background:rgba(255,255,255,.6);transition:all .2s;color:#374151}
+#new-btn:hover{background:#fff;border-color:#9ca3af}
+
+/* Footer */
+footer{text-align:center;padding:20px;color:#9ca3af;font-size:.8rem}
+</style>
+</head>
+<body>
+<div class="container">
+  <header>
+    <h1>🔄 DuoAgent</h1>
+    <p>多 Agent 圆桌讨论 · 给一个话题，让 AI 们聊起来</p>
+  </header>
+
+  <!-- Setup -->
+  <div id="setup">
+    <label for="topic-input">讨论话题</label>
+    <input id="topic-input" type="text" placeholder="输入你想讨论的话题..." autocomplete="off">
+
+    <div style="margin-top:16px"><label>选择参与者</label></div>
+    <div class="agent-grid" id="agent-grid"></div>
+
+    <div class="rounds-row">
+      <label style="margin:0">讨论轮次</label>
+      <input type="range" id="rounds-range" min="1" max="6" value="3">
+      <span id="rounds-label">3</span>
+    </div>
+
+    <button id="start-btn">开始讨论</button>
+  </div>
+
+  <!-- Discussion -->
+  <div id="discussion">
+    <div class="topic-badge" id="topic-badge"></div>
+    <div class="round-info" id="round-info"></div>
+    <div class="messages" id="messages"></div>
+  </div>
+
+  <div id="controls">
+    <button id="new-btn">↻ 新讨论</button>
+  </div>
+
+  <footer>Powered by XL Agent · SSE 实时流</footer>
+</div>
+
+<script>
+const COLORS = {
+  "主持人":"#6B7280","正方":"#3B82F6","反方":"#EF4444",
+  "专家":"#10B981","自由人":"#F59E0B","现实派":"#8B5CF6"
+};
+const EMOJIS = {
+  "主持人":"🎙️","正方":"💡","反方":"⚡","专家":"📊","自由人":"🌈","现实派":"🏔️"
+};
+let currentDiscussion = null;
+let eventSource = null;
+
+// Load agent templates
+fetch('/api/templates').then(r=>r.json()).then(data=>{
+  const grid = document.getElementById('agent-grid');
+  const selected = ['主持人','正方','反方'];
+  Object.entries(data.templates).forEach(([name, info])=>{
+    const card = document.createElement('div');
+    card.className = 'agent-card' + (selected.includes(name)?' selected':'');
+    card.dataset.name = name;
+    card.innerHTML = `<span class="emoji">${info.emoji}</span>
+      <span class="name">${name}</span>`;
+    card.onclick = ()=>{
+      card.classList.toggle('selected');
+      updateStartBtn();
+    };
+    grid.appendChild(card);
+  });
+  updateStartBtn();
+});
+
+document.getElementById('rounds-range').oninput = function(){
+  document.getElementById('rounds-label').textContent = this.value;
+};
+
+document.getElementById('topic-input').oninput = () => updateStartBtn();
+document.getElementById('topic-input').onkeydown = e => {if(e.key==='Enter') startDiscussion()};
+
+function updateStartBtn(){
+  const topic = document.getElementById('topic-input').value.trim();
+  const selected = document.querySelectorAll('.agent-card.selected');
+  document.getElementById('start-btn').disabled = !topic || selected.length < 2;
+}
+
+async function startDiscussion(){
+  const topic = document.getElementById('topic-input').value.trim();
+  const selected = [...document.querySelectorAll('.agent-card.selected')].map(c=>c.dataset.name);
+  const rounds = parseInt(document.getElementById('rounds-range').value);
+
+  document.getElementById('start-btn').disabled = true;
+  document.getElementById('start-btn').textContent = '讨论进行中...';
+
+  const res = await fetch('/api/start', {
+    method:'POST',
+    headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({topic, agents:selected, rounds})
+  });
+  const data = await res.json();
+
+  // Switch to discussion view
+  document.getElementById('setup').style.display = 'none';
+  document.getElementById('discussion').style.display = 'block';
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('topic-badge').textContent = `📋 ${topic}`;
+  document.getElementById('messages').innerHTML = '';
+  currentDiscussion = data.id;
+
+  // Connect SSE
+  eventSource = new EventSource(`/api/stream/${data.id}`);
+  eventSource.onmessage = function(e){
+    const event = JSON.parse(e.data);
+    handleEvent(event);
+  };
+  eventSource.onerror = function(){
+    // Stream ended
+    document.getElementById('controls').style.display = 'block';
+    document.getElementById('start-btn').textContent = '开始讨论';
+  };
+}
+
+function handleEvent(event){
+  const msgs = document.getElementById('messages');
+
+  if(event.type === 'system'){
+    const div = document.createElement('div');
+    div.className = 'message system';
+    div.textContent = event.content;
+    msgs.appendChild(div);
+    scroll();
+    return;
+  }
+
+  if(event.type === 'round_start'){
+    const div = document.createElement('div');
+    div.className = 'message system';
+    div.textContent = `── 第 ${event.round}/${event.total} 轮 ──`;
+    msgs.appendChild(div);
+    scroll();
+    return;
+  }
+
+  if(event.type === 'round_done'){
+    const div = document.createElement('div');
+    div.className = 'message system';
+    div.textContent = `第 ${event.round} 轮结束`;
+    msgs.appendChild(div);
+    scroll();
+    return;
+  }
+
+  if(event.type === 'speaker_start'){
+    updateRoundInfo(event.agent);
+    // Remove previous thinking
+    const thinking = msgs.querySelector('.thinking');
+    if(thinking) thinking.remove();
+    // Add thinking indicator
+    const div = document.createElement('div');
+    div.className = 'message speaker thinking';
+    div.id = 'thinking-msg';
+    const c = COLORS[event.agent]||'#6b7280';
+    div.innerHTML = `<div class="avatar" style="background:${c}22;color:${c}">${EMOJIS[event.agent]||'🤖'}</div>
+      <div><div class="name" style="color:${c}">${event.agent}</div>
+      <div class="text typing-dots" style="color:${c}88"></div></div>`;
+    msgs.appendChild(div);
+    scroll();
+    return;
+  }
+
+  if(event.type === 'message'){
+    const thinking = document.getElementById('thinking-msg');
+    if(thinking) thinking.remove();
+
+    const div = document.createElement('div');
+    div.className = 'message speaker';
+    const c = COLORS[event.agent]||'#6b7280';
+    div.style.borderLeft = `3px solid ${c}`;
+    div.innerHTML = `<div class="avatar" style="background:${c}15;color:${c}">${event.emoji||'🤖'}</div>
+      <div><div class="name" style="color:${c}">${event.agent}</div>
+      <div class="text">${escapeHtml(event.content)}</div></div>`;
+    msgs.appendChild(div);
+    scroll();
+  }
+
+  if(event.type === 'done'){
+    updateRoundInfo('');
+    document.getElementById('controls').style.display = 'block';
+    document.getElementById('start-btn').textContent = '开始讨论';
+    eventSource.close();
+  }
+
+  if(event.type === 'error'){
+    const div = document.createElement('div');
+    div.className = 'message system';
+    div.textContent = '⚠️ ' + event.content;
+    div.style.color = '#ef4444';
+    msgs.appendChild(div);
+    scroll();
+  }
+}
+
+function updateRoundInfo(agent){
+  const info = document.getElementById('round-info');
+  if(agent){
+    info.innerHTML = `<span style="color:${COLORS[agent]||'#6b7280'}">${EMOJIS[agent]||'💬'} ${agent} 发言中...</span>`;
+  } else {
+    info.innerHTML = '讨论已结束';
+  }
+}
+
+function scroll(){
+  window.scrollTo({top:document.body.scrollHeight, behavior:'smooth'});
+}
+
+function escapeHtml(text){
+  const d = document.createElement('div');
+  d.textContent = text;
+  return d.innerHTML;
+}
+
+document.getElementById('new-btn').onclick = function(){
+  if(eventSource) eventSource.close();
+  document.getElementById('setup').style.display = 'block';
+  document.getElementById('discussion').style.display = 'none';
+  document.getElementById('controls').style.display = 'none';
+  document.getElementById('start-btn').disabled = false;
+  document.getElementById('start-btn').textContent = '开始讨论';
+  document.getElementById('messages').innerHTML = '';
+  currentDiscussion = null;
+};
+</script>
+</body>
+</html>
