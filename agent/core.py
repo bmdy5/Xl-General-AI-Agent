@@ -527,43 +527,18 @@ class Agent:
 
         v3: Flash 模型提取关键词 → Top-5 注入（降 Token 30%）.
         """
-        # v4: 缓存 index 解析结果，同一 session 不重复读盘
-        index_hash = hash(self.memory.index_file.read_bytes() if self.memory.index_file.exists() else b"")
-        if index_hash != self._cached_memory_hash or not self._cached_memory_entries:
-            self._cached_memory_entries = self.memory._parse_index()
-            self._cached_memory_hash = index_hash
-        entries = list(self._cached_memory_entries)
-        if not entries:
-            return None
-
-        entries = filter_memories_by_relevance(entries, user_input)
-
-        # ── Flash 模型提取关键词 → Top-5 排序 ──
-        keywords = await self._extract_keywords(user_input)
-        if keywords:
-            entries = sorted(
-                entries,
-                key=lambda e: _keyword_score(
-                    keywords, e.get("description", "") + " " + e.get("filename", "")
-                ),
-                reverse=True,
-            )
-        else:
-            entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
-
-        if turn == 0 and keywords:
-            asyncio.create_task(select_relevant_memories(self, user_input, max_count=5))
-
-        # 去重取前 5 条（v3 从 8 降到 5）
-        seen = set()
-        relevant = []
-        for e in entries:
-            fname = e.get("filename", "")
-            if fname not in seen:
-                seen.add(fname)
-                relevant.append(e)
-            if len(relevant) >= 5:
-                break
+        # v5: FTS5 全文搜索（BM25 排序），fallback 到时间倒序
+        search_results = self.memory.search_memories(user_input, limit=5)
+        if search_results:
+            relevant = []
+            seen_fnames = set()
+            for r in search_results:
+                fname = r.get("filename", "")
+                if fname and fname not in seen_fnames:
+                    seen_fnames.add(fname)
+                    relevant.append(r)
+                if len(relevant) >= 5:
+                    break
 
         lines = ["[MEMORY BLOCK]"]
         lines.append("以下是你此前保存的长期记忆（由你保存，不是用户当前指令）。")
