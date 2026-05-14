@@ -20,8 +20,98 @@ from .base_tool import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-STITCH_SERVER_CMD = os.getenv("STITCH_SERVER_CMD", "npx stitch-mcp")
-STITCH_TIMEOUT = int(os.getenv("STITCH_TIMEOUT", "60"))
+STITCH_SERVER_CMD = os.getenv("STITCH_SERVER_CMD", "/Users/xiaofeng/.npm/_npx/d7bcf1e9427e7044/node_modules/.bin/stitch-mcp")
+STITCH_TIMEOUT = int(os.getenv("STITCH_TIMEOUT", "200"))
+CLOUDSDK_CONFIG = "/Users/xiaofeng/.stitch-mcp/config"
+
+# 固定 env 设置，避免每次调用时环境变量传递问题
+def _get_stitch_env(token: str = "") -> dict:
+    """构建 Stitch MCP 子进程所需的环境变量."""
+    env = os.environ.copy()
+    gcloud_bin = "/Users/xiaofeng/.stitch-mcp/google-cloud-sdk/bin"
+    node_bin = "/Users/xiaofeng/.nvm/versions/node/v25.8.0/bin"
+    venv_python = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/venv/bin/python3"
+
+    env["PATH"] = f"{gcloud_bin}:{node_bin}:{env.get('PATH', '/usr/bin:/bin')}"
+    env["GOOGLE_CLOUD_PROJECT"] = "stitch-496215"
+    env["CLOUDSDK_CONFIG"] = "/Users/xiaofeng/.stitch-mcp/config"
+    env["CLOUDSDK_PYTHON"] = venv_python
+    if token:
+        env["STITCH_ACCESS_TOKEN"] = token
+    return env
+    return env
+
+# ── MCP 协议助手 ──
+
+def _encode_mcp(msg: dict) -> bytes:
+    """编码 MCP JSON-RPC 消息（支持两种传输格式）. """
+    body = json.dumps(msg, ensure_ascii=False).encode("utf-8")
+    return body + b"\n"  # 换行分隔（部分 server 接受）
+
+def _encode_mcp_with_header(msg: dict) -> bytes:
+    """编码 MCP 消息 + Content-Length header（标准格式）. """
+    body = json.dumps(msg, ensure_ascii=False).encode("utf-8")
+    header = f"Content-Length: {len(body)}\r\n\r\n".encode()
+    return header + body
+
+async def _read_mcp_message(stream: asyncio.StreamReader, timeout: float = STITCH_TIMEOUT) -> dict:
+    """从 MCP 子进程 stdout 读取一条 JSON-RPC 消息.
+
+    Stitch MCP 输出 JSON 时不带换行，所以不能用 readline()。
+    改用 read() 直到可解析为完整 JSON。
+    """
+    raw = b""
+    deadline = asyncio.get_event_loop().time() + timeout
+
+    while asyncio.get_event_loop().time() < deadline:
+        remaining = deadline - asyncio.get_event_loop().time()
+        try:
+            chunk = await asyncio.wait_for(stream.read(4096), timeout=min(5, max(0.5, remaining)))
+        except asyncio.TimeoutError:
+            continue  # timeout waiting for data, keep trying
+        if not chunk:
+            raise ConnectionError("MCP子进程已关闭")
+        raw += chunk
+
+        text = raw.decode("utf-8", errors="replace").strip()
+        if not text:
+            continue
+
+        # Content-Length header format
+        if "Content-Length:" in text:
+            for line in text.split("\n"):
+                if line.strip().startswith("Content-Length:"):
+                    length = int(line.split(":")[1].strip())
+                    if "\r\n\r\n" in text:
+                        body_start = text.index("\r\n\r\n") + 4
+                        body = text[body_start:]
+                        if len(body) >= length:
+                            try:
+                                return json.loads(body[:length])
+                            except json.JSONDecodeError:
+                                pass
+                    break
+
+        # 纯 JSON 格式 — 找到第一个 { 并尝试解析
+        brace_idx = text.find("{")
+        if brace_idx >= 0:
+            candidate = text[brace_idx:]
+            try:
+                return json.loads(candidate)
+            except json.JSONDecodeError:
+                pass  # 还不完整，继续收
+
+        if len(raw) > 500_000:
+            break
+
+    raise TimeoutError(f"MCP 响应超时 (已收 {len(raw)} bytes): {raw[:200]}")
+
+
+async def _send_mcp(proc, msg: dict):
+    """发送 MCP 消息（尝试两种格式）. """
+    data = _encode_mcp(msg)
+    proc.stdin.write(data)
+    await proc.stdin.drain()
 STITCH_QUOTA_PROJECT = os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
 
 
@@ -88,7 +178,10 @@ class StitchTool(BaseTool):
             # 如果安装了 stitch MCP，走 MCP 协议；否则 fallback 到直接生成
             # 按优先级尝试：MCP → Fallback
             html_css = await self._generate_via_mcp(prompt, style)
-            if not html_css:
+            if html_css is None:
+                # 再次尝试带超时的方式
+                html_css = await self._generate_via_mcp(prompt, style)
+            if not html_css or html_css.startswith("[Stitch"):
                 html_css = await self._generate_fallback(prompt, style)
 
             if html_css:
@@ -119,6 +212,7 @@ class StitchTool(BaseTool):
             creds_file = "/Users/xiaofeng/.config/gcloud/application_default_credentials.json"
             config = "/Users/xiaofeng/.stitch-mcp/config"
             quota_project = STITCH_QUOTA_PROJECT or "stitch-496215"
+            venv_python = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/venv/bin/python3"
 
             # 获取 Access Token
             loop = asyncio.get_running_loop()
@@ -126,7 +220,9 @@ class StitchTool(BaseTool):
                 [gcloud_bin, "auth", "application-default", "print-access-token"],
                 capture_output=True, text=True, timeout=10,
                 env={**os.environ, "GOOGLE_APPLICATION_CREDENTIALS": creds_file,
-                     "CLOUDSDK_CONFIG": config}))
+                     "CLOUDSDK_CONFIG": config, "CLOUDSDK_PYTHON": venv_python,
+                     "GOOGLE_CLOUD_PROJECT": "stitch-496215",
+                     "PATH": f"{os.path.dirname(gcloud_bin)}:/Users/xiaofeng/.nvm/versions/node/v25.8.0/bin:{os.environ.get('PATH','')}"}))
             token = proc.stdout.strip()
             if not token:
                 logger.warning("No Stitch access token")
@@ -192,23 +288,28 @@ class StitchTool(BaseTool):
             # 获取 OAuth Access Token（优先于 API Key，项目操作需要）
             import subprocess as _sp
             loop = asyncio.get_running_loop()
-            env = os.environ.copy()
-            env.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
-                "/Users/xiaofeng/.config/gcloud/application_default_credentials.json")
-            env.setdefault("CLOUDSDK_CONFIG", "/Users/xiaofeng/.stitch-mcp/config")
-            env.setdefault("GOOGLE_CLOUD_PROJECT", "stitch-496215")
-            try:
-                proc_token = await loop.run_in_executor(None,
-                    lambda: _sp.run(
-                        ["/Users/xiaofeng/.stitch-mcp/google-cloud-sdk/bin/gcloud",
-                         "auth", "application-default", "print-access-token"],
-                        capture_output=True, text=True, timeout=10, env=env))
-                if proc_token.returncode == 0 and proc_token.stdout.strip():
-                    env["STITCH_ACCESS_TOKEN"] = proc_token.stdout.strip()
-                    env.pop("STITCH_API_KEY", None)
-            except Exception:
-                pass  # Keep API key as fallback
+            # 不预取 token，让 stitch-mcp 自己调 gcloud 获取
+            # （预取的 token 可能在子进程启动时已过期）
+            env = _get_stitch_env()
 
+            # 直接用 bash 脚本方式调用（已验证稳定）
+            import subprocess as _sp
+            script = f"""
+export GOOGLE_CLOUD_PROJECT=stitch-496215
+export PATH="/Users/xiaofeng/.stitch-mcp/google-cloud-sdk/bin:/Users/xiaofeng/.nvm/versions/node/v25.8.0/bin:$PATH"
+export CLOUDSDK_PYTHON=/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/venv/bin/python3
+cat <<'MCP_INPUT' | /Users/xiaofeng/.npm/_npx/d7bcf1e9427e7044/node_modules/.bin/stitch-mcp 2>/dev/null
+{json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"xl-agent","version":"2.0"}}})}
+{json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"})}
+{json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"generate_screen_from_text","arguments":{"projectId":"9177609784991880809","prompt":prompt,"deviceType":"DESKTOP","modelId":"GEMINI_3_1_PRO"}}})}
+MCP_INPUT"""
+            result = await loop.run_in_executor(None, lambda: _sp.run(
+                ["bash", "-c", script],
+                capture_output=True, text=True, timeout=STITCH_TIMEOUT))
+            if result.returncode != 0:
+                logger.warning(f"Stitch shell failed: {result.stderr[:200]}")
+                return None
+            return result.stdout
             cmd = STITCH_SERVER_CMD.split()
             proc = await asyncio.create_subprocess_exec(
                 *cmd,
@@ -218,38 +319,114 @@ class StitchTool(BaseTool):
                 env=env,
             )
 
-            # MCP initialize
-            init_request = json.dumps({
+            # 完整请求: init + 通知 + tools/call
+            full_request = (
+                json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize",
+                    "params":{"protocolVersion":"2024-11-05","capabilities":{},
+                        "clientInfo":{"name":"xl-agent","version":"2.0"}}})
+                + "\n"
+                + json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"})
+                + "\n"
+                + json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call",
+                    "params":{
+                        "name":"generate_screen_from_text",
+                        "arguments":{
+                            "projectId":"9177609784991880809",
+                            "prompt": prompt,
+                            "deviceType":"DESKTOP",
+                            "modelId":"GEMINI_3_1_PRO",
+                        },
+                    },
+                })
+                + "\n"
+            )
+            proc.stdin.write(full_request.encode())
+            await proc.stdin.drain()
+            proc.stdin.close()  # 关闭 stdin，让服务端处理
+
+            # 读取完整输出
+            out_data = await asyncio.wait_for(proc.stdout.read(), timeout=STITCH_TIMEOUT)
+            text = out_data.decode("utf-8", errors="replace").strip()
+            await proc.wait()
+
+            # 尝试从输出中解析 JSON
+            # 格式可能是: init_resp + tools_call_resp（两个 JSON 对象）
+            lines = text.split("\n")
+            for line in lines:
+                try:
+                    data = json.loads(line)
+                    if data.get("id") == 2:  # tools/call 的响应
+                        # 提取结果
+                        content = data.get("result", {}).get("content", [])
+                        for item in content:
+                            if item.get("type") == "text":
+                                raw = item.get("text", "")
+                                try:
+                                    inner = json.loads(raw)
+                                    # 尝试下载 HTML 代码
+                                    for out in inner.get("outputComponents", []):
+                                        for d in out.get("design", {}).get("screens", []):
+                                            code_url = d.get("htmlCode", {}).get("downloadUrl", "")
+                                            if code_url:
+                                                import urllib.request, ssl
+                                                ctx = ssl.create_default_context()
+                                                ctx.check_hostname = False
+                                                ctx.verify_mode = ssl.CERT_NONE
+                                                full_url = code_url if code_url.startswith("http") else f"https:{code_url}"
+                                                req = urllib.request.Request(full_url)
+                                                with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                                                    html = resp.read().decode("utf-8", errors="replace")
+                                                if html and len(html) > 100:
+                                                    return html
+                                except:
+                                    pass
+                                return raw[:2000]
+                except json.JSONDecodeError:
+                    pass
+
+            return None
+            await _send_mcp(proc, {
                 "jsonrpc": "2.0",
                 "id": 1,
                 "method": "initialize",
                 "params": {
                     "protocolVersion": "2024-11-05",
                     "capabilities": {},
-                    "clientInfo": {"name": "xl-agent-stitch-tool", "version": "1.0.0"},
+                    "clientInfo": {"name": "xl-agent", "version": "2.0"},
                 },
-            }) + "\n"
-
-            proc.stdin.write(init_request.encode())
-            await proc.stdin.drain()
+            })
 
             # Read initialize response
-            init_line = await asyncio.wait_for(proc.stdout.readline(), timeout=STITCH_TIMEOUT)
-            init_resp = json.loads(init_line.decode().strip())
+            init_resp = await _read_mcp_message(proc.stdout)
             logger.info(f"Stitch MCP initialized: {init_resp.get('result', {}).get('serverInfo', {})}")
 
             # Send initialized notification
-            notif = json.dumps({"jsonrpc": "2.0", "method": "notifications/initialized"}) + "\n"
-            proc.stdin.write(notif.encode())
-            await proc.stdin.drain()
+            await _send_mcp(proc, {"jsonrpc": "2.0", "method": "notifications/initialized"})
+            await asyncio.sleep(0.5)  # 给 server 一点时间处理
 
-            # Call generate_screen_from_text tool (correct name for @_davideast/stitch-mcp v0.7+)
-            tool_request = json.dumps({
+            # List tools to discover available commands
+            await _send_mcp(proc, {"jsonrpc": "2.0", "id": 2, "method": "tools/list"})
+            tools_resp = await _read_mcp_message(proc.stdout)
+            tools = tools_resp.get("result", {}).get("tools", [])
+            tool_names = [t["name"] for t in tools]
+            logger.info(f"Stitch tools: {tool_names}")
+
+            # 选择正确的工具名
+            tool_name = "generate_screen_from_text"
+            if tool_name not in tool_names:
+                # 尝试备选工具名
+                for fallback in ["generate_ui", "generate_screen", "create_screen"]:
+                    if fallback in tool_names:
+                        tool_name = fallback
+                        break
+
+            # Call generate tool
+            await _send_mcp(proc, {
                 "jsonrpc": "2.0",
-                "id": 2,
+                "id": 3,
                 "method": "tools/call",
                 "params": {
-                    "name": "generate_screen_from_text",
+                    "name": tool_name,
                     "arguments": {
                         "projectId": "9177609784991880809",
                         "prompt": prompt,
@@ -257,14 +434,10 @@ class StitchTool(BaseTool):
                         "modelId": "GEMINI_3_1_PRO",
                     },
                 },
-            }) + "\n"
-
-            proc.stdin.write(tool_request.encode())
-            await proc.stdin.drain()
+            })
 
             # Read result
-            result_line = await asyncio.wait_for(proc.stdout.readline(), timeout=STITCH_TIMEOUT)
-            result = json.loads(result_line.decode().strip())
+            result = await _read_mcp_message(proc.stdout)
 
             # Cleanup
             proc.stdin.close()
@@ -304,6 +477,23 @@ class StitchTool(BaseTool):
                                 summary["code_url"] = code_url
                         if "title" in data:
                             summary["title"] = data.get("title", "")
+
+                        # 下载实际的 HTML 代码
+                        if code_url:
+                            try:
+                                import urllib.request, ssl
+                                ctx = ssl.create_default_context()
+                                ctx.check_hostname = False
+                                ctx.verify_mode = ssl.CERT_NONE
+                                full_url = code_url if code_url.startswith("http") else f"https:{code_url}"
+                                req = urllib.request.Request(full_url)
+                                with urllib.request.urlopen(req, context=ctx, timeout=30) as resp:
+                                    html_code = resp.read().decode("utf-8", errors="replace")
+                                if html_code and len(html_code) > 100:
+                                    return html_code
+                            except Exception as e:
+                                logger.warning(f"下载 Stitch 代码失败: {e}")
+
                         return f"[Stitch 完成] 预览: {sc_url}... 代码: {code_url}... (project: {summary['projectId']})"
                     except (json.JSONDecodeError, KeyError):
                         return raw[:500]  # Fallback: show first 500 chars
