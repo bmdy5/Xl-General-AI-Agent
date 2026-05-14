@@ -47,8 +47,11 @@ async def run_with_tui(agent, user_input: str):
         elif etype == "tool_call":
             tool_count += 1
             name = event.get("name", "?")
-            args = event.get("arguments") or {}
-            preview = "  ".join(f"{k}={str(v)[:40]}" for k, v in list(args.items())[:2])
+            args = event.get("args") or event.get("arguments") or {}
+            if args:
+                preview = "  ".join(f"{k}={str(v)[:40]}" for k, v in list(args.items())[:2])
+            else:
+                preview = ""
             console.print(tui.tool_call(name, preview))
             last_tool_name = name
 
