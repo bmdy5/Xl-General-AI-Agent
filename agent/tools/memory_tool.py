@@ -14,14 +14,7 @@ logger = logging.getLogger(__name__)
 
 MEMORY_TYPES = ["user", "feedback", "project", "reference", "learn"]
 
-FORBIDDEN_LIST = [
-    "代码结构/架构信息 — 读代码就知道",
-    "Git 历史/提交记录 — git log 就知道",
-    "单次调试方案/临时修复 — 修好了就不用记",
-    "CLAUDE.md 或 system prompt 已有的内容 — 别存两份",
-    "临时任务详情 — 过期的信息",
-    "一次性问答 — 没有复用价值的信息",
-]
+
 
 
 class MemoryTool(BaseTool):
@@ -48,26 +41,7 @@ class MemoryTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": (
-                    "⚠️ MANDATORY RECALL STEP: Use this tool to manage persistent memories "
-                    "that survive across sessions. You MUST check existing memories before "
-                    "answering questions about the user's preferences or past conversations.\n\n"
-                    "## When to save (5 types of memory)\n"
-                    "- **user**: user role, preferences, goals, tech stack, communication style\n"
-                    "- **feedback**: user corrections, work style preferences, things to avoid\n"
-                    "- **project**: project facts, decisions, constraints, deadlines\n"
-                    "- **reference**: external resource pointers (API docs, repo URLs, service addresses)\n"
-                    "- **learn**: patterns discovered across sessions, things that went wrong before\n\n"
-                    "## What NOT to save (forbidden list)\n"
-                    f"- {FORBIDDEN_LIST[0]}\n- {FORBIDDEN_LIST[1]}\n- {FORBIDDEN_LIST[2]}\n"
-                    f"- {FORBIDDEN_LIST[3]}\n- {FORBIDDEN_LIST[4]}\n- {FORBIDDEN_LIST[5]}\n\n"
-                    "## When to trigger\n"
-                    "- User says 'remember...', '以后...', 'always...', 'never...'\n"
-                    "- User corrects you: '不对...', '应该...', '不要...'\n"
-                    "- You discover a project fact or constraint worth keeping\n"
-                    "- You complete a complex task and notice a reusable pattern\n"
-                    "- Similar correction appears 2+ times → suggest saving as a rule"
-                ),
+                "description": "Manage persistent memories (add/replace/remove/read/search). Check before answering about preferences. Types: user/feedback/project/reference/learn.",
                 "parameters": {
                     "type": "object",
                     "properties": {
