@@ -110,8 +110,8 @@ class SpawnAgentTool(BaseTool):
             from agent.core import Agent
 
             sub = Agent(llm=main.llm, registry=main.registry,
-                        memory=main.memory, max_turns=8)
-            sub.system_prompt = ROLES[role]
+                        memory=main.memory, max_turns=5)
+            sub.system_prompt = ROLES[role] + "\n\n不能使用 spawn_agent 工具。"
 
             full_task = task
             if ctx:
