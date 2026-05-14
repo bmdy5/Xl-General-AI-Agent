@@ -186,8 +186,14 @@ async def run_interactive():
         def _mode_label(m: AgentMode) -> str:
             return "Normal" if m == AgentMode.NORMAL else "Deep"
 
+        # 输入框
+        ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000 if agent.compressor else 0
+        prompt_style = "[Normal]" if _mode == AgentMode.NORMAL else "[Deep]"
+        ctx_bar = "█" * (ctx_pct // 5) + "░" * (20 - ctx_pct // 5) if ctx_pct < 100 else "█" * 20
+        print(f"  \033[1;30m┌─\033[0m \033[36m{prompt_style}\033[0m \033[90mctx: {ctx_pct}% {ctx_bar}\033[0m")
+        print(f"  \033[1;30m└\033[0m ", end="", flush=True)
         try:
-            user_input = _read_multiline(f"[{_mode_label(_mode)}] > ")
+            user_input = _read_multiline("")
         except (EOFError, KeyboardInterrupt):
             print("\r\033[K🧠 整理记忆中...", end="", flush=True)
             try:
