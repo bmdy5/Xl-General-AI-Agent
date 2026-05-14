@@ -186,14 +186,25 @@ async def run_interactive():
         def _mode_label(m: AgentMode) -> str:
             return "Normal" if m == AgentMode.NORMAL else "Deep"
 
-        # 输入框
+        # 方框输入区
         ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000 if agent.compressor else 0
-        prompt_style = "[Normal]" if _mode == AgentMode.NORMAL else "[Deep]"
-        ctx_bar = "█" * (ctx_pct // 5) + "░" * (20 - ctx_pct // 5) if ctx_pct < 100 else "█" * 20
-        print(f"  \033[1;30m┌─\033[0m \033[36m{prompt_style}\033[0m \033[90mctx: {ctx_pct}% {ctx_bar}\033[0m")
-        print(f"  \033[1;30m└\033[0m ", end="", flush=True)
+        prompt_style = "Normal" if _mode == AgentMode.NORMAL else "Deep"
+        model_short = agent.llm.model.split("/")[-1][:20] if agent.llm else "?"
+        tool_count = len(agent.registry.list_names())
+        from agent.tui import input_box, input_box_footer, hr
+        print()
+        # 框的上半部分 + 输入行
+        print(f"  [dim]┌─[/dim] [bright_blue]{prompt_style}[/bright_blue] [dim]─[/dim] [dim]Model: {model_short}[/dim] [dim]─[/dim] [dim]{tool_count} tools[/dim]")
+        ctx_bar = "█" * (ctx_pct // 5) + "░" * (20 - ctx_pct // 5)
+        print(f"  [dim]│ ctx: {ctx_bar} {ctx_pct}%[/dim]")
+        print(f"  [dim]├{'─'*55}┤[/dim]")
+        print(f"  [dim]│ >[/dim] ", end="")
         try:
             user_input = _read_multiline("")
+            # 输入框底边 + 分隔
+            print(f"\033[K  [dim]├{'─'*55}┤[/dim]")
+            print(f"  [dim]└{'─'*55}┘[/dim]")
+            print()
         except (EOFError, KeyboardInterrupt):
             print("\r\033[K🧠 整理记忆中...", end="", flush=True)
             try:

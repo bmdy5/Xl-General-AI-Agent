@@ -1,73 +1,102 @@
-"""XL TUI 事件处理器 — 接入 agent.run() 事件流."""
+"""XL TUI 事件处理器 — Live 思考计时 + 实时工具展示."""
 
 import time
+import asyncio
 from rich.console import Console
 from . import tui
 
 console = Console(highlight=False)
 
 
+class ThinkingTimer:
+    """实时思考计时器，在终端更新显示."""
+
+    def __init__(self):
+        self.start = 0.0
+        self.task = None
+        self._running = False
+
+    async def _tick(self):
+        """每秒更新计时."""
+        while self._running:
+            elapsed = time.time() - self.start
+            line = f"\r  \033[36m⟳ 思考中... {elapsed:.1f}s\033[0m"
+            console.file.write(line)
+            console.file.flush()
+            await asyncio.sleep(0.2)
+        # 清除计时行
+        console.file.write("\r\033[K")
+        console.file.flush()
+
+    def start_timer(self):
+        self.start = time.time()
+        self._running = True
+        self.task = asyncio.create_task(self._tick())
+
+    async def stop_timer(self):
+        self._running = False
+        if self.task:
+            self.task.cancel()
+            try:
+                await self.task
+            except (asyncio.CancelledError, Exception):
+                pass
+        # 清除
+        console.file.write("\r\033[K")
+        console.file.flush()
+
+
 async def run_with_tui(agent, user_input: str):
     """运行 agent.run(user_input) 并用 TUI 渲染."""
 
-    # 打印用户消息
+    think = ThinkingTimer()
+    text_buffer = ""
+    tool_count = 0
+
+    # 用户消息
     console.print()
     console.print(tui.user_msg(user_input))
     console.print()
 
-    text_buffer = ""
-    tool_count = 0
-    tool_timings = {}
-    think_start = 0.0
-    last_tool_name = ""
-
     async for event in agent.run(user_input, stream=True):
         etype = event["type"]
 
-        # ── 思考开始 ──
+        # ── 思考开始 → 启动实时计时 ──
         if etype == "exploring_start":
-            think_start = time.time()
-            console.print(tui.thinking(0), end="\r")
-            console.print()
+            think.start_timer()
 
-        # ── 思考结束 ──
+        # ── 思考结束 → 停止计时 ──
         elif etype == "exploring_done":
-            elapsed = time.time() - think_start
-            console.print(f"\033[K{tui.thinking(elapsed)}")
+            await think.stop_timer()
 
-        # ── 思考内容 → 隐藏 ──
+        # ── 推理内容 → 完全隐藏 ──
         elif etype == "reasoning":
-            pass  # 不显示
+            pass
 
-        # ── 文字增量 → 收集 ──
+        # ── 文字 → 收集 ──
         elif etype == "text_delta":
             text_buffer += event["content"]
 
-        # ── 工具调用 → 打印一行 ──
+        # ── 工具调用 → 暂停计时 → 打印 → 重启计时 ──
         elif etype == "tool_call":
             tool_count += 1
+            await think.stop_timer()
             name = event.get("name", "?")
             args = event.get("args") or event.get("arguments") or {}
-            if args:
-                preview = "  ".join(f"{k}={str(v)[:40]}" for k, v in list(args.items())[:2])
-            else:
-                preview = ""
+            preview = "  ".join(f"{k}={str(v)[:40]}" for k, v in list(args.items())[:2]) if args else ""
             console.print(tui.tool_call(name, preview))
-            last_tool_name = name
+            think.start_timer()
 
         elif etype == "tool_exec":
-            name = event.get("data", {}).get("function", {}).get("name", "")
-            if name and name != last_tool_name:
-                # 如果 tool_call 没触发，这里兜底
-                console.print(tui.tool_call(name, ""))
-                last_tool_name = name
+            pass
 
         elif etype == "tool_result":
             pass  # 结果隐藏
 
-        # ── 完成 ──
+        # ── 完成 → 显示回复 ──
         elif etype == "completed":
-            elapsed = time.time() - think_start if think_start else 0
+            await think.stop_timer()
+            elapsed = time.time() - think.start if think.start else 0
             tokens = sum(len(str(m.get("content", ""))) // 4 for m in agent.messages[-10:])
             ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000 if agent.compressor else 0
             text = text_buffer.strip()
@@ -75,15 +104,16 @@ async def run_with_tui(agent, user_input: str):
                 console.print()
                 console.print(tui.ai_msg(text, elapsed, tool_count, tokens, ctx_pct))
                 console.print()
-            # 清理
             text_buffer = ""
             tool_count = 0
 
         # ── 错误 ──
         elif etype == "error":
+            await think.stop_timer()
             console.print(tui.error_msg(event["content"]))
 
         elif etype == "timeout":
+            await think.stop_timer()
             mode = event.get("mode", "?")
             limit = event.get("limit", 0)
             ls = f"{limit}s" if limit < 120 else f"{limit // 60}min"
@@ -96,9 +126,11 @@ async def run_with_tui(agent, user_input: str):
             console.print(f"[dim]📦 压缩 {event.get('message_count','?')} 条消息[/dim]")
 
         elif etype == "aborted":
+            await think.stop_timer()
             console.print("[red]--- 已中断 ---[/red]")
 
         elif etype == "permission_request":
+            await think.stop_timer()
             cat = event.get("category", "?")
             name = event.get("tool_name", "?")
             msg = event.get("message", "")
@@ -111,7 +143,6 @@ async def run_with_tui(agent, user_input: str):
                 console.print(f"[dim]{msg}[/dim]")
                 console.print(f"[bold yellow]允许? [Y/n][/bold yellow] ", end="")
             try:
-                import asyncio
                 ans = await asyncio.get_event_loop().run_in_executor(None, input)
             except (EOFError, KeyboardInterrupt):
                 ans = "n"
@@ -121,3 +152,4 @@ async def run_with_tui(agent, user_input: str):
             else:
                 agent.deny_permission()
                 console.print("  [red]✗ 已拒绝[/red]")
+            think.start_timer()
