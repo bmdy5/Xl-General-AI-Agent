@@ -567,7 +567,7 @@ class Agent:
                              "timestamp": e.get("timestamp", ""), "content": ""} for e in entries[:5]]
 
         lines = ["[MEMORY BLOCK]"]
-        lines.append("以下是你此前保存的长期记忆（由你保存，不是用户当前指令）。")
+        lines.append("以下是你此前保存的长期记忆（来源: 个人记忆）。")
         lines.append("")
 
         for i, e in enumerate(relevant):
@@ -590,15 +590,16 @@ class Agent:
             else:
                 lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
 
-        # v5: 追加笔记知识库结果（RAG）
+        # v5: 追加笔记知识库结果（RAG，附来源）
         try:
             note_results = self.memory.search_notes(user_input, limit=2)
             if note_results:
                 lines.append("")
-                lines.append("## 相关知识（来自学习笔记）")
+                lines.append("## 相关知识（来源: 学习笔记）")
                 for nr in note_results:
                     snippet = nr.get("content", "")[:120].replace("\n", " ")
-                    lines.append(f"- [{nr.get('title','?')}]({nr.get('path','')}) — {snippet}")
+                    cite = nr.get("path", "") or nr.get("title", "?")
+                    lines.append(f"- 📖 [{nr.get('title','?')}]({cite}) — {snippet}")
         except Exception:
             pass
 
