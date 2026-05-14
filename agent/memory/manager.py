@@ -100,6 +100,7 @@ class MemoryManager:
                 "description": description[:200],
                 "memory_type": mtype,
                 "filename": safe_name,
+                "timestamp": timestamp,
             }])
             db.commit()
         except Exception:
@@ -167,6 +168,20 @@ class MemoryManager:
         if topic_file.exists():
             return topic_file.read_text(encoding="utf-8")
         return None
+
+    def search_memories(self, query: str, limit: int = 5) -> list[dict]:
+        """FTS5 全文搜索记忆，返回 BM25 排序结果。自动清理特殊字符。"""
+        import re
+        clean = re.sub(r'[^\w\u4e00-\u9fff\s]', ' ', query).strip()
+        if not clean or len(clean) < 2:
+            return []
+        try:
+            # 多词用 OR 搜索（默认 MATCH 是短语搜索）
+            fts_query = ' OR '.join(clean.split())
+            db = self._get_db()
+            return fts_search(db, fts_query, limit)
+        except Exception:
+            return []
 
     def list_memories(self) -> list[str]:
         """List all memory entries, latest first."""
