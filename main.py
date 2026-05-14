@@ -33,6 +33,7 @@ from agent.session.handler import SessionHandler
 from agent.tools.bash_tool import BashTool
 from agent.tools.edit_file_tool import EditFileTool
 from agent.tools.file_tools import ReadFileTool, WriteFileTool
+from agent.tools.swarm_tool import SwarmTool
 from agent.tools.run_sequence_tool import RunSequenceTool
 from agent.tools.manage_tool_tool import ManageToolTool
 from agent.tools.image2_tool import Image2GenerateTool
@@ -100,6 +101,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(ReadFileTool())
         registry.register(WriteFileTool())
         registry.register(EditFileTool())
+        registry.register(SwarmTool())
         registry.register(RunSequenceTool())
         registry.register(ManageToolTool())
         registry.register(BashTool(work_dir=os.getcwd()))
