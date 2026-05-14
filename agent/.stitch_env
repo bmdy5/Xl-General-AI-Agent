@@ -1,0 +1,4 @@
+# Stitch GOOGLE_CLOUD_PROJECT env (needed by stitch-mcp)
+export GOOGLE_CLOUD_PROJECT=stitch-496215
+# Add gcloud to PATH (stitch-mcp internally runs gcloud)
+export PATH="/Users/xiaofeng/.stitch-mcp/google-cloud-sdk/bin:$PATH"
