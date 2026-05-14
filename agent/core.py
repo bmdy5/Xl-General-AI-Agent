@@ -595,9 +595,11 @@ class Agent:
             else:
                 lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
 
-        # v5: 追加笔记知识库结果（RAG，附来源）
+        # v5: 只在长输入时追回笔记知识库（短输入如打招呼不需要）
         try:
-            note_results = self.memory.search_notes(user_input, limit=2)
+            note_results = []
+            if len(user_input) > 20:  # 短输入跳过 RAG，省 token
+                note_results = self.memory.search_notes(user_input, limit=2)
             if note_results:
                 lines.append("")
                 lines.append("## 相关知识（来源: 学习笔记）")

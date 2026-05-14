@@ -46,13 +46,7 @@ class SpawnAgentTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": (
-                    "Spawn a sub-agent with a specific role to handle a task. "
-                    "The sub-agent has its own isolated context. "
-                    "Use this for: code generation, code review, debugging, architecture analysis, "
-                    "or any task that benefits from focused expertise.\n"
-                    f"Roles: {', '.join(ROLES.keys())}"
-                ),
+                "description": f"Spawn a sub-agent with a role: {', '.join(ROLES.keys())}. Use role_prompt for custom roles.",
                 "parameters": {
                     "type": "object",
                     "properties": {

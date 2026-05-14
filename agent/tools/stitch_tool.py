@@ -53,13 +53,7 @@ class StitchTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": (
-                    "Generate beautiful HTML/CSS UI components using Google Stitch AI. "
-                    "Describe what you want with a natural language prompt, and get "
-                    "production-ready HTML/CSS code back. Use this for creating buttons, "
-                    "cards, nav bars, forms, modals, galleries, or entire page layouts. "
-                    "Styles available: 'pixel-art', 'modern', 'glass', 'brutalist', 'cyberpunk', 'minimal'."
-                ),
+                "description": "Generate HTML/CSS UI components using Google Stitch AI. Styles: pixel-art, modern, glass, brutalist, cyberpunk, minimal.",
                 "parameters": {
                     "type": "object",
                     "properties": {
