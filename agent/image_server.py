@@ -30,7 +30,7 @@ GALLERY_HTML = """<!DOCTYPE html>
 <style>
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body {
-    background: #FFF8F0;
+    background: #f5eff7;
     color: #5D4E37;
     font-family: 'Courier New', 'Space Mono', monospace;
     min-height: 100vh;
@@ -40,10 +40,10 @@ GALLERY_HTML = """<!DOCTYPE html>
     padding: 20px;
   }
   #header {
-    color: #FF69B4;
+    color: #6a1b9a;
     font-size: 24px;
     padding: 20px;
-    text-shadow: 2px 2px #FFB6C1;
+    text-shadow: 2px 2px #d1c4e9;
     letter-spacing: 4px;
   }
   #upload-zone {
@@ -58,7 +58,7 @@ GALLERY_HTML = """<!DOCTYPE html>
     max-width: 900px;
     position: relative;
     overflow: hidden;
-    background: #FFF8F0;
+    background: #e8f5e9;
     box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
     font-family: 'Courier New', 'Space Mono', monospace;
   }
@@ -73,9 +73,9 @@ GALLERY_HTML = """<!DOCTYPE html>
   #upload-zone:hover::before,
   #upload-zone.drag-over::before { opacity: 1; }
   #upload-zone:hover, #upload-zone.drag-over {
-    border-color: #FF69B4;
+    border-color: #6a1b9a;
     border-style: solid;
-    box-shadow: 0 0 20px rgba(255,105,180,0.2), 2px 2px 0px 0px #FFDAB9;
+    box-shadow: 0 0 20px rgba(106,27,154,0.2), 2px 2px 0px 0px #d1c4e9;
     transform: none;
   }
   #upload-zone input { display: none; }
@@ -83,14 +83,14 @@ GALLERY_HTML = """<!DOCTYPE html>
     font-size: 40px;
     margin-bottom: 12px;
     display: block;
-    color: #FF69B4;
-    text-shadow: 0 0 10px rgba(255,105,180,0.3);
+    color: #6a1b9a;
+    text-shadow: 0 0 10px rgba(106,27,154,0.3);
     transition: transform 0.15s;
   }
   #upload-zone:hover .upload-icon,
   #upload-zone.drag-over .upload-icon { transform: scale(1.05); }
   #upload-zone .hint { color: #C9A48A; font-size: 13px; }
-  #upload-zone .hint span { color: #FF69B4; text-decoration: underline; cursor: pointer; }
+  #upload-zone .hint span { color: #6a1b9a; text-decoration: underline; cursor: pointer; }
   @keyframes pulse-border {
     0%, 100% { border-color: #533483; }
     50% { border-color: #7b5ea7; }
@@ -106,15 +106,15 @@ GALLERY_HTML = """<!DOCTYPE html>
     max-width: 900px;
   }
   .thumb {
-    background: #FFF0F5;
-    border: 2px solid #FFB6C1;
+    background: #FFFFFF;
+    border: 2px solid #b2f2bb;
     border-radius: 8px;
     overflow: hidden;
     cursor: pointer;
     transition: border-color 0.2s;
     position: relative;
   }
-  .thumb:hover { border-color: #FF69B4; box-shadow: 0 0 10px rgba(255,105,180,0.15); }
+  .thumb:hover { border-color: #6a1b9a; box-shadow: 0 0 10px rgba(106,27,154,0.15); }
   .thumb img {
     width: 100%;
     height: 150px;
@@ -133,8 +133,8 @@ GALLERY_HTML = """<!DOCTYPE html>
     position: absolute;
     top: 4px;
     right: 4px;
-    background: #FFB6C1;
-    color: #FFF;
+    background: #b2f2bb;
+    color: #333;
     border: none;
     border-radius: 4px;
     width: 20px;
@@ -143,7 +143,7 @@ GALLERY_HTML = """<!DOCTYPE html>
     cursor: pointer;
     display: none;
   }
-  .thumb .delete-btn:hover { background: #FF69B4; }
+  .thumb .delete-btn:hover { background: #6a1b9a; color: #FFF; }
   .thumb:hover .delete-btn { display: block; }
   .empty {
     grid-column: 1 / -1;
@@ -157,7 +157,7 @@ GALLERY_HTML = """<!DOCTYPE html>
     bottom: 20px;
     left: 50%;
     transform: translateX(-50%);
-    background: #FF69B4;
+    background: #6a1b9a;
     color: #FFF;
     padding: 10px 24px;
     border-radius: 4px;
