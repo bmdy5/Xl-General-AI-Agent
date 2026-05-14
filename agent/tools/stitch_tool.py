@@ -39,7 +39,6 @@ def _get_stitch_env(token: str = "") -> dict:
     if token:
         env["STITCH_ACCESS_TOKEN"] = token
     return env
-    return env
 
 # ── MCP 协议助手 ──
 
