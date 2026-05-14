@@ -1,4 +1,4 @@
-"""Spawn 子代理工具 — 抄 tinypace TaskTool 模式.
+"""Spawn 子代理工具 — 支持内置角色和自定义角色 prompt."
 
 同一进程新建 Agent 实例，隔离上下文，角色 prompt，await 返回结果。
 """
@@ -59,7 +59,11 @@ class SpawnAgentTool(BaseTool):
                         "role": {
                             "type": "string",
                             "enum": list(ROLES.keys()),
-                            "description": "The role for the sub-agent",
+                            "description": "Preset role. Use this OR role_prompt.",
+                        },
+                        "role_prompt": {
+                            "type": "string",
+                            "description": "Custom role prompt. Overrides 'role' if both given.",
                         },
                         "task": {
                             "type": "string",
@@ -70,7 +74,7 @@ class SpawnAgentTool(BaseTool):
                             "description": "Optional additional context (file paths, error messages, etc.)",
                         },
                     },
-                    "required": ["role", "task"],
+                    "required": ["task"],
                 },
             },
         }
@@ -90,7 +94,8 @@ class SpawnAgentTool(BaseTool):
     async def call(
         self, input_args: dict, context: Any = None
     ) -> AsyncGenerator[ToolResult, None]:
-        role = input_args["role"]
+        role = input_args.get("role", "general")
+        role_prompt = input_args.get("role_prompt", "")
         task = input_args["task"]
         ctx = input_args.get("context", "")
 
@@ -111,7 +116,8 @@ class SpawnAgentTool(BaseTool):
 
             sub = Agent(llm=main.llm, registry=main.registry,
                         memory=main.memory, max_turns=5)
-            sub.system_prompt = ROLES[role] + "\n\n不能使用 spawn_agent 工具。"
+            prompt = role_prompt if role_prompt else ROLES.get(role, ROLES["general"])
+            sub.system_prompt = prompt + "\n\n不能使用 spawn_agent 工具。"
 
             full_task = task
             if ctx:
@@ -140,9 +146,9 @@ class SpawnAgentTool(BaseTool):
 
             yield ToolResult(
                 type="result",
-                data=f"[{role}] {result_text[:500]}{summary}",
+                data=f"[{role}] {result_text[:2000]}{summary}",
                 result_for_assistant=(
-                    f"子代理 [{role}] 完成:\n{result_text[:1500]}\n"
+                    f"子代理 [{role}] 完成:\n{result_text[:4000]}\n"
                     f"工具调用: {len(tool_calls_made)} 次"
                 ),
             )
