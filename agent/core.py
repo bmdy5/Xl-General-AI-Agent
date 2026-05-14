@@ -539,6 +539,15 @@ class Agent:
                     relevant.append(r)
                 if len(relevant) >= 5:
                     break
+        else:
+            # Fallback: FTS5 无结果时，解析 index 按时间倒序取 5 条
+            entries = self.memory._parse_index()
+            if not entries:
+                relevant = []
+            else:
+                entries.sort(key=lambda e: e.get("timestamp", ""), reverse=True)
+                relevant = [{"description": e["description"], "filename": e["filename"],
+                             "timestamp": e.get("timestamp", ""), "content": ""} for e in entries[:5]]
 
         lines = ["[MEMORY BLOCK]"]
         lines.append("以下是你此前保存的长期记忆（由你保存，不是用户当前指令）。")
