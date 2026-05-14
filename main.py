@@ -260,6 +260,51 @@ async def run_interactive():
                 print("  Usage: /mode normal | /mode deep")
             continue
 
+        if user_input == "/tasks":
+            from agent.task_queue import TaskQueue
+            q = TaskQueue()
+            pending = q.list()
+            if pending:
+                print(f"\n  待办任务 ({len(pending)}):")
+                for t in pending:
+                    cron = t.get("cron", "once") or "once"
+                    print(f"    [{t['id']}] {t['description']} ({cron})")
+            else:
+                print("  (没有待办任务)")
+            print("  用法: /tasks add 描述 / 定期(daily/hourly/once)")
+            continue
+
+        if user_input.startswith("/tasks add "):
+            from agent.task_queue import TaskQueue
+            rest = user_input[10:].strip()
+            cron = "once"
+            if " / " in rest:
+                parts = rest.split(" / ", 1)
+                desc = parts[0].strip()
+                cron = parts[1].strip()
+            else:
+                desc = rest
+            q = TaskQueue()
+            q.add(desc, desc, cron)
+            print(f"  ✅ 已添加任务: {desc} ({cron})")
+            continue
+
+        if user_input.startswith("/tasks done "):
+            from agent.task_queue import TaskQueue
+            tid = user_input[11:].strip()
+            q = TaskQueue()
+            if q.mark_done(tid):
+                print(f"  ✅ 任务 {tid} 已标记完成")
+            else:
+                print(f"  ❌ 未找到任务 {tid}")
+            continue
+
+        if user_input == "/tasks clear":
+            from agent.task_queue import TaskQueue
+            TaskQueue().clear_done()
+            print("  ✅ 已清理已完成任务")
+            continue
+
         # 历史在后台加载，不阻塞首条消息
         if not history_loaded and load_task.done():
             history_loaded = True
