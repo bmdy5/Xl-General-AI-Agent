@@ -555,14 +555,21 @@ class Agent:
 
         for i, e in enumerate(relevant):
             ts = e.get("timestamp", "")[:19]
-            if i < 1:  # v3: 只展开第 1 条全文（从 2 降到 1）
-                content = await self.memory.get_entry(e["filename"])
-                if content:
-                    clean = content.split("<!-- previous version -->")[0]
+            if i < 1:  # v5: 优先用 FTS5 缓存的 content，省磁盘 IO
+                cached = e.get("content", "")
+                if cached:
+                    clean = cached.split("<!-- previous version -->")[0]
                     clean = clean.split("<!-- updated:")[0].strip()[:400]
                     lines.append(f"### {e['description']} ({ts})\n{clean}\n")
                 else:
-                    lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
+                    # Fallback: 读文件
+                    content = await self.memory.get_entry(e["filename"])
+                    if content:
+                        clean = content.split("<!-- previous version -->")[0]
+                        clean = clean.split("<!-- updated:")[0].strip()[:400]
+                        lines.append(f"### {e['description']} ({ts})\n{clean}\n")
+                    else:
+                        lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
             else:
                 lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
 
