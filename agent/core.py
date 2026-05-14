@@ -340,13 +340,15 @@ class Agent:
                 # ── 执行工具（带超时） ──
                 yield {"type": "tool_call", "id": tc["id"], "name": tool_name, "args": tool_args}
                 try:
+                    tool_instance = self.registry.get(tool_name)
+                    tool_timeout = getattr(tool_instance, "timeout", 40) if tool_instance else 40
                     result_str = await asyncio.wait_for(
                         self.registry.dispatch(tool_name, tool_args, context=self),
-                        timeout=40,
+                        timeout=tool_timeout,
                     )
                 except asyncio.TimeoutError:
-                    result_str = f'{{"error": "Tool call timed out after 40s: {tool_name}"}}'
-                    logger.warning(f"Tool timeout: {tool_name} exceeded 40s")
+                    result_str = f'{{"error": "Tool call timed out after {tool_timeout}s: {tool_name}"}}'
+                    logger.warning(f"Tool timeout: {tool_name} exceeded {tool_timeout}s")
                     yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
                     self.messages.append({
                         "role": "tool", "tool_call_id": tc["id"],

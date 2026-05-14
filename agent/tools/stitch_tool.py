@@ -44,6 +44,10 @@ class StitchTool(BaseTool):
     def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
         return False
 
+    @property
+    def timeout(self) -> int:
+        return 180  # Stitch 生成慢，需要更长的超时
+
     def get_tool_definition(self) -> dict:
         return {
             "type": "function",
