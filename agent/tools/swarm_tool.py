@@ -73,6 +73,7 @@ class SwarmTool(BaseTool):
         task = input_args["task"]
         worker_count = min(input_args.get("workers", 3), 5)
         worker_roles = input_args.get("worker_roles", [])
+        summary = input_args.get("summary", False)
 
         main = context if context else None
         if not main or not hasattr(main, "registry") or not hasattr(main, "llm"):
@@ -132,10 +133,27 @@ class SwarmTool(BaseTool):
 
         combined = "\n\n".join(output_parts) if output_parts else "(workers 无输出)"
 
+        # 聚合阶段：可选摘要
+        final_output = combined
+        if summary and results:
+            yield ToolResult(type="progress", data=f"🐝 聚合阶段: 综合 {worker_count} 个 worker 的结论...")
+            from agent.core import Agent
+            summarizer = Agent(llm=main.llm, registry=main.registry, memory=main.memory, max_turns=2)
+            summarizer.system_prompt = "你是蜂群聚合者。将以下多个 worker 的分析结果综合成一份简洁、结构化的最终报告。"
+            synth_parts = []
+            try:
+                summarizer._abort = asyncio.Event()
+                async for ev in asyncio.wait_for(self._collect(summarizer, f"综合以下分析:\n\n{combined[:4000]}"), timeout=60):
+                    if isinstance(ev, str):
+                        synth_parts.append(ev)
+            except asyncio.TimeoutError:
+                synth_parts.append("[聚合超时]")
+            final_output = "".join(synth_parts).strip() or combined
+
         yield ToolResult(
             type="result",
-            data=f"🐝 Swarm 完成 ({worker_count} workers):\n{combined[:3000]}",
-            result_for_assistant=f"蜂群执行结果:\n\n{combined[:5000]}",
+            data=f"🐝 Swarm 完成 ({worker_count} workers):\n{final_output[:3000]}",
+            result_for_assistant=f"蜂群执行结果:\n\n{final_output[:5000]}",
         )
 
     async def _collect(self, sub, task: str):
