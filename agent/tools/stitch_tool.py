@@ -196,6 +196,7 @@ class StitchTool(BaseTool):
             env.setdefault("GOOGLE_APPLICATION_CREDENTIALS",
                 "/Users/xiaofeng/.config/gcloud/application_default_credentials.json")
             env.setdefault("CLOUDSDK_CONFIG", "/Users/xiaofeng/.stitch-mcp/config")
+            env.setdefault("GOOGLE_CLOUD_PROJECT", "stitch-496215")
             try:
                 proc_token = await loop.run_in_executor(None,
                     lambda: _sp.run(
