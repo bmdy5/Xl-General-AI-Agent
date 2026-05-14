@@ -19,13 +19,10 @@ from .memory.manager import MemoryManager
 from .session.handler import SessionHandler
 from .tools.registry import ToolRegistry
 from .compressor import ContextCompressor
-from .evolution import audit_tool_call, select_relevant_memories, filter_memories_by_relevance
+from .evolution import audit_tool_call
 
 
-def _keyword_score(keywords: list[str], text: str) -> float:
-    """Simple keyword match score for memory ranking."""
-    text_lower = text.lower()
-    return sum(1.0 for kw in keywords if kw in text_lower)
+
 
 
 # ── 静态段（缓存安全，不随对话变化）──
@@ -78,8 +75,6 @@ class Agent:
         self.max_turns = max_turns
 
         self.compressor = ContextCompressor(llm=llm, max_tokens=1_000_000)
-        self._cached_memory_entries: list = []
-        self._cached_memory_hash: int = 0
 
         self.messages: list[dict] = []
         self._abort = asyncio.Event()
