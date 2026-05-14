@@ -62,7 +62,7 @@ def error_msg(msg: str) -> str:
 
 
 def cmd_bar() -> str:
-    return f"[dim]/exit | /clear | /memory | /tools | /mode[/dim]"
+    return f"[dim]/exit | /clear | /memory | /tools | /mode | /tasks[/dim]"
 
 
 def input_box(mode: str, model: str, ctx_pct: int, tool_count: int) -> str:
