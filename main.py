@@ -208,6 +208,10 @@ async def run_interactive():
         if not user_input:
             continue
 
+        # 自动检测纠正 → 记忆
+        from agent.auto_memory import auto_remember_correction
+        asyncio.create_task(auto_remember_correction(agent, user_input))
+
         if user_input == "/exit":
             print("🧠 整理记忆中...", end="", flush=True)
             try:
