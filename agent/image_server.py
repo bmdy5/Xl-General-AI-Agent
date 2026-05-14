@@ -106,7 +106,7 @@ GALLERY_HTML = """<!DOCTYPE html>
     max-width: 900px;
   }
   .thumb {
-    background: #1c1b1b;
+    background: #201f1f;
     border: 2px solid #00ff00;
     border-radius: 0;
     overflow: hidden;
