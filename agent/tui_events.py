@@ -52,6 +52,7 @@ async def run_with_tui(agent, user_input: str):
     think = ThinkingTimer()
     text_buffer = ""
     tool_count = 0
+    reason_preview = ""
 
     # 用户消息
     console.print()
@@ -69,9 +70,15 @@ async def run_with_tui(agent, user_input: str):
         elif etype == "exploring_done":
             await think.stop_timer()
 
-        # ── 推理内容 → 完全隐藏 ──
+        # ── 推理内容 → 显示简短摘要（流式飞过）──
         elif etype == "reasoning":
-            pass
+            reason_preview += event["content"]
+            # 只显示最近的 60 个字符
+            short = reason_preview.strip()[-60:].replace("\n", " ")
+            if short:
+                msg = f"\r\033[K  \033[90m{short}\033[0m"
+                console.file.write(msg)
+                console.file.flush()
 
         # ── 文字 → 收集 ──
         elif etype == "text_delta":
@@ -106,6 +113,7 @@ async def run_with_tui(agent, user_input: str):
                 console.print()
             text_buffer = ""
             tool_count = 0
+            reason_preview = ""
 
         # ── 错误 ──
         elif etype == "error":
