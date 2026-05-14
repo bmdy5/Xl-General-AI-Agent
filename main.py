@@ -512,6 +512,9 @@ if __name__ == "__main__":
             _run_safe(run_dashboard())
         elif sys.argv[1] == "--dashboard-learn":
             _run_safe(run_dashboard_learn())
+        elif sys.argv[1] in ("--duoagent", "-d"):
+            from agent.duoagent.server import start
+            start()
         else:
             _run_safe(run_single(" ".join(sys.argv[1:])))
     else:
