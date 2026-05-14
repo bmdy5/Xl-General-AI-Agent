@@ -2,9 +2,12 @@
 
 import os
 import re
+import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
+
+from .fts_index import create_table, populate as fts_populate, search as fts_search, rebuild
 
 KB_DIR = os.getenv("MYAGENT_KB_DIR", "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西")
 KNOWLEDGE_INDEX = Path(KB_DIR) / "知识索引.md"
@@ -34,6 +37,14 @@ class MemoryManager:
             self.base_dir = Path.home() / ".my-agent" / "memory"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.index_file = self.base_dir / "MEMORY.md"
+        self._db: sqlite3.Connection | None = None
+
+    def _get_db(self) -> sqlite3.Connection:
+        """惰性初始化 SQLite + FTS5 索引."""
+        if self._db is None:
+            self._db = sqlite3.connect(self.base_dir / "memories.db")
+            create_table(self._db)
+        return self._db
 
     async def load_context(self) -> str:
         """Read MEMORY.md, sort by timestamp, latest first."""
@@ -81,6 +92,18 @@ class MemoryManager:
         self._upsert_index(safe_name, index_line)
         mtype = description.split("]")[0].replace("[", "") if "[" in description else "other"
         update_knowledge_index("memory", f"{mtype} | {description} | {safe_name}")
+        # 同步到 FTS5 索引
+        try:
+            db = self._get_db()
+            fts_populate(db, [{
+                "content": content[:5000],
+                "description": description[:200],
+                "memory_type": mtype,
+                "filename": safe_name,
+            }])
+            db.commit()
+        except Exception:
+            pass
         return timestamp
 
     def _upsert_index(self, filename: str, new_line: str):
@@ -116,7 +139,7 @@ class MemoryManager:
         return entries
 
     async def remove(self, filename: str):
-        """Remove memory file and index entry."""
+        """Remove memory file, index entry, and FTS5 index."""
         safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
         if not safe_name.endswith(".md"):
             safe_name += ".md"
@@ -127,6 +150,13 @@ class MemoryManager:
             lines = self.index_file.read_text(encoding="utf-8").split("\n")
             new_lines = [l for l in lines if safe_name not in l]
             self.index_file.write_text("\n".join(new_lines), encoding="utf-8")
+        # 从 FTS5 删除
+        try:
+            db = self._get_db()
+            db.execute("DELETE FROM memories_fts WHERE filename=?", (safe_name,))
+            db.commit()
+        except Exception:
+            pass
 
     async def get_entry(self, filename: str) -> Optional[str]:
         """Read memory file content."""
