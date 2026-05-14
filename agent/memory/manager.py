@@ -177,9 +177,16 @@ class MemoryManager:
         if not clean or len(clean) < 2:
             return []
         try:
-            db = sqlite3.connect(str(self.base_dir / "notes.db"))
-            from .notes_fts import create_table as nt_create
+            notes_db = Path.home() / ".my-agent" / "notes.db"
+            db = sqlite3.connect(str(notes_db))
+            from .notes_fts import create_table as nt_create, index_all
             nt_create(db)
+            # 首次搜索自动索引（仅限 Agent开发/ 和 后端开发/ 目录）
+            count = db.execute("SELECT COUNT(*) FROM notes_fts").fetchone()[0]
+            if count == 0:
+                count = index_all(db, Path("/Users/xiaofeng/Desktop/学习笔记/Agent开发"))
+                count += index_all(db, Path("/Users/xiaofeng/Desktop/学习笔记/后端开发"))
+                db.commit()
             return notes_search(db, query, limit)
         except Exception:
             return []
