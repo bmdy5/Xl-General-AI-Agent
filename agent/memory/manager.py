@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Optional
 
 from .fts_index import create_table, populate as fts_populate, search as fts_search, rebuild
+from .notes_fts import search as notes_search, index_all, scan_files
 
 KB_DIR = os.getenv("MYAGENT_KB_DIR", "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西")
 KNOWLEDGE_INDEX = Path(KB_DIR) / "知识索引.md"
@@ -168,6 +169,20 @@ class MemoryManager:
         if topic_file.exists():
             return topic_file.read_text(encoding="utf-8")
         return None
+
+    def search_notes(self, query: str, limit: int = 5) -> list[dict]:
+        """搜索笔记知识库（学习笔记目录）。返回 BM25 排序的分块结果。"""
+        import re
+        clean = re.sub(r'[^\w\u4e00-\u9fff\s]', " ", query).strip()
+        if not clean or len(clean) < 2:
+            return []
+        try:
+            db = sqlite3.connect(str(self.base_dir / "notes.db"))
+            from .notes_fts import create_table as nt_create
+            nt_create(db)
+            return notes_search(db, query, limit)
+        except Exception:
+            return []
 
     def search_memories(self, query: str, limit: int = 5) -> list[dict]:
         """FTS5 全文搜索记忆，返回 BM25 排序结果。自动清理特殊字符。"""
