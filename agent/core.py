@@ -78,6 +78,8 @@ class Agent:
         self.max_turns = max_turns
 
         self.compressor = ContextCompressor(llm=llm, max_tokens=1_000_000)
+        self._cached_memory_entries: list = []
+        self._cached_memory_hash: int = 0
 
         self.messages: list[dict] = []
         self._abort = asyncio.Event()
@@ -469,21 +471,36 @@ class Agent:
     # ── internal ───────────────────────────────────────────────
 
     async def _extract_keywords(self, user_input: str) -> list[str]:
-        """Flash 模型提取关键词，用于记忆排序."""
+        """分词提取关键词（v4: 无 LLM，中英 bigram + 词分割）."""
         if len(user_input) < 10:
             return []
         try:
-            import os
-            flash_model = os.getenv("MYAGENT_LEARN_MODEL", "")
-            resp = await self.llm.chat(
-                messages=[{"role": "user", "content": (
-                    f"从用户输入提取3-5个关键词（空格分隔，只输出关键词）:\n{user_input[:200]}"
-                )}],
-                tools=None,
-                model_override=flash_model,
-            )
-            text = resp.get("content", "").strip()
-            return [kw.strip().lower() for kw in text.split() if kw.strip()][:5]
+            import re
+            text = user_input.lower().strip()
+            stopwords = {
+                '的', '了', '是', '在', '我', '有', '和', '就', '不', '人', '都',
+                '一个', '这个', '那个', '你', '吗', '呢', '吧', '啊', '嗯', '哦',
+                'the', 'a', 'an', 'is', 'are', 'was', 'were', 'to', 'of', 'in',
+                'for', 'and', 'or', 'it', 'that', 'this', 'what', 'how', 'can',
+            }
+            # 英文词：空格分割
+            en_words = re.findall(r'[a-z]{2,}', text)
+            # 中文 bigram：连续 2 个中文字符
+            zh_chars = re.findall(r'[\u4e00-\u9fff]', text)
+            zh_bigrams = []
+            for i in range(len(zh_chars) - 1):
+                bigram = zh_chars[i] + zh_chars[i + 1]
+                if bigram not in stopwords:
+                    zh_bigrams.append(bigram)
+            words = en_words + zh_bigrams
+            seen, result = set(), []
+            for w in words:
+                if w not in seen:
+                    seen.add(w)
+                    result.append(w)
+                    if len(result) >= 5:
+                        break
+            return result[:5]
         except Exception:
             return []
 
@@ -510,7 +527,12 @@ class Agent:
 
         v3: Flash 模型提取关键词 → Top-5 注入（降 Token 30%）.
         """
-        entries = self.memory._parse_index()
+        # v4: 缓存 index 解析结果，同一 session 不重复读盘
+        index_hash = hash(self.memory.index_file.read_bytes() if self.memory.index_file.exists() else b"")
+        if index_hash != self._cached_memory_hash or not self._cached_memory_entries:
+            self._cached_memory_entries = self.memory._parse_index()
+            self._cached_memory_hash = index_hash
+        entries = list(self._cached_memory_entries)
         if not entries:
             return None
 
