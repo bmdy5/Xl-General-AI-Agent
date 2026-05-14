@@ -22,289 +22,308 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 # ── HTML 页面 ──────────────────────────────────────────────────
 
 GALLERY_HTML = """<!DOCTYPE html>
-<html lang="zh">
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>XL Image Gallery</title>
+
+<html class="light" lang="zh-CN"><head>
+<meta charset="utf-8"/>
+<meta content="width=device-width, initial-scale=1.0" name="viewport"/>
+<title>像素花园 - 上传</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600&amp;family=Plus+Jakarta+Sans:wght@700;800&amp;display=swap" rel="stylesheet"/>
+<link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-tertiary-container": "#636565",
+                        "inverse-on-surface": "#f5eff7",
+                        "secondary-container": "#fed33a",
+                        "secondary-fixed-dim": "#ecc228",
+                        "on-secondary": "#ffffff",
+                        "on-background": "#1c1b20",
+                        "surface-variant": "#e6e1e8",
+                        "on-primary": "#ffffff",
+                        "on-surface-variant": "#414940",
+                        "secondary-fixed": "#ffe082",
+                        "on-secondary-fixed-variant": "#564500",
+                        "tertiary-fixed": "#e2e2e2",
+                        "tertiary": "#5d5f5f",
+                        "outline": "#717970",
+                        "outline-variant": "#c0c9be",
+                        "on-tertiary-fixed-variant": "#454747",
+                        "error-container": "#ffdad6",
+                        "surface-container": "#f2ecf4",
+                        "surface-container-high": "#ece6ee",
+                        "on-secondary-container": "#715b00",
+                        "on-error": "#ffffff",
+                        "on-primary-fixed-variant": "#145129",
+                        "primary": "#2f6a3f",
+                        "tertiary-container": "#e3e3e3",
+                        "primary-container": "#b2f2bb",
+                        "surface-bright": "#fdf7ff",
+                        "tertiary-fixed-dim": "#c6c6c7",
+                        "surface": "#fdf7ff",
+                        "on-primary-fixed": "#00210b",
+                        "on-surface": "#1c1b20",
+                        "on-primary-container": "#367044",
+                        "primary-fixed-dim": "#96d5a0",
+                        "background": "#fdf7ff",
+                        "error": "#ba1a1a",
+                        "on-secondary-fixed": "#231b00",
+                        "surface-dim": "#ded8e0",
+                        "inverse-surface": "#322f35",
+                        "on-error-container": "#93000a",
+                        "surface-container-low": "#f8f2fa",
+                        "surface-container-lowest": "#ffffff",
+                        "primary-fixed": "#b2f2bb",
+                        "inverse-primary": "#96d5a0",
+                        "surface-container-highest": "#e6e1e8",
+                        "on-tertiary": "#ffffff",
+                        "secondary": "#725c00",
+                        "surface-tint": "#2f6a3f",
+                        "on-tertiary-fixed": "#1a1c1c"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "margin-desktop": "32px",
+                        "gutter": "16px",
+                        "margin-mobile": "16px",
+                        "unit": "4px",
+                        "container-max": "1200px"
+                    },
+                    fontFamily: {
+                        "body-md": ["Be Vietnam Pro"],
+                        "label-md": ["Be Vietnam Pro"],
+                        "headline-lg": ["Plus Jakarta Sans"],
+                        "headline-md": ["Plus Jakarta Sans"],
+                        "body-lg": ["Be Vietnam Pro"],
+                        "display-lg": ["Plus Jakarta Sans"],
+                        "headline-lg-mobile": ["Plus Jakarta Sans"]
+                    },
+                    fontSize: {
+                        "body-md": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "label-md": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "1.3", "fontWeight": "700" }],
+                        "headline-md": ["24px", { "lineHeight": "1.4", "fontWeight": "700" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "display-lg": ["40px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "800" }],
+                        "headline-lg-mobile": ["28px", { "lineHeight": "1.3", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
 <style>
-  * { margin: 0; padding: 0; box-sizing: border-box; }
-  body {
-    background: #f5eff7;
-    color: #5D4E37;
-    font-family: 'Courier New', 'Space Mono', monospace;
-    min-height: 100vh;
-    display: flex;
-    flex-direction: column;
-    align-items: center;
-    padding: 20px;
-  }
-  #header {
-    color: #6a1b9a;
-    font-size: 24px;
-    padding: 20px;
-    text-shadow: 2px 2px #d1c4e9;
-    letter-spacing: 4px;
-  }
-  #upload-zone {
-    border: 3px dashed #00ff00;
-    border-radius: 4px;
-    padding: 40px 30px;
-    margin: 10px 0 24px;
-    text-align: center;
-    cursor: pointer;
-    transition: all 0.15s ease;
-    width: 100%;
-    max-width: 900px;
-    position: relative;
-    overflow: hidden;
-    background: #e8f5e9;
-    box-shadow: 4px 4px 0px 0px rgba(0,0,0,1);
-    font-family: 'Courier New', 'Space Mono', monospace;
-  }
-  #upload-zone::before {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: rgba(255,182,193,0.1);
-    opacity: 0;
-    transition: opacity 0.15s;
-  }
-  #upload-zone:hover::before,
-  #upload-zone.drag-over::before { opacity: 1; }
-  #upload-zone:hover, #upload-zone.drag-over {
-    border-color: #6a1b9a;
-    border-style: solid;
-    box-shadow: 0 0 20px rgba(106,27,154,0.2), 2px 2px 0px 0px #d1c4e9;
-    transform: none;
-  }
-  #upload-zone input { display: none; }
-  #upload-zone .upload-icon {
-    font-size: 40px;
-    margin-bottom: 12px;
-    display: block;
-    color: #6a1b9a;
-    text-shadow: 0 0 10px rgba(106,27,154,0.3);
-    transition: transform 0.15s;
-  }
-  #upload-zone:hover .upload-icon,
-  #upload-zone.drag-over .upload-icon { transform: scale(1.05); }
-  #upload-zone .hint { color: #C9A48A; font-size: 13px; }
-  #upload-zone .hint span { color: #6a1b9a; text-decoration: underline; cursor: pointer; }
-  @keyframes pulse-border {
-    0%, 100% { border-color: #533483; }
-    50% { border-color: #7b5ea7; }
-  }
-  #upload-zone.empty-gallery {
-    animation: pulse-border 2s infinite;
-  }
-  #gallery {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(150px, 1fr));
-    gap: 12px;
-    width: 100%;
-    max-width: 900px;
-  }
-  .thumb {
-    background: #FFFFFF;
-    border: 2px solid #b2f2bb;
-    border-radius: 8px;
-    overflow: hidden;
-    cursor: pointer;
-    transition: border-color 0.2s;
-    position: relative;
-  }
-  .thumb:hover { border-color: #6a1b9a; box-shadow: 0 0 10px rgba(106,27,154,0.15); }
-  .thumb img {
-    width: 100%;
-    height: 150px;
-    object-fit: cover;
-    display: block;
-  }
-  .thumb-info {
-    padding: 6px;
-    font-size: 11px;
-    color: #8B7355;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
-  }
-  .thumb .delete-btn {
-    position: absolute;
-    top: 4px;
-    right: 4px;
-    background: #b2f2bb;
-    color: #333;
-    border: none;
-    border-radius: 4px;
-    width: 20px;
-    height: 20px;
-    font-size: 12px;
-    cursor: pointer;
-    display: none;
-  }
-  .thumb .delete-btn:hover { background: #6a1b9a; color: #FFF; }
-  .thumb:hover .delete-btn { display: block; }
-  .empty {
-    grid-column: 1 / -1;
-    text-align: center;
-    color: #C9A48A;
-    padding: 60px;
-    font-size: 16px;
-  }
-  .toast {
-    position: fixed;
-    bottom: 20px;
-    left: 50%;
-    transform: translateX(-50%);
-    background: #6a1b9a;
-    color: #FFF;
-    padding: 10px 24px;
-    border-radius: 4px;
-    font-size: 14px;
-    z-index: 999;
-    opacity: 0;
-    transition: opacity 0.3s;
-  }
-  .toast.show { opacity: 1; }
-</style>
+        .material-symbols-outlined {
+            font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
+        }
+    </style>
 </head>
-<body>
-<div id="header">XL 图片空间</div>
-<div id="upload-zone">
-  <input type="file" id="file-input" accept="image/*" multiple>
-  <span class="upload-icon">&#x1F5BC;</span>
-  <div class="hint">拖拽 / 粘贴(Ctrl+V) / <span>点击选择文件</span></div>
+<body class="bg-surface text-on-surface font-body-md min-h-screen">
+<!-- TopAppBar -->
+<header class="fixed top-0 z-50 flex justify-between items-center w-full px-margin-mobile md:px-margin-desktop h-16 bg-surface border-b-2 border-primary-container shadow-[0_4px_0_0_#fed33a]">
+<div class="flex items-center">
+<span class="font-headline-md text-headline-md font-black text-primary">像素花园</span>
 </div>
-<div id="gallery">
-  <div class="empty">加载中...</div>
+<div class="flex items-center gap-4">
+<button class="p-2 rounded-full hover:bg-primary-container/20 transition-colors duration-200 text-primary">
+<span class="material-symbols-outlined">notifications</span>
+</button>
+<button class="p-2 rounded-full hover:bg-primary-container/20 transition-colors duration-200 text-primary">
+<span class="material-symbols-outlined">settings</span>
+</button>
 </div>
-<div id="toast" class="toast"></div>
+</header>
+<!-- Main Content -->
+<main class="pt-32 pb-32 px-margin-mobile md:px-margin-desktop max-w-container-max mx-auto flex flex-col gap-16">
+<!-- Upload Zone -->
+<section class="relative bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_8px_0_0_#ffdeeb] rounded-xl p-8 md:p-12">
+<!-- Daisy Decorations -->
+<div class="absolute -top-4 -left-4 text-secondary-container bg-surface rounded-full p-1 border-2 border-primary-container shadow-[0_2px_0_0_#fed33a]">
+<span class="material-symbols-outlined text-4xl block">local_florist</span>
+</div>
+<div class="absolute -bottom-4 -right-4 text-secondary-container bg-surface rounded-full p-1 border-2 border-primary-container shadow-[0_2px_0_0_#fed33a]">
+<span class="material-symbols-outlined text-4xl block">local_florist</span>
+</div>
+<!-- Drop Area -->
+<div id="upload-zone" class="border-4 border-dashed border-primary-container bg-primary-container/10 hover:bg-primary-container/20 transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center gap-6 cursor-pointer group">
+<div class="bg-surface p-4 rounded-full border-2 border-primary shadow-[0_4px_0_0_#2f6a3f] group-hover:translate-y-1 group-hover:shadow-[0_2px_0_0_#2f6a3f] transition-all">
+<span class="material-symbols-outlined text-display-lg text-primary block" style="font-size: 64px;">cloud_upload</span>
+</div>
+<div class="text-center flex flex-col gap-2">
+<h2 class="font-headline-md text-headline-md text-on-surface">拖拽或点击上传</h2>
+<p class="font-body-md text-body-md text-on-surface-variant">支持格式: PNG, JPG, GIF</p>
+<p class="font-label-md text-label-md text-primary bg-primary-container/50 inline-block px-3 py-1 rounded-full mx-auto mt-2">最大限制: 50MB</p>
+</div>
+<button class="mt-4 bg-primary-container text-on-primary-container font-label-md text-label-md px-8 py-4 rounded-lg shadow-[0_4px_0_0_#fed33a] hover:translate-y-[2px] hover:shadow-[0_2px_0_0_#fed33a] active:translate-y-[4px] active:shadow-none transition-all border-2 border-primary">
+                    选择文件
+                </button>
+</div>
+</section>
+<!-- Pixel Divider -->
+<div class="flex justify-center items-center gap-2 py-4">
+<div class="w-3 h-3 bg-primary-container"></div>
+<div class="w-3 h-3 bg-secondary-container"></div>
+<div class="w-3 h-3 bg-[#ffdeeb]"></div>
+<div class="w-3 h-3 bg-secondary-container"></div>
+<div class="w-3 h-3 bg-primary-container"></div>
+</div>
+<!-- Recent Uploads -->
+<section class="flex flex-col gap-8">
+<div class="flex items-center gap-3">
+<span class="material-symbols-outlined text-primary text-3xl">history</span>
+<h3 class="font-headline-md text-headline-md text-on-surface">最近上传</h3>
+</div>
+<div class="grid grid-cols-2 md:grid-cols-4 gap-gutter">
+<!-- Card 1 -->
+<div class="bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden hover:translate-y-[-2px] transition-transform duration-200 cursor-pointer flex flex-col">
+<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb]">
+<img alt="Pixel art scenery" class="w-full h-full object-cover" data-alt="A bright, cheerful pixel art landscape showing a cozy green meadow with colorful daisy flowers scattered around. The lighting is sunny and warm, evoking a nostalgic 8-bit aesthetic but rendered in crisp high-fidelity pixels. The color palette features vibrant mint greens, soft petal pinks, and bright daisy yellows. The scene is framed symmetrically, creating a soothing and inviting digital environment." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBcCD6JIDqK_cVypgjjMUwCVufsHhcuPvtG5x8ibtL32VcV3FFLX4ramI3eUtRR47KkFSMTqSCWAFKRmF_DQ4IfoHxyOHfDfNZ1JgkIHpi0502itlPfo7OcR93sAS8yDI07Pg-QIyLJhRuXSFZrWqq0LoE4MTI5lWhfGLAFgTAQsfegI0Pv592WKcOa-HCmJuMaOQ9IIa0APE9Ih6kyDRuuSE6duv_kRRQvdktsh1mPuqk1h2T0QMP0poTDkmGT7R62TzjL70u868g"/>
+</div>
+<div class="p-4 flex flex-col gap-1">
+<span class="font-label-md text-label-md text-on-surface truncate">meadow_final.png</span>
+<span class="font-body-md text-body-md text-outline text-sm">1.2 MB</span>
+</div>
+</div>
+<!-- Card 2 -->
+<div class="bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden hover:translate-y-[-2px] transition-transform duration-200 cursor-pointer flex flex-col">
+<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb]">
+<img alt="Pixel art character" class="w-full h-full object-cover" data-alt="A cute, stylized pixel art character resembling a small woodland creature, perhaps a fox or a bear. The character is designed with simple, blocky geometry and smooth anti-aliased edges. It stands against a solid light pink background. The color scheme is warm and pastel-heavy, utilizing soft oranges, whites, and mint green accents. The overall mood is playful and endearing." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAxmozECod6d6AMtg_b64r1DQ5THF-yGU_B_zTk4Wgjhn0se-XRVhrZQYHVLnw4ruPI8ikymyrkw1DErfhYRvUVYv1N2Bl44p3mzpSjbjYploLT6kLdi9QS8G54Kat5zIm2aBDJxHfuiW7nuCUGbO6tfVy6K7EPWaZGGElwnnhHOS_907vmUsWCelbfJNvk9RbRj4lgF9hs81uXxFLx7oao4yo53Eg7SXy_GgBUi7d-8hzPn4S5m6u0x_1qfK7nFLVyBzNRJP25V90"/>
+</div>
+<div class="p-4 flex flex-col gap-1">
+<span class="font-label-md text-label-md text-on-surface truncate">cute_fox_sprite.gif</span>
+<span class="font-body-md text-body-md text-outline text-sm">450 KB</span>
+</div>
+</div>
+<!-- Card 3 -->
+<div class="bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden hover:translate-y-[-2px] transition-transform duration-200 cursor-pointer flex flex-col">
+<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb] flex items-center justify-center">
+<span class="material-symbols-outlined text-outline text-4xl block">image</span>
+</div>
+<div class="p-4 flex flex-col gap-1">
+<span class="font-label-md text-label-md text-on-surface truncate">ui_elements_v2.png</span>
+<span class="font-body-md text-body-md text-outline text-sm">2.1 MB</span>
+</div>
+</div>
+<input type="file" id="file-input" accept="image/*" multiple style="display:none">
+</div>
+</section>
+</main>
+<div id="toast" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#2f6a3f;color:#fff;padding:12px 24px;border-radius:12px;font-family:Be Vietnam Pro,sans-serif;font-size:14px;z-index:999;opacity:0;transition:opacity 0.3s ease;border:2px solid #b2f2bb;box-shadow:0 4px 0 0 #145129;pointer-events:none;"></div>
+<!-- BottomNavBar (Visible on Mobile as per standard app behavior, hiding on md) -->
+<nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-20 px-2 pb-safe bg-surface-container border-t-2 border-primary-container rounded-t-xl shadow-[0_-4px_0_0_#fed33a] md:hidden">
+<!-- 首页 Inactive -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-all p-2 rounded-lg w-16" href="#">
+<span class="material-symbols-outlined mb-1">home</span>
+<span class="font-label-md text-label-md text-[10px]">首页</span>
+</a>
+<!-- 上传 Active -->
+<a class="flex flex-col items-center justify-center bg-primary-container text-on-primary-container rounded-lg px-4 py-1 shadow-[2px_2px_0_0_#ecc228] scale-95 duration-150 w-16" href="#">
+<span class="material-symbols-outlined mb-1">cloud_upload</span>
+<span class="font-label-md text-label-md text-[10px]">上传</span>
+</a>
+<!-- 广场 Inactive -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-all p-2 rounded-lg w-16" href="#">
+<span class="material-symbols-outlined mb-1">local_florist</span>
+<span class="font-label-md text-label-md text-[10px]">广场</span>
+</a>
+<!-- 我的 Inactive -->
+<a class="flex flex-col items-center justify-center text-on-surface-variant hover:bg-surface-container-high transition-all p-2 rounded-lg w-16" href="#">
+<span class="material-symbols-outlined mb-1">person</span>
+<span class="font-label-md text-label-md text-[10px]">我的</span>
+</a>
+</nav>
+
+<style>
+  #upload-zone.drag-over { background: #e8f5e9 !important; border-color: #2f6a3f !important; }
+  .thumb-card { position:relative; transition: transform 0.2s ease; }
+  .thumb-card:hover { transform: translateY(-2px); }
+  .card-del { position:absolute; top:6px; right:6px; width:24px; height:24px;
+    background:#fff; border:2px solid #2f6a3f; border-radius:6px; cursor:pointer;
+    font-size:14px; line-height:20px; text-align:center; color:#2f6a3f; display:none; box-shadow:0 2px 0 #145129; z-index:10; }
+  .thumb-card:hover .card-del { display:block; }
+  .card-del:hover { background:#fdf7ff; }
+</style>
 <script>
-const gallery = document.getElementById('gallery');
-const fileInput = document.getElementById('file-input');
-const uploadZone = document.getElementById('upload-zone');
-const toast = document.getElementById('toast');
+var _tt;
+function toast(m){var t=document.getElementById('toast');t.textContent=m;t.style.opacity='1';clearTimeout(_tt);_tt=setTimeout(function(){t.style.opacity='0'},2000);}
+function fmtName(n){try{return decodeURIComponent(n).replace(/\.\\w+$/,'').slice(0,18)}catch(e){return n.slice(0,18)}}
+function fmtSize(s){if(s<1024)return s+' B';if(s<1024*1024)return (s/1024).toFixed(1)+' KB';return (s/1024/1024).toFixed(1)+' MB'}
 
-function showToast(msg) {
-  toast.textContent = msg;
-  toast.classList.add('show');
-  setTimeout(() => toast.classList.remove('show'), 2000);
+async function loadGallery(){
+  var g=document.getElementById('gallery');
+  var e=document.getElementById('gallery-empty');
+  try{
+    var r=await fetch('/api/list');
+    var d=await r.json();
+    var imgs=d.images||[];
+    if(imgs.length===0){if(e)e.style.display='block';g.querySelectorAll('.thumb-card').forEach(function(c){c.remove()});return}
+    if(e)e.style.display='none';
+    var h='';
+    for(var i=0;i<imgs.length;i++){
+      var img=imgs[i];
+      var dn=fmtName(img.original_name||img.name);
+      h+='<div class="thumb-card bg-surface-container-lowest border-2 border-\[\#ffdeeb\] shadow-\[0_4px_0_0_\#ffdeeb\] rounded-xl overflow-hidden flex flex-col">'+
+        '<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-\[\#ffdeeb\] flex items-center justify-center overflow-hidden">'+
+        '<img src="/images/'+img.name+'" alt="'+dn+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;" onerror="this.outerHTML='<span class=\"material-symbols-outlined text-outline text-4xl block\">image</span>'">'+
+        '</div>'+
+        '<div class="p-4 flex flex-col gap-1 relative">'+
+        '<span class="font-label-md text-label-md text-on-surface truncate">'+dn+'</span>'+
+        '<span class="font-body-md text-body-md text-outline text-sm">'+fmtSize(img.size)+'</span>'+
+        '<button class="card-del" onclick="deleteImg(''+img.name+'',this)">&times;</button>'+
+        '</div></div>';
+    }
+    g.querySelectorAll('.thumb-card').forEach(function(c){c.remove()});
+    g.insertAdjacentHTML('afterbegin',h);
+  }catch(e){if(e)e.textContent='加载失败';if(e)e.style.display='block'}
 }
 
-async function loadGallery() {
-  try {
-    const res = await fetch('/api/list');
-    const data = await res.json();
-    gallery.innerHTML = '';
-    if (!data.images || data.images.length === 0) {
-      gallery.innerHTML = '<div class="empty">还没有图片，拖拽或点击上传</div>';
-      uploadZone.classList.add('empty-gallery');
-      return;
-    }
-    uploadZone.classList.remove('empty-gallery');
-    data.images.forEach(img => {
-      const div = document.createElement('div');
-      div.className = 'thumb';
-      const displayName = img.original_name || img.name;
-      div.innerHTML = `
-        <img src="/images/${img.name}" alt="${displayName}" loading="lazy" title="${displayName}">
-        <div class="thumb-info">${displayName}</div>
-        <button class="delete-btn" data-name="${img.name}">&times;</button>
-      `;
-      div.querySelector('.delete-btn').onclick = (e) => {
-        e.stopPropagation();
-        deleteImage(img.name);
-      };
-      div.querySelector('img').onclick = () => window.open('/images/' + img.name);
-      gallery.appendChild(div);
-    });
-  } catch(e) {
-    gallery.innerHTML = '<div class="empty">加载失败</div>';
-    uploadZone.classList.add('empty-gallery');
-  }
-}
-
-async function uploadFiles(files) {
-  const count = files.length || (files instanceof FileList ? files.length : files.length);
-  let uploaded = 0;
-  for (const file of files) {
-    if (!file.type.startsWith('image/')) continue;
-    const form = new FormData();
-    form.append('file', file);
-    showToast('上传中: ' + file.name + '...');
-    try {
-      const res = await fetch('/upload', { method: 'POST', body: form });
-      const data = await res.json();
-      if (data.ok) {
-        uploaded++;
-        showToast('已上传: ' + file.name);
-      } else {
-        showToast('上传失败: ' + (data.error || 'unknown'));
-      }
-    } catch(e) {
-      showToast('上传失败: ' + e.message);
-    }
-  }
-  if (uploaded > 0) showToast('共上传 ' + uploaded + ' 张图片');
-  loadGallery();
-}
-
-async function deleteImage(name) {
-  if (!confirm('确定删除这张图片？')) return;
-  try {
-    const res = await fetch('/images/' + name, { method: 'DELETE' });
-    const data = await res.json();
-    if (data.ok) {
-      showToast('已删除');
-    } else {
-      showToast('删除失败: ' + (data.error || 'unknown'));
-    }
-  } catch(e) {
-    showToast('删除失败: ' + e.message);
+async function uploadFiles(files){
+  if(!files||!files.length)return;
+  for(var i=0;i<files.length;i++){
+    var f=files[i];if(!f.type.match(/image\//))continue;
+    var fd=new FormData();fd.append('file',f,f.name);
+    try{
+      var r=await fetch('/upload',{method:'POST',body:fd});
+      var j=await r.json();
+      if(j.ok){toast('已上传: '+f.name)}else{toast('上传失败')}
+    }catch(e){toast('上传出错')}
   }
   loadGallery();
 }
 
-fileInput.onchange = () => uploadFiles(fileInput.files);
+async function deleteImg(name,btn){
+  if(!confirm('确认删除？'))return;
+  try{
+    var r=await fetch('/images/'+name,{method:'DELETE'});
+    var j=await r.json();
+    if(j.ok){toast('已删除');loadGallery()}else{toast('删除失败')}
+  }catch(e){toast('删除出错')}
+}
 
-uploadZone.onclick = () => fileInput.click();
-
-uploadZone.ondragover = (e) => {
-  e.preventDefault();
-  uploadZone.classList.add('drag-over');
-};
-uploadZone.ondragleave = () => uploadZone.classList.remove('drag-over');
-uploadZone.ondrop = (e) => {
-  e.preventDefault();
-  uploadZone.classList.remove('drag-over');
-  uploadFiles(e.dataTransfer.files);
-};
-
-document.ondragover = (e) => e.preventDefault();
-document.ondrop = (e) => e.preventDefault();
-
-// 粘贴上传
-document.addEventListener('paste', (e) => {
-  const items = e.clipboardData?.items;
-  if (!items) return;
-  const files = [];
-  for (const item of items) {
-    if (item.type.startsWith('image/')) {
-      files.push(item.getAsFile());
-    }
+document.addEventListener('DOMContentLoaded',function(){
+  var uz=document.getElementById('upload-zone');
+  var fi=document.getElementById('file-input');
+  if(uz)uz.onclick=function(){if(fi)fi.click();};
+  if(fi)fi.onchange=function(){uploadFiles(this.files);this.value='';};
+  if(uz){
+    uz.ondragover=function(e){e.preventDefault();uz.classList.add('drag-over');};
+    uz.ondragleave=function(){uz.classList.remove('drag-over');};
+    uz.ondrop=function(e){e.preventDefault();uz.classList.remove('drag-over');uploadFiles(e.dataTransfer.files);};
   }
-  if (files.length > 0) {
-    e.preventDefault();
-    uploadFiles(files);
-    showToast('已粘贴 ' + files.length + ' 张图片');
-  }
+  document.onpaste=function(e){if(e.clipboardData&&e.clipboardData.files.length)uploadFiles(e.clipboardData.files);};
+  loadGallery();
 });
-
-loadGallery();
 </script>
-</body>
-</html>"""
+</body></html>
+"""
 
 # ── multipart 解析 ─────────────────────────────────────────────
 
