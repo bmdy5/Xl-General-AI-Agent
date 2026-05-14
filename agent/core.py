@@ -568,6 +568,18 @@ class Agent:
             else:
                 lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
 
+        # v5: 追加笔记知识库结果（RAG）
+        try:
+            note_results = self.memory.search_notes(user_input, limit=2)
+            if note_results:
+                lines.append("")
+                lines.append("## 相关知识（来自学习笔记）")
+                for nr in note_results:
+                    snippet = nr.get("content", "")[:120].replace("\n", " ")
+                    lines.append(f"- [{nr.get('title','?')}]({nr.get('path','')}) — {snippet}")
+        except Exception:
+            pass
+
         if self._turn_count > 0 and self._turn_count % 10 == 0:
             lines.append("")
             lines.append("⚠️ Periodic Nudge: 已对话多轮。请检查是否有值得长期记住的内容。")
