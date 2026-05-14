@@ -461,7 +461,6 @@ async def run_dashboard_learn():
     learn_model = os.getenv("MYAGENT_LEARN_MODEL", "")
     learner = AutoLearner(agent, max_duration_minutes=5, learn_model=learn_model, dashboard=dash)
 
-    print(f"\n  👑 XL Agent — Dashboard 学习模式\n")
     await dash.send({"agent": "xl", "event": "auto_learn_start", "name": "XL"})
     result = await learner.run()
 
@@ -567,7 +566,7 @@ async def run_dashboard():
             yield event
     agent.run = hooked_run  # type: ignore
 
-    print("\n  👑 XL Agent — 交互模式 (Dashboard: http://localhost:8765)\n")
+    # Startup banner is printed above via the banner list
 
     while True:
         try:
