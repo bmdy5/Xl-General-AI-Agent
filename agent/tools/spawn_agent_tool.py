@@ -71,7 +71,7 @@ class SpawnAgentTool(BaseTool):
                         },
                         "context": {
                             "type": "string",
-                            "description": "Optional additional context (file paths, error messages, etc.)",
+                            "description": "Optional additional context"}, "tasks": {"type": "array", "description": "Parallel execution: list of {role, task} dicts",
                         },
                     },
                     "required": ["task"],
@@ -97,11 +97,50 @@ class SpawnAgentTool(BaseTool):
         role = input_args.get("role", "general")
         role_prompt = input_args.get("role_prompt", "")
         task = input_args["task"]
+        tasks_list = input_args.get("tasks", [])  # 并发多任务
         ctx = input_args.get("context", "")
 
         # hermes: 防递归
         if SpawnAgentTool._depth >= 3:
             yield ToolResult(type="result", data="Error: max spawn depth reached")
+            return
+
+        # ── 并发多任务模式 ──
+        if tasks_list:
+            yield ToolResult(type="progress", data=f"🤖 并发 {len(tasks_list)} 个子代理工作中...")
+            try:
+                main = context if context else None
+                if not main or not hasattr(main, "llm"):
+                    yield ToolResult(type="result", data="Error: no agent context")
+                    return
+                from agent.core import Agent
+
+                async def run_one(tinfo: dict):
+                    r = tinfo.get("role", "general")
+                    rp = tinfo.get("role_prompt", "")
+                    t = tinfo.get("task", "")
+                    p = rp if rp else ROLES.get(r, ROLES["general"])
+                    sub = Agent(llm=main.llm, registry=main.registry, memory=main.memory, max_turns=4)
+                    sub.system_prompt = p
+                    parts = []
+                    try:
+                        sub._abort = asyncio.Event()
+                        async for ev in asyncio.wait_for(self._collect_output(sub, t), timeout=90):
+                            if isinstance(ev, str):
+                                parts.append(ev)
+                    except asyncio.TimeoutError:
+                        parts.append(f"\n[timeout: {t[:30]}...]")
+                    return (r, "".join(parts).strip())
+
+                results = await asyncio.gather(*[run_one(t) for t in tasks_list])
+                output = "\n\n".join(f"[{r}] {txt[:500]}" for r, txt in results if txt)
+                yield ToolResult(
+                    type="result",
+                    data=f"并发完成 {len(results)} 个子代理:\n{output[:3000]}",
+                    result_for_assistant=output[:5000],
+                )
+            except Exception as e:
+                yield ToolResult(type="result", data=f"Multi spawn error: {e}")
             return
 
         yield ToolResult(type="progress", data=f"🤖 {role} 子代理工作中...")
