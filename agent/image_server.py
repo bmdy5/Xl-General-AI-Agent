@@ -28,14 +28,105 @@ GALLERY_HTML = """
 <meta charset="utf-8"/>
 <meta content="width=device-width, initial-scale=1.0" name="viewport"/>
 <title>像素花园 - 上传</title>
+<script src="https://cdn.tailwindcss.com?plugins=forms,container-queries"></script>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;600&amp;family=Plus+Jakarta+Sans:wght@700;800&amp;display=swap" rel="stylesheet"/>
 <link href="https://fonts.googleapis.com/css2?family=Material+Symbols+Outlined:wght,FILL@100..700,0..1&amp;display=swap" rel="stylesheet"/>
+<script id="tailwind-config">
+        tailwind.config = {
+            darkMode: "class",
+            theme: {
+                extend: {
+                    colors: {
+                        "on-tertiary-container": "#636565",
+                        "inverse-on-surface": "#f5eff7",
+                        "secondary-container": "#fed33a",
+                        "secondary-fixed-dim": "#ecc228",
+                        "on-secondary": "#ffffff",
+                        "on-background": "#1c1b20",
+                        "surface-variant": "#e6e1e8",
+                        "on-primary": "#ffffff",
+                        "on-surface-variant": "#414940",
+                        "secondary-fixed": "#ffe082",
+                        "on-secondary-fixed-variant": "#564500",
+                        "tertiary-fixed": "#e2e2e2",
+                        "tertiary": "#5d5f5f",
+                        "outline": "#717970",
+                        "outline-variant": "#c0c9be",
+                        "on-tertiary-fixed-variant": "#454747",
+                        "error-container": "#ffdad6",
+                        "surface-container": "#f2ecf4",
+                        "surface-container-high": "#ece6ee",
+                        "on-secondary-container": "#715b00",
+                        "on-error": "#ffffff",
+                        "on-primary-fixed-variant": "#145129",
+                        "primary": "#2f6a3f",
+                        "tertiary-container": "#e3e3e3",
+                        "primary-container": "#b2f2bb",
+                        "surface-bright": "#fdf7ff",
+                        "tertiary-fixed-dim": "#c6c6c7",
+                        "surface": "#fdf7ff",
+                        "on-primary-fixed": "#00210b",
+                        "on-surface": "#1c1b20",
+                        "on-primary-container": "#367044",
+                        "primary-fixed-dim": "#96d5a0",
+                        "background": "#fdf7ff",
+                        "error": "#ba1a1a",
+                        "on-secondary-fixed": "#231b00",
+                        "surface-dim": "#ded8e0",
+                        "inverse-surface": "#322f35",
+                        "on-error-container": "#93000a",
+                        "surface-container-low": "#f8f2fa",
+                        "surface-container-lowest": "#ffffff",
+                        "primary-fixed": "#b2f2bb",
+                        "inverse-primary": "#96d5a0",
+                        "surface-container-highest": "#e6e1e8",
+                        "on-tertiary": "#ffffff",
+                        "secondary": "#725c00",
+                        "surface-tint": "#2f6a3f",
+                        "on-tertiary-fixed": "#1a1c1c"
+                    },
+                    borderRadius: {
+                        "DEFAULT": "0.25rem",
+                        "lg": "0.5rem",
+                        "xl": "0.75rem",
+                        "full": "9999px"
+                    },
+                    spacing: {
+                        "margin-desktop": "32px",
+                        "gutter": "16px",
+                        "margin-mobile": "16px",
+                        "unit": "4px",
+                        "container-max": "1200px"
+                    },
+                    fontFamily: {
+                        "body-md": ["Be Vietnam Pro"],
+                        "label-md": ["Be Vietnam Pro"],
+                        "headline-lg": ["Plus Jakarta Sans"],
+                        "headline-md": ["Plus Jakarta Sans"],
+                        "body-lg": ["Be Vietnam Pro"],
+                        "display-lg": ["Plus Jakarta Sans"],
+                        "headline-lg-mobile": ["Plus Jakarta Sans"]
+                    },
+                    fontSize: {
+                        "body-md": ["16px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "label-md": ["14px", { "lineHeight": "1.4", "letterSpacing": "0.05em", "fontWeight": "600" }],
+                        "headline-lg": ["32px", { "lineHeight": "1.3", "fontWeight": "700" }],
+                        "headline-md": ["24px", { "lineHeight": "1.4", "fontWeight": "700" }],
+                        "body-lg": ["18px", { "lineHeight": "1.6", "fontWeight": "400" }],
+                        "display-lg": ["40px", { "lineHeight": "1.2", "letterSpacing": "-0.02em", "fontWeight": "800" }],
+                        "headline-lg-mobile": ["28px", { "lineHeight": "1.3", "fontWeight": "700" }]
+                    }
+                }
+            }
+        }
+    </script>
 <style>
         .material-symbols-outlined {
             font-variation-settings: 'FILL' 1, 'wght' 400, 'GRAD' 0, 'opsz' 24;
         }
-    </style>
+      #upload-zone.drag-over{background:#e8f5e9!important;border-color:#2f6a3f!important}
+</style>
 </head>
 <body class="bg-surface text-on-surface font-body-md min-h-screen">
 <!-- TopAppBar -->
@@ -64,7 +155,7 @@ GALLERY_HTML = """
 <span class="material-symbols-outlined text-4xl block">local_florist</span>
 </div>
 <!-- Drop Area -->
-<div id="upload-zone" class="border-4 border-dashed border-primary-container bg-primary-container/10 hover:bg-primary-container/20 transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center gap-6 cursor-pointer group">
+<div class="border-4 border-dashed border-primary-container bg-primary-container/10 hover:bg-primary-container/20 transition-colors duration-200 rounded-xl p-12 flex flex-col items-center justify-center gap-6 cursor-pointer group">
 <div class="bg-surface p-4 rounded-full border-2 border-primary shadow-[0_4px_0_0_#2f6a3f] group-hover:translate-y-1 group-hover:shadow-[0_2px_0_0_#2f6a3f] transition-all">
 <span class="material-symbols-outlined text-display-lg text-primary block" style="font-size: 64px;">cloud_upload</span>
 </div>
@@ -93,41 +184,10 @@ GALLERY_HTML = """
 <h3 class="font-headline-md text-headline-md text-on-surface">最近上传</h3>
 </div>
 <div id="gallery" class="grid grid-cols-2 md:grid-cols-4 gap-gutter">
-<!-- Card 1 -->
-<div class="bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden hover:translate-y-[-2px] transition-transform duration-200 cursor-pointer flex flex-col">
-<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb]">
-<img alt="Pixel art scenery" class="w-full h-full object-cover" data-alt="A bright, cheerful pixel art landscape showing a cozy green meadow with colorful daisy flowers scattered around. The lighting is sunny and warm, evoking a nostalgic 8-bit aesthetic but rendered in crisp high-fidelity pixels. The color palette features vibrant mint greens, soft petal pinks, and bright daisy yellows. The scene is framed symmetrically, creating a soothing and inviting digital environment." src="https://lh3.googleusercontent.com/aida-public/AB6AXuBcCD6JIDqK_cVypgjjMUwCVufsHhcuPvtG5x8ibtL32VcV3FFLX4ramI3eUtRR47KkFSMTqSCWAFKRmF_DQ4IfoHxyOHfDfNZ1JgkIHpi0502itlPfo7OcR93sAS8yDI07Pg-QIyLJhRuXSFZrWqq0LoE4MTI5lWhfGLAFgTAQsfegI0Pv592WKcOa-HCmJuMaOQ9IIa0APE9Ih6kyDRuuSE6duv_kRRQvdktsh1mPuqk1h2T0QMP0poTDkmGT7R62TzjL70u868g"/>
-</div>
-<div class="p-4 flex flex-col gap-1">
-<span class="font-label-md text-label-md text-on-surface truncate">meadow_final.png</span>
-<span class="font-body-md text-body-md text-outline text-sm">1.2 MB</span>
-</div>
-</div>
-<!-- Card 2 -->
-<div class="bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden hover:translate-y-[-2px] transition-transform duration-200 cursor-pointer flex flex-col">
-<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb]">
-<img alt="Pixel art character" class="w-full h-full object-cover" data-alt="A cute, stylized pixel art character resembling a small woodland creature, perhaps a fox or a bear. The character is designed with simple, blocky geometry and smooth anti-aliased edges. It stands against a solid light pink background. The color scheme is warm and pastel-heavy, utilizing soft oranges, whites, and mint green accents. The overall mood is playful and endearing." src="https://lh3.googleusercontent.com/aida-public/AB6AXuAxmozECod6d6AMtg_b64r1DQ5THF-yGU_B_zTk4Wgjhn0se-XRVhrZQYHVLnw4ruPI8ikymyrkw1DErfhYRvUVYv1N2Bl44p3mzpSjbjYploLT6kLdi9QS8G54Kat5zIm2aBDJxHfuiW7nuCUGbO6tfVy6K7EPWaZGGElwnnhHOS_907vmUsWCelbfJNvk9RbRj4lgF9hs81uXxFLx7oao4yo53Eg7SXy_GgBUi7d-8hzPn4S5m6u0x_1qfK7nFLVyBzNRJP25V90"/>
-</div>
-<div class="p-4 flex flex-col gap-1">
-<span class="font-label-md text-label-md text-on-surface truncate">cute_fox_sprite.gif</span>
-<span class="font-body-md text-body-md text-outline text-sm">450 KB</span>
-</div>
-</div>
-<!-- Card 3 -->
-<div class="bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden hover:translate-y-[-2px] transition-transform duration-200 cursor-pointer flex flex-col">
-<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb] flex items-center justify-center">
-<span class="material-symbols-outlined text-outline text-4xl block">image</span>
-</div>
-<div class="p-4 flex flex-col gap-1">
-<span class="font-label-md text-label-md text-on-surface truncate">ui_elements_v2.png</span>
-<span class="font-body-md text-body-md text-outline text-sm">2.1 MB</span>
-</div>
-</div>
-<input type="file" id="file-input" accept="image/*" multiple style="display:none">
-</div>
+<div id="gallery-empty" class="col-span-full text-center text-outline py-12 font-body-md">还没有图片，拖拽或点击上传</div>
+</div>/div>
 </section>
 </main>
-<div id="toast" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#2f6a3f;color:#fff;padding:12px 24px;border-radius:12px;font-family:Be Vietnam Pro,sans-serif;font-size:14px;z-index:999;opacity:0;transition:opacity 0.3s ease;border:2px solid #b2f2bb;box-shadow:0 4px 0 0 #145129;pointer-events:none;"></div>
 <!-- BottomNavBar (Visible on Mobile as per standard app behavior, hiding on md) -->
 <nav class="fixed bottom-0 left-0 w-full z-50 flex justify-around items-center h-20 px-2 pb-safe bg-surface-container border-t-2 border-primary-container rounded-t-xl shadow-[0_-4px_0_0_#fed33a] md:hidden">
 <!-- 首页 Inactive -->
@@ -151,48 +211,40 @@ GALLERY_HTML = """
 <span class="font-label-md text-label-md text-[10px]">我的</span>
 </a>
 </nav>
+<input type="file" id="file-input" accept="image/*" multiple style="display:none">
+<div id="toast" style="position:fixed;bottom:80px;left:50%;transform:translateX(-50%);background:#2f6a3f;color:#fff;padding:12px 24px;border-radius:12px;font-family:Be Vietnam Pro,sans-serif;font-size:14px;z-index:999;opacity:0;transition:opacity 0.3s ease;border:2px solid #b2f2bb;box-shadow:0 4px 0 0 #145129;pointer-events:none;"></div>
 
-<style>
-  #upload-zone.drag-over { background: #e8f5e9 !important; border-color: #2f6a3f !important; }
-  .thumb-card { position:relative; transition: transform 0.2s ease; }
-  .thumb-card:hover { transform: translateY(-2px); }
-  .card-del { position:absolute; top:6px; right:6px; width:24px; height:24px;
-    background:#fff; border:2px solid #2f6a3f; border-radius:6px; cursor:pointer;
-    font-size:14px; line-height:20px; text-align:center; color:#2f6a3f; display:none; box-shadow:0 2px 0 #145129; z-index:10; }
-  .thumb-card:hover .card-del { display:block; }
-  .card-del:hover { background:#fdf7ff; }
-</style>
 <script>
 var _tt;
-function toast(m){var t=document.getElementById('toast');t.textContent=m;t.style.opacity='1';clearTimeout(_tt);_tt=setTimeout(function(){t.style.opacity='0'},2000);}
+function toast(m){var t=document.getElementById('toast');if(!t)return;t.textContent=m;t.style.opacity='1';clearTimeout(_tt);_tt=setTimeout(function(){t.style.opacity='0'},2000);}
 function fmtName(n){try{return decodeURIComponent(n).replace(/\.\w+$/,'').slice(0,18)}catch(e){return n.slice(0,18)}}
 function fmtSize(s){if(s<1024)return s+' B';if(s<1024*1024)return (s/1024).toFixed(1)+' KB';return (s/1024/1024).toFixed(1)+' MB'}
 
 async function loadGallery(){
-  var g=document.getElementById('gallery');
+  var g=document.getElementById('gallery');if(!g)return;
   var e=document.getElementById('gallery-empty');
   try{
-    var r=await fetch('/api/list');
-    var d=await r.json();
-    var imgs=d.images||[];
-    if(imgs.length===0){if(e)e.style.display='block';g.querySelectorAll('.thumb-card').forEach(function(c){c.remove()});return}
-    if(e)e.style.display='none';
-    var h='';
+    var r=await fetch('/api/list');var d=await r.json();var imgs=d.images||[];
+    g.querySelectorAll('.thumb-card').forEach(function(c){c.remove()});
+    if(imgs.length===0){if(e)e.style.display='block';return}
+    if(e)e.remove();
     for(var i=0;i<imgs.length;i++){
       var img=imgs[i];
       var dn=fmtName(img.original_name||img.name);
-      h+='<div class="thumb-card bg-surface-container-lowest border-2 border-\[\#ffdeeb\] shadow-\[0_4px_0_0_\#ffdeeb\] rounded-xl overflow-hidden flex flex-col">'+
-        '<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-\[\#ffdeeb\] flex items-center justify-center overflow-hidden">'+
-        '<img src="/images/'+img.name+'" alt="'+dn+'" loading="lazy" style="width:100%;height:100%;object-fit:cover;" onerror="this.style.display=`none`">'+
+      var div=document.createElement('div');
+      div.className='bg-surface-container-lowest border-2 border-[#ffdeeb] shadow-[0_4px_0_0_#ffdeeb] rounded-xl overflow-hidden flex flex-col';
+      div.innerHTML='<div class="h-32 bg-surface-container-high w-full relative border-b-2 border-[#ffdeeb] flex items-center justify-center overflow-hidden">'+
+        '<img src="/images/'+img.name+'" alt="'+dn+'" loading="lazy" style="width:100%;height:100%;object-fit:cover" onerror="this.remove()">'+
         '</div>'+
         '<div class="p-4 flex flex-col gap-1 relative">'+
         '<span class="font-label-md text-label-md text-on-surface truncate">'+dn+'</span>'+
         '<span class="font-body-md text-body-md text-outline text-sm">'+fmtSize(img.size)+'</span>'+
-        '<button class="card-del" data-name="'+img.name+'" onclick="deleteImg(this)">&times;</button>'+
-        '</div></div>';
+        '<button class="card-del" style="position:absolute;top:6px;right:6px;width:24px;height:24px;background:#fff;border:2px solid #2f6a3f;border-radius:6px;cursor:pointer;font-size:14px;line-height:20px;text-align:center;color:#2f6a3f;display:none;box-shadow:0 2px 0 #145129;z-index:10" onclick="deleteImg(this.dataset.name)" data-name="'+img.name+'">&times;</button>'+
+        '</div>';
+      div.onmouseenter=function(){this.querySelector('.card-del').style.display='block'};
+      div.onmouseleave=function(){this.querySelector('.card-del').remove()};
+      g.appendChild(div);
     }
-    g.querySelectorAll('.thumb-card').forEach(function(c){c.remove()});
-    g.insertAdjacentHTML('afterbegin',h);
   }catch(e){if(e)e.textContent='加载失败';if(e)e.style.display='block'}
 }
 
@@ -202,19 +254,17 @@ async function uploadFiles(files){
     var f=files[i];if(!f.type.match(/image\//))continue;
     var fd=new FormData();fd.append('file',f,f.name);
     try{
-      var r=await fetch('/upload',{method:'POST',body:fd});
-      var j=await r.json();
+      var r=await fetch('/upload',{method:'POST',body:fd});var j=await r.json();
       if(j.ok){toast('已上传: '+f.name)}else{toast('上传失败')}
     }catch(e){toast('上传出错')}
   }
   loadGallery();
 }
 
-async function deleteImg(name,btn){
+async function deleteImg(name){
   if(!confirm('确认删除？'))return;
   try{
-    var r=await fetch('/images/'+name,{method:'DELETE'});
-    var j=await r.json();
+    var r=await fetch('/images/'+name,{method:'DELETE'});var j=await r.json();
     if(j.ok){toast('已删除');loadGallery()}else{toast('删除失败')}
   }catch(e){toast('删除出错')}
 }
@@ -222,14 +272,14 @@ async function deleteImg(name,btn){
 document.addEventListener('DOMContentLoaded',function(){
   var uz=document.getElementById('upload-zone');
   var fi=document.getElementById('file-input');
-  if(uz)uz.onclick=function(){if(fi)fi.click();};
-  if(fi)fi.onchange=function(){uploadFiles(this.files);this.value='';};
+  if(uz)uz.onclick=function(){if(fi)fi.click()};
+  if(fi)fi.onchange=function(){uploadFiles(this.files);this.value=''};
   if(uz){
-    uz.ondragover=function(e){e.preventDefault();uz.classList.add('drag-over');};
-    uz.ondragleave=function(){uz.classList.remove('drag-over');};
-    uz.ondrop=function(e){e.preventDefault();uz.classList.remove('drag-over');uploadFiles(e.dataTransfer.files);};
+    uz.ondragover=function(e){e.preventDefault();uz.classList.add('drag-over')};
+    uz.ondragleave=function(){uz.classList.remove('drag-over')};
+    uz.ondrop=function(e){e.preventDefault();uz.classList.remove('drag-over');uploadFiles(e.dataTransfer.files)};
   }
-  document.onpaste=function(e){if(e.clipboardData&&e.clipboardData.files.length)uploadFiles(e.clipboardData.files);};
+  document.onpaste=function(e){if(e.clipboardData&&e.clipboardData.files.length)uploadFiles(e.clipboardData.files)};
   loadGallery();
 });
 </script>
