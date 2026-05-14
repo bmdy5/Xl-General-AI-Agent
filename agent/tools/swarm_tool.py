@@ -115,7 +115,14 @@ class SwarmTool(BaseTool):
                 parts.append(f"\n[Worker-{idx+1} 超时]")
             return (idx + 1, "".join(parts).strip())
 
-        results = await asyncio.gather(*[run_worker(i, s) for i, s in enumerate(subtasks)])
+        # 并发执行，每完成一个汇报进度
+        tasks = [run_worker(i, s) for i, s in enumerate(subtasks)]
+        results = []
+        for coro in asyncio.as_completed(tasks):
+            idx, text = await coro
+            results.append((idx, text))
+            yield ToolResult(type="progress", data=f"🐝 Worker-{idx} 完成 ({len(results)}/{worker_count})")
+        results.sort()
 
         # 聚合
         output_parts = []
