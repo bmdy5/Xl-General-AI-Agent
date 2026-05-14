@@ -96,7 +96,7 @@ class SwarmTool(BaseTool):
                     subtasks[i] = role + "\n\n任务: " + task
 
         # 并发执行
-        async def run_worker(idx: int, subtask: str):
+        async def run_worker(idx: int, subtask: str, attempt: int = 0):
             sub = Agent(
                 llm=main.llm,
                 registry=main.registry,
@@ -113,6 +113,8 @@ class SwarmTool(BaseTool):
                     if isinstance(ev, str):
                         parts.append(ev)
             except asyncio.TimeoutError:
+                if attempt < 1:
+                    return await run_worker(idx, subtask, attempt=1)  # 重试一次
                 parts.append(f"\n[Worker-{idx+1} 超时]")
             return (idx + 1, "".join(parts).strip())
 
