@@ -38,6 +38,7 @@ from agent.tools.manage_tool_tool import ManageToolTool
 from agent.tools.image2_tool import Image2GenerateTool
 from agent.tools.memory_tool import MemoryTool
 from agent.tools.read_image_tool import ReadImageTool
+from agent.tools.mcp_client_tool import MCPClientTool
 from agent.tools.registry import registry
 from agent.tools.spawn_agent_tool import SpawnAgentTool
 from agent.tools.stitch_tool import StitchTool
@@ -108,6 +109,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(Image2GenerateTool())
         registry.register(SpawnAgentTool())
         registry.register(StitchTool())
+        registry.register(MCPClientTool())
         registry.register(MemoryTool())
 
     memory = MemoryManager()
