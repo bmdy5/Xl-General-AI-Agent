@@ -257,168 +257,22 @@ async def run_interactive():
         if not history_loaded and load_task.done():
             history_loaded = True
         print()
-        _req_start = asyncio.get_event_loop().time()
-        _spinning = False
-        _spin_task = None
-        _tool_spinning = False
-        _tool_spin_task = None
-
         # SIGINT → abort agent (not exit)
         loop = asyncio.get_running_loop()
         try:
             loop.add_signal_handler(signal.SIGINT, lambda: agent.abort())
         except (NotImplementedError, RuntimeError):
-            pass  # Windows 不支持
+            pass
 
-        def _start_spin(label):
-            nonlocal _spinning, _spin_task
-            _spinning = True
-            _spin_start = asyncio.get_event_loop().time()
-            async def spin():
-                frames = "⠋⠙⠙⠘⠜⠴⠦⠧⠇⠏"
-                i = 0
-                while _spinning:
-                    e = asyncio.get_event_loop().time() - _spin_start
-                    print(f"\r\033[K\033[90m{frames[i%len(frames)]} {label} ({e:.1f}s)\033[0m", end="", flush=True)
-                    i += 1; await asyncio.sleep(0.15)
-            _spin_task = asyncio.create_task(spin())
-
-        def _stop_spin():
-            nonlocal _spinning
-            _spinning = False
-            try: _spin_task.cancel()
-            except Exception: pass
-
-        def _start_tool_spin(name):
-            nonlocal _tool_spinning, _tool_spin_task
-            _tool_spinning = True
-            _tool_start = asyncio.get_event_loop().time()
-            async def tool_spin():
-                frames = "⠋⠙⠙⠘⠜⠴⠦⠧⠇⠏"
-                i = 0
-                while _tool_spinning:
-                    e = asyncio.get_event_loop().time() - _tool_start
-                    print(f"\r\033[K\033[90m{frames[i%len(frames)]} {name} ({e:.1f}s)\033[0m", end="", flush=True)
-                    i += 1; await asyncio.sleep(0.15)
-            _tool_spin_task = asyncio.create_task(tool_spin())
-
-        def _stop_tool_spin():
-            nonlocal _tool_spinning
-            _tool_spinning = False
-            try: _tool_spin_task.cancel()
-            except Exception: pass
-
+        # 使用 TUI 渲染
+        from agent.tui_events import run_with_tui
         try:
-            async for event in agent.run(user_input, stream=True):
-                etype = event["type"]
-
-                if etype == "compacted":
-                    print(f"\n  [上下文已压缩: {event.get('message_count', '?')} 条消息]")
-
-                elif etype == "exploring_start":
-                    _start_spin("思考中")
-
-                elif etype == "exploring_done":
-                    _stop_spin()
-                    print(f"\r\033[K\n", end="")
-
-                elif etype == "completed":
-                    _stop_spin()
-                    _stop_tool_spin()
-                    _elapsed = asyncio.get_event_loop().time() - _req_start
-                    _tokens = sum(len(str(m.get("content","")))//4 for m in agent.messages[-10:])
-                    _ctx_pct = agent.compressor.estimate_tokens(agent.messages) * 100 // 1_000_000
-                    print(f"\033[90m({_elapsed:.1f}s · ~{_tokens}t · {_ctx_pct}% ctx)\033[0m")
-                    _req_start = asyncio.get_event_loop().time()
-
-                elif etype == "reasoning":
-                    print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
-
-                elif etype == "text_delta":
-                    _print_highlighted(event["content"])
-
-                elif etype in ("tool_call", "tool_exec"):
-                    name = event.get("name") or event.get("data", {}).get("function", {}).get("name", "?")
-                    _stop_spin()
-                    _start_tool_spin(name)
-
-                elif etype == "tool_result":
-                    _stop_tool_spin()
-                    short = str(event.get("result", ""))[:200].replace("\n", " ")
-                    icon = "\033[32m✓\033[0m" if "error" not in str(event.get("result", "")).lower()[:50] else "\033[31m✗\033[0m"
-                    print(f"\r\033[K  {icon} {short}")
-
-                elif etype == "permission_request":
-                    _stop_spin()
-                    _stop_tool_spin()
-                    cat = event.get("category", "?")
-                    name = event.get("tool_name", "?")
-                    msg = event.get("message", "")
-                    if cat == "dangerous":
-                        args_str = json.dumps(event.get("tool_args", {}), ensure_ascii=False)[:200]
-                        print(f"\r\033[K\033[1;31m⚠ DANGEROUS: {name}\033[0m")
-                        print(f"  {args_str}")
-                        print(f"\033[1;31m  Execute? [y/N]\033[0m ", end="", flush=True)
-                    else:
-                        print(f"\r\033[K\033[1;33m✎ WRITE: {name}\033[0m")
-                        print(f"  {msg}")
-                        print(f"\033[1;33m  Allow write for this task? [Y/n]\033[0m ", end="", flush=True)
-                    try:
-                        ans = await asyncio.get_event_loop().run_in_executor(None, input)
-                    except (EOFError, KeyboardInterrupt):
-                        ans = "n"
-                    if cat == "dangerous":
-                        if ans.strip().lower() in ("y", "yes"):
-                            agent.approve_permission()
-                            print("  → Approved")
-                        else:
-                            agent.deny_permission()
-                            print("  → Denied")
-                    else:
-                        if ans.strip().lower() in ("", "y", "yes"):
-                            agent.approve_permission()
-                            print("  → Approved for this task")
-                        else:
-                            agent.deny_permission()
-                            print("  → Denied. Task aborted.")
-                    _req_start = asyncio.get_event_loop().time()
-
-                elif etype == "timeout":
-                    _stop_spin()
-                    _stop_tool_spin()
-                    mode = event.get("mode", "?")
-                    limit = event.get("limit", 0)
-                    ls = f"{limit}s" if limit < 120 else f"{limit // 60}min"
-                    print(f"\n  \033[33m⏱ Timeout: {mode} mode limit ({ls}) reached.\033[0m")
-
-                elif etype == "ctx_warning":
-                    print(f"\n  ⚠️ 上下文已用 {event.get('pct',90)}%，建议 /clear 或等压缩")
-
-                elif etype == "nudge":
-                    print(f"\n  [💡 Periodic Nudge: 检查是否有值得保存的记忆]")
-
-                elif etype == "max_turns":
-                    print("\n  [max turns reached]")
-
-                elif etype == "error":
-                    _stop_spin()
-                    _stop_tool_spin()
-                    print(f"\n  \033[31m[ERROR]\033[0m {event['content']}")
-
-                elif etype == "aborted":
-                    _stop_spin()
-                    _stop_tool_spin()
-                    print("\n  [aborted]")
-
+            await run_with_tui(agent, user_input)
         except (asyncio.CancelledError, KeyboardInterrupt):
             agent.abort()
-            _stop_spin()
-            _stop_tool_spin()
             print("\n  [interrupted]")
         except Exception as e:
-            _stop_spin()
-            _stop_tool_spin()
-            print(f"\n  \033[31m[ERROR]\033[0m {e}")
+            print(f"\n  [ERROR] {e}")
 
         print()
 
@@ -427,25 +281,11 @@ async def run_single(query: str):
     """单次模式：执行一次查询后退出."""
     agent = build_agent()
 
-    async for event in agent.run(query):
-        etype = event["type"]
-        if etype == "compacted":
-            print(f"\n[上下文压缩: {event.get('message_count', '?')} 条消息]")
-        elif etype == "reasoning":
-            print(f"\033[90m{event['content']}\033[0m", end="", flush=True)
-        elif etype == "text_delta":
-            print(event["content"], end="", flush=True)
-        elif etype == "tool_call":
-            print(f"\n[TOOL] {event.get('name', '?')}")
-        elif etype == "tool_result":
-            short = event["result"][:300].replace("\n", " ")
-            print(f"  → {short}")
-        elif etype == "permission_request":
-            print(f"\n[PERM] {event.get('tool_name', '?')} — 自动批准")
-            agent.approve_permission()
-        elif etype == "error":
-            print(f"\n[ERROR] {event['content']}")
-
+    from agent.tui_events import run_with_tui
+    try:
+        await run_with_tui(agent, query)
+    except Exception as e:
+        print(f"\n[ERROR] {e}")
     print()
 
 
