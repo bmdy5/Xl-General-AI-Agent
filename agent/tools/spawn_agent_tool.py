@@ -183,13 +183,17 @@ class SpawnAgentTool(BaseTool):
             result_text = "".join(output_parts).strip() or "(no output)"
             summary = f" (用了 {len(tool_calls_made)} 次工具)" if tool_calls_made else ""
 
+            # 格式化输出：结构化标记
+            formatted = (
+                f"子代理 [{role}] 完成\n"
+                f"  **结论**: {(result_text[:300] + '...') if len(result_text) > 300 else result_text}\n"
+                f"  工具调用: {len(tool_calls_made)} 次\n"
+                f"  输出长度: {len(result_text)} 字符"
+            )
             yield ToolResult(
                 type="result",
                 data=f"[{role}] {result_text[:2000]}{summary}",
-                result_for_assistant=(
-                    f"子代理 [{role}] 完成:\n{result_text[:4000]}\n"
-                    f"工具调用: {len(tool_calls_made)} 次"
-                ),
+                result_for_assistant=formatted,
             )
 
         except Exception as e:
