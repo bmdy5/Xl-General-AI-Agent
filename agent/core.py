@@ -359,9 +359,11 @@ class Agent:
 
                 asyncio.create_task(audit_tool_call(self, tool_name, tool_args, result_str))
 
+                # v2: 工具结果截断，防止撑爆上下文（最长 5000 字符）
+                truncated = result_str[:5000] if len(result_str) > 5000 else result_str
                 self.messages.append({
                     "role": "tool", "tool_call_id": tc["id"],
-                    "name": tool_name, "content": result_str,
+                    "name": tool_name, "content": truncated,
                 })
                 if self.session:
                     await self.session.append_message(self.messages[-1])
