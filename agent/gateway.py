@@ -152,6 +152,10 @@ class QQGateway:
                             async for evt in agent.run(action, stream=True):
                                 if evt["type"] == "text_delta":
                                     buf += evt["content"]
+                                elif evt["type"] == "tool_call" and evt.get("name"):
+                                    # 广播后台工具调用状态给亮哥，让后台执行透明化
+                                    await self._send("private", admin_id, "", 
+                                        f"⚙️ [后台巡检中] 正在{_tool_label(evt['name'])}...")
                                 elif evt["type"] == "permission_request":
                                     # 因为后台任务已经在 QQ 外层总揽确认过了，内层具体子权限自动放行
                                     agent.approve_permission()
@@ -163,10 +167,12 @@ class QQGateway:
                         # 4. 标记任务状态 (定时任务会更新 last_run 戳，普通任务标记 done)
                         q.mark_done(task_id)
 
-                        # 5. 反馈结果
-                        result_msg = f"✅ [执行完成]\n任务：{desc}\n\n执行结果反馈：\n{buf.strip()[:1500]}"
-                        await self._send("private", admin_id, "", result_msg)
+                        # 5. 反馈结果：通过 _send_chunk 动态分包发送，杜绝物理字数截断
+                        result_msg = f"✅ [执行完成]\n任务：{desc}\n\n执行结果反馈：\n{buf.strip()}"
+                        await self._send_chunk("private", admin_id, "", result_msg)
                     else:
+                        # 核心修复：即使跳过了任务，也必须标记或更新它的时间戳，否则下个循环（5分钟后）它又会被判定为到期，造成无限循环轰炸！
+                        q.mark_done(task_id)
                         await self._send("private", admin_id, "", f"⏸️ 已跳过任务：{desc}")
 
             except Exception as e:
@@ -230,6 +236,9 @@ class QQGateway:
         if agent is None:
             agent = self._factory()
             self._agents[session_key] = agent
+
+        # 发送首响，即时向亮哥确认指令已送达并开始处理
+        await self._send(msg_type, user_id, group_id, "好的亮哥我收到了，下面开始进行")
 
         # 流式调用 — plan mode 默认开启，工具执行前弹 macOS 对话框
         buf = ""
