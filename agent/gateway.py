@@ -269,7 +269,7 @@ class QQGateway:
                 # 记录被取消的指令，用于注入记忆插梢
                 old_raw = getattr(active_task, "raw_prompt", "之前的开发任务")
                 interruption_note = (
-                    f"[系统提示：你是小肖。亮哥在刚才的开发任务 \"{old_raw}\" 运行中途，发送了这条新命令。"
+                    f"[系统提示：亮哥在刚才的开发任务 \"{old_raw}\" 运行中途，发送了这条新命令。"
                     f"请你根据你最新的人格手册，首先简短、自然地确认你已经停下了上一个任务，然后立刻切入分析亮哥的新指令：\"{raw}\"]"
                 )
                 raw = interruption_note
@@ -285,7 +285,7 @@ class QQGateway:
                 async def async_fast_reply():
                     try:
                          prompt_msg = [
-                             {"role": "system", "content": "你是亮哥的专属女性极客开发伙伴小肖。请读取亮哥对你的性格要求和纠正记忆，用极具个性、俏皮、懂事的女性程序员语气，写一句极短（15字内）的话，告诉亮哥你收到新任务并排在待办清单里了，等手头忙完马上自动跑。直接输出答复内容，绝对不要带任何多余字眼！"},
+                             {"role": "system", "content": "请读取亮哥对你的性格要求和纠正记忆，用极具个性、俏皮、懂事的女性程序员语气，写一句极短（15字内）的话，告诉亮哥你收到新任务并排在待办清单里了，等手头忙完马上自动跑。直接输出答复内容，绝对不要带任何多余字眼！"},
                              {"role": "user", "content": f"亮哥追加发送的新任务是：{raw}"}
                          ]
                          res = await agent.llm.chat(prompt_msg)
@@ -294,7 +294,7 @@ class QQGateway:
                              await self._send(msg_type, user_id, group_id, reply)
                     except Exception as err:
                          logger.error(f"Fast reply failed: {err}")
-                         await self._send(msg_type, user_id, group_id, "亮哥，新任务小肖记下了，手头这步忙完马上自动跑哈！")
+                         await self._send(msg_type, user_id, group_id, "亮哥，新任务记下了，手头这步忙完马上自动跑哈！")
                 
                 asyncio.create_task(async_fast_reply())
                 return
@@ -314,29 +314,7 @@ class QQGateway:
             agent = self._factory()
             self._agents[session_key] = agent
 
-        # 从人格画像读取当前名字，避免硬编码
-        import json
-        _persona_name = "小萤"
-        try:
-            _pf = agent.memory.base_dir / "persona_profile.json"
-            if _pf.exists():
-                _persona_name = json.loads(_pf.read_text(encoding="utf-8")).get("name", "小萤")
-        except Exception:
-            pass
-        await self._send(msg_type, user_id, group_id, f"⏳ ({_persona_name}正在飞速翻阅脑海中的记忆手册...)")
-
-        sent_ack = True  # 上面的状态气泡就是首响，标记已发
         buf = ""
-
-        # 哨兵定时器：1.5 秒无实际输出则安抚
-        async def auto_ack_timer():
-            await asyncio.sleep(1.5)
-            nonlocal sent_ack
-            if not sent_ack:
-                sent_ack = True
-                await self._send(msg_type, user_id, group_id, f"({_persona_name}正在思考中，稍等片刻...)")
-
-        ack_timer_task = asyncio.create_task(auto_ack_timer())
 
         # 流式段落/句子分发清洗逻辑，消除憋字挂起感
         try:
@@ -428,7 +406,6 @@ class QQGateway:
             buf += f"[异常: {e}]"
             self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
-            ack_timer_task.cancel()
             if buf.strip():
                 self._log_activity("AI 计划/答复", buf.strip())
                 await self._send_chunk(msg_type, user_id, group_id, buf.strip())
