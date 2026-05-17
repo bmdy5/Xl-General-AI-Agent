@@ -6,6 +6,7 @@
 
 import asyncio
 import logging
+import os
 from typing import AsyncGenerator, Optional
 
 import litellm
@@ -36,6 +37,7 @@ class LLMClient:
         self.temperature = temperature
         self.model_vision = model_vision  # 视觉模型（Mimo）
         self.model_pro = model_pro        # 深度推理模型（DeepSeek Pro）
+        self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY") or ""
 
     async def chat(
         self,
@@ -59,7 +61,10 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if not model_name.startswith("deepseek/"):
+        if model_name.startswith("deepseek/"):
+            if self.deepseek_api_key:
+                kwargs["api_key"] = self.deepseek_api_key
+        else:
             if self.api_key:
                 kwargs["api_key"] = self.api_key
             if self.api_base:
@@ -128,7 +133,10 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if not model_name.startswith("deepseek/"):
+        if model_name.startswith("deepseek/"):
+            if self.deepseek_api_key:
+                kwargs["api_key"] = self.deepseek_api_key
+        else:
             if self.api_key:
                 kwargs["api_key"] = self.api_key
             if self.api_base:
