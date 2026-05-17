@@ -404,8 +404,12 @@ class QQGateway:
                 self._log_activity("AI 计划/答复", buf.strip())
                 await self._send_chunk(msg_type, user_id, group_id, buf.strip())
             
-            # 后台异步触发小肖自检人格自画像整理 (Consolidation)
+            # 后台异步触发人格自画像整理 (Consolidation)，每 5 轮一次省 token
+            _consolidate_count = getattr(self, "_consolidate_count", 0) + 1
+            self._consolidate_count = _consolidate_count
             async def async_consolidate_persona():
+                if _consolidate_count % 5 != 0:
+                    return
                 profile_file = agent.memory.base_dir / "persona_profile.json"
                 if profile_file.exists():
                     try:

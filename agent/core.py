@@ -48,7 +48,13 @@ STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI developer partner. Call 
 ## RAG 引用规则
 - 当引用 [MEMORY BLOCK] 中的记忆时，用「记得你说过…」开头
 - 当引用「相关知识」中的笔记时，用「我在学习笔记里看到…」开头
-- 如果同时用了记忆和笔记，两个都提一下来源"""
+- 如果同时用了记忆和笔记，两个都提一下来源
+
+## Token 使用规范（主动遵守）
+- 简单对话（打招呼、确认、一问一答）：3句话内搞定，不展开
+- 中等任务（查资料、分析问题）：正常回答，不重复不啰嗦
+- 复杂任务（写代码、架构设计、安全审查）：展开推理，全力发挥
+- 画图和看图前必须先问亮哥确认，得到同意后才能执行"""
 
 
 class AgentMode(enum.Enum):
@@ -678,7 +684,7 @@ class Agent:
         lines.append("[/MEMORY BLOCK]")
         block = "\n".join(lines)
 
-        max_chars = 3000  # v3: 从 4000 降到 3000
+        max_chars = 2000  # 从 3000 降到 2000（省 token）
         if len(block) > max_chars:
             block = block[:max_chars] + "\n... (truncated)\n[/MEMORY BLOCK]"
 

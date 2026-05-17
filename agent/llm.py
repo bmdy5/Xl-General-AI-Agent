@@ -26,12 +26,16 @@ class LLMClient:
         api_base: Optional[str] = None,
         max_tokens: int = 16384,
         temperature: float = 1.0,
+        model_vision: Optional[str] = None,
+        model_pro: Optional[str] = None,
     ):
-        self.model = model
-        self.api_key = api_key
+        self.model = model               # 默认模型（DeepSeek Flash）
+        self.api_key = api_key           # Mimo API key
         self.api_base = api_base
         self.max_tokens = max_tokens
         self.temperature = temperature
+        self.model_vision = model_vision  # 视觉模型（Mimo）
+        self.model_pro = model_pro        # 深度推理模型（DeepSeek Pro）
 
     async def chat(
         self,
@@ -102,13 +106,15 @@ class LLMClient:
         messages: list[dict],
         tools: Optional[list[dict]] = None,
         abort_event: Optional[asyncio.Event] = None,
+        model_override: str = "",
     ) -> AsyncGenerator[dict, None]:
         """流式调用 LLM，逐个 yield {"type": "text_delta"|"tool_call", ...}.
 
         前端可以用这个做打字机效果。
+        model_override: 可指定不同模型。
         """
         kwargs = {
-            "model": self.model,
+            "model": model_override or self.model,
             "messages": messages,
             "temperature": self.temperature,
             "max_tokens": self.max_tokens,

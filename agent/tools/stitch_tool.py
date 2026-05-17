@@ -142,17 +142,17 @@ class StitchTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Generate HTML/CSS UI components using Google Stitch AI. Styles: pixel-art, modern, glass, brutalist, cyberpunk, minimal.",
+                "description": "使用 Google Stitch AI 生成 HTML/CSS 前端 UI 组件。风格自由定义，支持任意视觉风格。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "Natural language description of the UI you want. Be specific about colors, layout, and elements.",
+                            "description": "用中文描述你想要的 UI，尽量具体说明颜色、布局、元素和交互效果。",
                         },
                         "style": {
                             "type": "string",
-                            "description": "Visual style: 'pixel-art', 'modern', 'glass', 'brutalist', 'cyberpunk', 'minimal'",
+                            "description": "自定义视觉风格，自由描述。例如：'赛博朋克霓虹风'、'苹果极简风'、'像素复古游戏风'、'玻璃拟态风'、'暗黑科技风'、'清新自然风'、'中式国潮风'等，不限于此。",
                         },
                     },
                     "required": ["prompt"],
@@ -169,10 +169,14 @@ class StitchTool(BaseTool):
         self, input_args: dict, context: Any = None
     ) -> AsyncGenerator[ToolResult, None]:
         prompt = input_args["prompt"]
-        style = input_args.get("style", "modern")
+        style = input_args.get("style", "")
+
+        # 如果用户指定了风格，把风格描述拼入 prompt
+        full_prompt = f"{style}风格。{prompt}" if style else prompt
 
         try:
-            yield ToolResult(type="progress", data=f"Stitch: 生成 {style} 风格 UI...")
+            风格提示 = f"{style}风格" if style else "默认风格"
+            yield ToolResult(type="progress", data=f"Stitch: 正在生成 {风格提示} 的UI...")
 
             # 如果安装了 stitch MCP，走 MCP 协议；否则 fallback 到直接生成
             # 按优先级尝试：MCP → Fallback
