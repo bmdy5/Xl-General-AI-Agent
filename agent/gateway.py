@@ -104,7 +104,7 @@ class QQGateway:
                     if resp.status == 200:
                         res_data = await resp.json()
                         if res_data.get("status") == "ok":
-                            is_online = res_data.get("data", {}).get("online", False)
+                            is_online = resp.status == 200 and res_data.get("retcode") == 0
                     
                     if not is_online:
                         current_time = time.time()
