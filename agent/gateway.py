@@ -314,15 +314,70 @@ class QQGateway:
             agent = self._factory()
             self._agents[session_key] = agent
 
+        # 从人格画像读取当前名字，避免硬编码
+        import json
+        _persona_name = "小萤"
+        try:
+            _pf = agent.memory.base_dir / "persona_profile.json"
+            if _pf.exists():
+                _persona_name = json.loads(_pf.read_text(encoding="utf-8")).get("name", "小萤")
+        except Exception:
+            pass
+        await self._send(msg_type, user_id, group_id, f"⏳ ({_persona_name}正在飞速翻阅脑海中的记忆手册...)")
+
+        sent_ack = True  # 上面的状态气泡就是首响，标记已发
         buf = ""
+
+        # 哨兵定时器：1.5 秒无实际输出则安抚
+        async def auto_ack_timer():
+            await asyncio.sleep(1.5)
+            nonlocal sent_ack
+            if not sent_ack:
+                sent_ack = True
+                await self._send(msg_type, user_id, group_id, f"({_persona_name}正在思考中，稍等片刻...)")
+
+        ack_timer_task = asyncio.create_task(auto_ack_timer())
+
+        # 流式段落/句子分发清洗逻辑，消除憋字挂起感
         try:
             async for evt in agent.run(raw, stream=True):
                 if evt["type"] == "text_delta":
                     buf += evt["content"]
+
+                    if "[SPLIT]" in buf:
+                        parts = buf.split("[SPLIT]")
+                        for part in parts[:-1]:
+                            if part.strip():
+                                self._log_activity("AI 计划/答复", part.strip())
+                                await self._send_chunk(msg_type, user_id, group_id, part.strip())
+                        buf = parts[-1]
+                    elif "\n\n" in buf and len(buf) > 40:
+                        idx = buf.rfind("\n\n")
+                        to_send = buf[:idx]
+                        if to_send.strip():
+                            self._log_activity("AI 计划/答复", to_send.strip())
+                            await self._send_chunk(msg_type, user_id, group_id, to_send.strip())
+                        buf = buf[idx+2:]
+                    elif len(buf) > 100 and any(p in buf for p in ("。", "！", "？")):
+                        idx = -1
+                        for p in ("。", "！", "？"):
+                            p_idx = buf.rfind(p)
+                            if p_idx > idx:
+                                idx = p_idx
+                        if idx != -1:
+                            to_send = buf[:idx+1]
+                            if to_send.strip():
+                                self._log_activity("AI 计划/答复", to_send.strip())
+                                await self._send_chunk(msg_type, user_id, group_id, to_send.strip())
+                            buf = buf[idx+1:]
+
                 elif evt["type"] == "tool_call" and evt.get("name"):
                     t_name = evt["name"]
                     t_args = evt.get("args", {})
                     detail = self._tool_detail(t_name, t_args)
+                    
+                    if not sent_ack:
+                        sent_ack = True
                     
                     if buf.strip():
                         self._log_activity("AI 计划/答复", buf.strip())
@@ -373,6 +428,7 @@ class QQGateway:
             buf += f"[异常: {e}]"
             self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
+            ack_timer_task.cancel()
             if buf.strip():
                 self._log_activity("AI 计划/答复", buf.strip())
                 await self._send_chunk(msg_type, user_id, group_id, buf.strip())
