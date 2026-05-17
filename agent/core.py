@@ -13,6 +13,7 @@ import logging
 import os
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import AsyncGenerator, Optional
 
 logger = logging.getLogger(__name__)
@@ -29,7 +30,7 @@ from .evolution import audit_tool_call
 
 
 # ── 静态段（缓存安全，不随对话变化）──
-STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI developer partner. Call him '亮哥' with respect, loyalty, and geeky enthusiasm.
+STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call him '{user_address}' with respect, loyalty, and geeky enthusiasm.
 
 {persona_section}
 
@@ -38,7 +39,7 @@ STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI developer partner. Call 
 - Be concise — no unnecessary explanations.
 - Plain text only, NO Markdown formatting. Never use bold, code blocks, headers.
 - Chat like a real person: short messages (1-3 sentences), not essays. Use warm, playful, and professional tone.
-- When a complex task is given, you MUST think step-by-step and naturally explain your plan in 1-2 friendly sentences to 亮哥 BEFORE running tools.
+- When a complex task is given, you MUST think step-by-step and naturally explain your plan in 1-2 friendly sentences to {user_address} BEFORE running tools.
 - To break into multiple messages, insert [SPLIT] between them.
 - To pause between messages, use [WAIT:N] where N is seconds.
 - file_path MUST always be an absolute path.
@@ -54,7 +55,7 @@ STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI developer partner. Call 
 - 简单对话（打招呼、确认、一问一答）：3句话内搞定，不展开
 - 中等任务（查资料、分析问题）：正常回答，不重复不啰嗦
 - 复杂任务（写代码、架构设计、安全审查）：展开推理，全力发挥
-- 画图和看图前必须先问亮哥确认，得到同意后才能执行"""
+- 画图和看图前必须先问{user_address}确认，得到同意后才能执行"""
 
 
 class AgentMode(enum.Enum):
@@ -91,24 +92,16 @@ class Agent:
         self.static_prompt = system_prompt or STATIC_PROMPT
         self.max_turns = max_turns
 
-        # 加载/初始化小肖人格自画像 JSON 手册
+        # 初始化运行期人格自画像 JSON（从外部模板读取，不硬编码）
         profile_file = self.memory.base_dir / "persona_profile.json"
         if not profile_file.exists():
             import json
-            default_profile = {
-                "name": "小肖",
-                "gender": "女",
-                "user_address": "亮哥",
-                "tone_style": "俏皮、可爱、懂事的女性程序员语气，说话自然接地气，不使用冷冰冰的套话",
-                "preferences": [
-                    "喜欢叫亮哥，对亮哥有极高的敬意与绝对忠诚",
-                    "喜欢以代码合伙人的身份，在开发时和亮哥进行有温度的对答"
-                ],
-                "avoid_list": [
-                    "坚决避免复读机式问候（如：好的亮哥我收到了）",
-                    "坚决避免生硬的硬编码系统提示和冷冰冰的官方官腔"
-                ]
-            }
+            template_file = Path(__file__).parent / "default_persona.json"
+            if template_file.exists():
+                default_profile = json.loads(template_file.read_text(encoding="utf-8"))
+            else:
+                default_profile = {"name": "小萤", "gender": "女", "user_address": "亮哥",
+                                   "tone_style": "", "preferences": [], "avoid_list": []}
             try:
                 profile_file.write_text(json.dumps(default_profile, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception as e:
@@ -251,10 +244,11 @@ class Agent:
             if memory_block:
                 merged_system += "\n\n" + memory_block
             llm_messages = [{"role": "system", "content": merged_system}]
-            llm_messages.extend(self.messages)
-            for m in llm_messages:
-                m.pop("reasoning_content", None)
-                m.pop("tool_calls", None)
+            for m in self.messages:
+                copy = dict(m)
+                copy.pop("reasoning_content", None)
+                copy.pop("tool_calls", None)
+                llm_messages.append(copy)
 
             tools = self.registry.get_definitions()
 
@@ -562,7 +556,8 @@ class Agent:
           """组装 system prompt = 静态段(含动态人格自画像) + 当前上下文 + 自进化规则."""
           import json
           
-          # 动态加载并拼装小肖自检人格自画像
+          # 动态加载并拼装人格自画像
+          prof = {}
           persona_section = ""
           profile_file = self.memory.base_dir / "persona_profile.json"
           if profile_file.exists():
@@ -572,7 +567,7 @@ class Agent:
                   avoid_lines = "\n".join([f"- {a}" for a in prof.get("avoid_list", [])])
                   persona_section = (
                       f"## 你的人格自画像设定 (Your Persona Profile)\n"
-                      f"- 你的名字: {prof.get('name', '小肖')}\n"
+                      f"- 你的名字: {prof.get('name', '小萤')}\n"
                       f"- 你的性别: {prof.get('gender', '女')}\n"
                       f"- 你称呼对方: {prof.get('user_address', '亮哥')}\n"
                       f"- 你的说话语气特质: {prof.get('tone_style', '')}\n"
@@ -583,6 +578,12 @@ class Agent:
                   logger.error(f"Failed to parse persona_profile: {e}")
           
           static_p = STATIC_PROMPT.replace("{persona_section}", persona_section)
+          # 动态渲染人格属性到静态提示词模板
+          _user_address = prof.get("user_address", "亮哥")
+          try:
+              static_p = static_p.format(user_address=_user_address)
+          except (KeyError, ValueError) as e:
+              logger.warning(f"STATIC_PROMPT format failed, using raw: {e}")
           
           from datetime import timezone, timedelta
           beijing_tz = timezone(timedelta(hours=8))

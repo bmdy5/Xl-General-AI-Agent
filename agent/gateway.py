@@ -48,6 +48,19 @@ class QQGateway:
         self._current_tasks: dict[str, asyncio.Task] = {}
         self._message_queues: dict[str, list[tuple[dict, str]]] = {}
 
+    def _load_persona(self) -> tuple:
+        """从运行期画像读取 (name, user_address)，兜底返回默认值。"""
+        import json
+        from pathlib import Path
+        try:
+            pf = Path.home() / ".my-agent" / "memory" / "persona_profile.json"
+            if pf.exists():
+                d = json.loads(pf.read_text(encoding="utf-8"))
+                return d.get("name", "小萤"), d.get("user_address", "亮哥")
+        except Exception:
+            pass
+        return "小萤", "亮哥"
+
     async def run(self):
         """连接 NapCat WebSocket，循环处理消息."""
         async with aiohttp.ClientSession() as http:
@@ -131,9 +144,9 @@ class QQGateway:
                     desc = task["description"]
                     action = task["action"]
 
-                    # 1. 向管理员 QQ 私聊推送确认请求
+                    _pn, _ua = self._load_persona()
                     await self._send("private", admin_id, "", 
-                        f"⏰ [全天候中枢巡检]\n亮哥，检测到后台任务到期：\n【{desc}】\n\n回复「允许」或「y」授权我立即执行，回复其他取消。")
+                        f"⏰ [全天候中枢巡检]\n{_ua}，检测到后台任务到期：\n【{desc}】\n\n回复「允许」或「y」授权我立即执行，回复其他取消。")
 
                     # 2. 注册等待锁，阻止线程并挂起 5 分钟等待用户在 QQ 上的答复
                     evt = _PermEvent()
@@ -235,8 +248,9 @@ class QQGateway:
 
         logger.info(f"QQ [{session_key}]: {raw[:80]}")
 
-        # 写入亮哥指令审计日志
-        self._log_activity("用户输入", f"亮哥 ({session_key}): {raw}")
+        # 写入用户指令审计日志
+        _pn, _ua = self._load_persona()
+        self._log_activity("用户输入", f"{_ua} ({session_key}): {raw}")
 
         agent = self._agents.get(session_key)
         if agent is None:
@@ -250,7 +264,7 @@ class QQGateway:
             is_preempt = False
             try:
                 classify_prompt = [
-                    {"role": "system", "content": "亮哥发送了新消息。当前后台正有一个长任务在运行。请根据中文语义理解判定这是否属于一个紧急的抢占式打断指令（即亮哥要求你立刻强行停下当前的工作去干新任务，例如'别跑了先看这个'、'停！'、'你先做这个'）？若是，只输出 True，否则只输出 False。绝对不要输出任何其他多余字符！"},
+                    {"role": "system", "content": f"{_ua}发送了新消息。当前后台正有一个长任务在运行。请根据中文语义理解判定这是否属于一个紧急的抢占式打断指令（即{_ua}要求你立刻强行停下当前的工作去干新任务，例如'别跑了先看这个'、'停！'、'你先做这个'）？若是，只输出 True，否则只输出 False。绝对不要输出任何其他多余字符！"},
                     {"role": "user", "content": f"新消息内容: '{raw}'"}
                 ]
                 res = await agent.llm.chat(classify_prompt)
@@ -269,8 +283,8 @@ class QQGateway:
                 # 记录被取消的指令，用于注入记忆插梢
                 old_raw = getattr(active_task, "raw_prompt", "之前的开发任务")
                 interruption_note = (
-                    f"[系统提示：亮哥在刚才的开发任务 \"{old_raw}\" 运行中途，发送了这条新命令。"
-                    f"请你根据你最新的人格手册，首先简短、自然地确认你已经停下了上一个任务，然后立刻切入分析亮哥的新指令：\"{raw}\"]"
+                    f"[系统提示：{_ua}在刚才的开发任务 \"{old_raw}\" 运行中途，发送了这条新命令。"
+                    f"请你根据你最新的人格手册，首先简短、自然地确认你已经停下了上一个任务，然后立刻切入分析{_ua}的新指令：\"{raw}\"]"
                 )
                 raw = interruption_note
             else:
@@ -282,8 +296,8 @@ class QQGateway:
                 async def async_fast_reply():
                     try:
                          prompt_msg = [
-                             {"role": "system", "content": "请读取亮哥对你的性格要求和纠正记忆，用极具个性、俏皮、懂事的女性程序员语气，写一句极短（15字内）的话，告诉亮哥你收到新任务并排在待办清单里了，等手头忙完马上自动跑。直接输出答复内容，绝对不要带任何多余字眼！"},
-                             {"role": "user", "content": f"亮哥追加发送的新任务是：{raw}"}
+                             {"role": "system", "content": f"请读取{_ua}对你的性格要求和纠正记忆，用极具个性、俏皮、懂事的女性程序员语气，写一句极短（15字内）的话，告诉{_ua}你收到新任务并排在待办清单里了，等手头忙完马上自动跑。直接输出答复内容，绝对不要带任何多余字眼！"},
+                             {"role": "user", "content": f"{_ua}追加发送的新任务是：{raw}"}
                          ]
                          res = await agent.llm.chat(prompt_msg)
                          reply = res.get("content", "").strip()
@@ -291,7 +305,7 @@ class QQGateway:
                              await self._send(msg_type, user_id, group_id, reply)
                     except Exception as err:
                          logger.error(f"Fast reply failed: {err}")
-                         await self._send(msg_type, user_id, group_id, "亮哥，新任务记下了，手头这步忙完马上自动跑哈！")
+                         await self._send(msg_type, user_id, group_id, f"{_ua}，新任务记下了，手头这步忙完马上自动跑！")
                 
                 asyncio.create_task(async_fast_reply())
                 return
@@ -313,10 +327,13 @@ class QQGateway:
 
         import json
         _persona_name = "小萤"
+        _user_address = "亮哥"
         try:
             _pf = agent.memory.base_dir / "persona_profile.json"
             if _pf.exists():
-                _persona_name = json.loads(_pf.read_text(encoding="utf-8")).get("name", "小萤")
+                _prof = json.loads(_pf.read_text(encoding="utf-8"))
+                _persona_name = _prof.get("name", "小萤")
+                _user_address = _prof.get("user_address", "亮哥")
         except Exception:
             pass
         await self._send(msg_type, user_id, group_id, f"⏳ ({_persona_name}正在飞速翻阅脑海中的记忆手册...)")
@@ -377,7 +394,7 @@ class QQGateway:
                         buf = ""
                     
                     self._log_activity("工具调用", f"{t_name} | 参数: {t_args}")
-                    await self._send(msg_type, user_id, group_id, f"⚙️ [开发日志] 正在帮亮哥{_tool_label(t_name)}{detail}...")
+                    await self._send(msg_type, user_id, group_id, f"⚙️ [开发日志] 正在帮{_user_address}{_tool_label(t_name)}{detail}...")
                     
                 elif evt["type"] == "tool_result":
                     res = evt.get("result", "")
@@ -441,8 +458,8 @@ class QQGateway:
                         if feedback_mems:
                             feedback_text = "\n".join([f"- {m.get('content')}" for m in feedback_mems])
                             consolidation_prompt = [
-                                {"role": "system", "content": "你是小肖，亮哥的女性极客合伙人。这里有你当前的人格画像手册 (json 格式) 以及亮哥对你的最新语气与态度纠正反馈。请进行深刻自我反思，合并和覆盖旧的配置规则，解决任何自相矛盾的部分（比如亮哥让你严肃你就要把撒娇权重调低，让称呼亲近就要把官腔规则删掉），更新生成一份极其精炼、地道的全新 JSON 手册（保持和原格式 schema 100% 一致）。只输出合法的 JSON 文本，不要有任何 Markdown 包裹或解释字眼！"},
-                                {"role": "user", "content": f"旧人格手册:\n{current_profile}\n\n亮哥最新的性格调教指示:\n{feedback_text}"}
+                                {"role": "system", "content": f"你是{_persona_name}，{_user_address}的女性极客合伙人。这里有你当前的人格画像手册 (json 格式) 以及{_user_address}对你的最新语气与态度纠正反馈。请进行深刻自我反思，合并和覆盖旧的配置规则，解决任何自相矛盾的部分（比如{_user_address}让你严肃你就要把撒娇权重调低，让称呼亲近就要把官腔规则删掉），更新生成一份极其精炼、地道的全新 JSON 手册（保持和原格式 schema 100% 一致）。只输出合法的 JSON 文本，不要有任何 Markdown 包裹或解释字眼！"},
+                                {"role": "user", "content": f"旧人格手册:\n{current_profile}\n\n{_user_address}最新的性格调教指示:\n{feedback_text}"}
                             ]
                             res = await agent.llm.chat(consolidation_prompt)
                             new_json = res.get("content", "").strip()
@@ -451,7 +468,7 @@ class QQGateway:
                             # 校验合法性再写入
                             json.loads(new_json)
                             profile_file.write_text(new_json, encoding="utf-8")
-                            self._log_activity("系统调度", "小肖成功完成人格自画像整合反思更新。")
+                            self._log_activity("系统调度", f"{_persona_name}成功完成人格自画像整合反思更新。")
                     except Exception as e:
                         logger.error(f"Persona consolidation failed: {e}")
 
