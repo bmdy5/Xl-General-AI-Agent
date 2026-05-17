@@ -328,6 +328,7 @@ class Agent:
                 category = self._classify_permission(tool_name, tool_args)
 
                 if category == PermissionCategory.DANGEROUS:
+                    self._permission_granted.clear()
                     yield {
                         "type": "permission_request",
                         "category": "dangerous",
@@ -335,7 +336,6 @@ class Agent:
                         "tool_args": tool_args,
                         "message": f"DANGEROUS: '{tool_name}' destructive operation. Execute?",
                     }
-                    self._permission_granted.clear()
                     await self._permission_granted.wait()
                     if self._abort.is_set():
                         self.messages.append({
@@ -347,6 +347,7 @@ class Agent:
                         continue
 
                 elif category == PermissionCategory.WRITE and not self._task_write_approved:
+                    self._permission_granted.clear()
                     yield {
                         "type": "permission_request",
                         "category": "write",
@@ -354,7 +355,6 @@ class Agent:
                         "tool_args": tool_args,
                         "message": "Agent wants to write/modify. Allow write operations for this task?",
                     }
-                    self._permission_granted.clear()
                     await self._permission_granted.wait()
                     if self._abort.is_set():
                         for remaining in tool_calls_list[tool_calls_list.index(tc):]:
