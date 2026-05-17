@@ -563,3 +563,37 @@
 2026-05-17 23:04:30 | [AI 计划/答复] | 不好意思亮哥，刚才试了两次抓取那个接口文档，页面返回的全是乱码，啥都没读到。那个地址 `http://8.219.164.50/docs` 可能需要内网访问，或者页面有特殊保护。
 2026-05-17 23:04:31 | [AI 计划/答复] | 我得换个思路，先读一下项目里的工具代码看看接口是怎么调用的。
 2026-05-17 23:04:59 | [系统调度] | 小肖成功完成人格自画像整合反思更新。
+2026-05-17 23:43:33 | [用户输入] | 亮哥 (user_1705919142): 你好
+2026-05-17 23:43:34 | [系统异常] | Agent 报错: LLM call failed: litellm.BadRequestError: DeepseekException - {
+    "error": {
+        "code": "400",
+        "message": "Param Incorrect",
+        "param": "Not supported model deepseek-chat"
+    }
+}
+
+2026-05-17 23:43:34 | [AI 计划/答复] | [错误: LLM call failed: litellm.BadRequestError: DeepseekException - {
+    "error": {
+        "code": "400",
+        "message": "Param Incorrect",
+        "param": "Not supported model deepseek-chat"
+    }
+}
+]
+2026-05-18 06:51:42 | [用户输入] | 亮哥 (user_1705919142): 你好
+2026-05-18 06:51:42 | [系统异常] | Agent 报错: LLM call failed: litellm.BadRequestError: DeepseekException - {
+    "error": {
+        "code": "400",
+        "message": "Param Incorrect",
+        "param": "Not supported model deepseek-chat"
+    }
+}
+
+2026-05-18 06:51:42 | [AI 计划/答复] | [错误: LLM call failed: litellm.BadRequestError: DeepseekException - {
+    "error": {
+        "code": "400",
+        "message": "Param Incorrect",
+        "param": "Not supported model deepseek-chat"
+    }
+}
+]

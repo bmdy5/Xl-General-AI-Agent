@@ -73,6 +73,6 @@ gateway-restart:
 	@echo "🔄 正在重启 QQ Gateway..."
 	-pkill -f "main.py --gateway" 2>/dev/null
 	sleep 1
-	nohup venv/bin/python main.py --gateway > gateway.log 2>&1 &
+	nohup venv/bin/python main.py --gateway >> gateway.log 2>&1 &
 	@echo "✅ QQ Gateway 已重启"
 	@echo "   查看日志: tail -f gateway.log"
