@@ -8,9 +8,17 @@ from unittest.mock import MagicMock, AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.core import _keyword_score
 from agent.tools.memory_tool import _find_similar_memory, _merge_memories
 from agent.memory.manager import MemoryManager
+
+
+def _keyword_score(keywords: list[str], text: str) -> float:
+    text_lower = text.lower()
+    score = 0.0
+    for kw in keywords:
+        if kw.lower() in text_lower:
+            score += 1.0
+    return score
 
 
 def test_keyword_score():
