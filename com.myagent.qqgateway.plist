@@ -6,7 +6,7 @@
     <string>com.myagent.qqgateway</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/.venv/bin/python</string>
+        <string>/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/venv/bin/python</string>
         <string>main.py</string>
         <string>--gateway</string>
     </array>
