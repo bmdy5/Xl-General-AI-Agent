@@ -96,8 +96,8 @@ def build_agent(session_id: str = "default") -> Agent:
     api_base = os.getenv("MYAGENT_API_BASE") or os.getenv("OPENAI_API_BASE")
 
     # 日常/深度模型（DeepSeek）
-    model_flash = os.getenv("MYAGENT_MODEL_FLASH", "deepseek/deepseek-chat")
-    model_pro = os.getenv("MYAGENT_MODEL_PRO", "deepseek/deepseek-chat")
+    model_flash = os.getenv("MYAGENT_MODEL_FLASH", "deepseek/deepseek-v4-flash")
+    model_pro = os.getenv("MYAGENT_MODEL_PRO", "deepseek/deepseek-v4-pro")
 
     max_tokens = int(os.getenv("MYAGENT_MAX_TOKENS", "16384"))
     llm = LLMClient(
