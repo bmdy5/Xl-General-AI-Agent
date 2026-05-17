@@ -607,8 +607,19 @@ class Agent:
                     snippet = nr.get("content", "")[:120].replace("\n", " ")
                     cite = nr.get("path", "") or nr.get("title", "?")
                     lines.append(f"- 📖 [{nr.get('title','?')}]({cite}) — {snippet}")
-        except Exception:
-            pass
+                
+                # --- Layer 4: 链接摘要注入（每 20 轮刷新一次） ---
+                note_paths = list(set([nr.get("path") for nr in note_results if nr.get("path")]))
+                if note_paths and self._turn_count % 20 == 0:
+                    from .memory.notes_fts import get_link_summaries
+                    link_summaries = await get_link_summaries(note_paths, self.llm)
+                    if link_summaries:
+                        lines.append("")
+                        lines.append("## 关联外链摘要（来源: 笔记链接）")
+                        lines.append(link_summaries)
+                # -----------------------------
+        except Exception as e:
+            logger.warning(f"Error in RAG/Layer4 injection: {e}")
 
         if self._turn_count > 0 and self._turn_count % 10 == 0:
             lines.append("")
