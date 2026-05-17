@@ -246,8 +246,11 @@ class Agent:
             llm_messages = [{"role": "system", "content": merged_system}]
             for m in self.messages:
                 copy = dict(m)
-                copy.pop("reasoning_content", None)
-                # 不 pop tool_calls — DeepSeek 需要它来匹配后续 tool 消息
+                # DeepSeek Pro thinking 模式要求 reasoning_content 必须回传
+                # 只有非 DeepSeek 模型才 pop 掉这个非标准字段
+                if not self.llm.model.startswith("deepseek/"):
+                    copy.pop("reasoning_content", None)
+                # 不 pop tool_calls — DeepSeek 需要它匹配后续 tool 消息
                 llm_messages.append(copy)
 
             tools = self.registry.get_definitions()
