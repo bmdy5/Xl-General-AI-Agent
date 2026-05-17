@@ -42,6 +42,7 @@ class QQGateway:
         self._agents: dict[str, object] = {}   # user_id/group_id → Agent
         self._http: Optional[aiohttp.ClientSession] = None
         self._pending_perms: dict[str, object] = {}  # session_key → _PermEvent
+        self._reconnect_failures: int = 0      # 连续断连计数器
 
     async def run(self):
         """连接 NapCat WebSocket，循环处理消息."""
@@ -53,8 +54,22 @@ class QQGateway:
                 try:
                     await self._ws_loop()
                 except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
-                    logger.warning(f"WebSocket disconnected: {e}, retry in 5s...")
-                    await asyncio.sleep(5)
+                    self._reconnect_failures += 1
+                    logger.warning(f"WebSocket disconnected (Count: {self._reconnect_failures}/10): {e}, retry in 5s...")
+                    
+                    if self._reconnect_failures >= 10:
+                        logger.error("WebSocket disconnected 10 times consecutively. Triggering NapCat self-healing restart...")
+                        self._reconnect_failures = 0
+                        try:
+                            # 异步执行 Docker 重启指令
+                            proc = await asyncio.create_subprocess_shell("docker restart napcat")
+                            await proc.wait()
+                            logger.info("NapCat container restarted successfully. Waiting 10s for initialization...")
+                        except Exception as restart_err:
+                            logger.error(f"Failed to restart NapCat container: {restart_err}")
+                        await asyncio.sleep(10)  # 给 Docker 启动腾出 10 秒钟缓冲时间
+                    else:
+                        await asyncio.sleep(5)
 
     async def _daemon_loop(self):
         """后台守护巡检线程：定时检测到期任务，向管理员 QQ 推送确认并安全执行"""
@@ -137,6 +152,7 @@ class QQGateway:
         async with aiohttp.ClientSession() as ws_session:
             async with ws_session.ws_connect(NC_WS_URL, headers=headers) as ws:
                 logger.info(f"QQ Gateway connected: {NC_WS_URL}")
+                self._reconnect_failures = 0  # 成功握手，计数器归零
                 async for msg in ws:
                     if msg.type != aiohttp.WSMsgType.TEXT:
                         continue
