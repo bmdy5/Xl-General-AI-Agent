@@ -237,19 +237,33 @@ class QQGateway:
             agent = self._factory()
             self._agents[session_key] = agent
 
-        # 发送首响，即时向亮哥确认指令已送达并开始处理
-        await self._send(msg_type, user_id, group_id, "好的亮哥我收到了，下面开始进行")
-
         # 流式调用 — plan mode 默认开启，工具执行前弹 macOS 对话框
         buf = ""
         sent_ack = False
+        received_text = False
+
+        # 启动异步首响哨兵定时器：若 1.5 秒内无任何文本吐出且没有发送过首响，说明在深度思考，自动发送安抚确认语
+        async def auto_ack_timer():
+            await asyncio.sleep(1.5)
+            nonlocal sent_ack
+            if not sent_ack and not received_text:
+                sent_ack = True
+                await self._send(msg_type, user_id, group_id, "好的亮哥我收到了，下面开始进行")
+
+        ack_timer_task = asyncio.create_task(auto_ack_timer())
+
         try:
             async for evt in agent.run(raw, stream=True):
                 if evt["type"] == "text_delta":
+                    received_text = True  # 标记已收到流式答复文本，哨兵将保持静默
                     buf += evt["content"]
                 elif evt["type"] == "tool_call" and evt.get("name"):
-                    if buf.strip() and not sent_ack:
+                    # 触发工具调用，直接判定为开发重任。若尚未发送首响，立即补发
+                    if not sent_ack:
                         sent_ack = True
+                        await self._send(msg_type, user_id, group_id, "好的亮哥我收到了，下面开始进行")
+
+                    if buf.strip():
                         await self._send_chunk(msg_type, user_id, group_id, buf.strip())
                         buf = ""
                     await self._send(msg_type, user_id, group_id,
@@ -271,6 +285,9 @@ class QQGateway:
                     buf += f"\n[错误: {evt['content']}]"
         except Exception as e:
             buf += f"[异常: {e}]"
+        finally:
+            # 安全销毁哨兵定时器，防止内存泄漏
+            ack_timer_task.cancel()
 
         # 发送剩余文本（按 [SPLIT] 分段，处理 [WAIT:N]）
         if buf.strip():
