@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.myagent.qqgateway</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/.venv/bin/python</string>
+        <string>main.py</string>
+        <string>--gateway</string>
+    </array>
+    <key>StandardOutPath</key>
+    <string>/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/gateway.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/gateway.err</string>
+    <key>WorkingDirectory</key>
+    <string>/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin</string>
+        <key>HOME</key>
+        <string>/Users/xiaofeng</string>
+    </dict>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>KeepAlive</key>
+    <true/>
+</dict>
+</plist>
