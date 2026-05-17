@@ -68,7 +68,9 @@ class TaskQueue:
     def mark_done(self, task_id: str):
         for t in self._tasks:
             if t["id"] == task_id:
-                t["done"] = True
+                cron = t.get("cron", "") or "once"
+                if cron in ("once", ""):
+                    t["done"] = True
                 t["last_run"] = datetime.now(timezone.utc).isoformat()
                 self._save()
                 return True
