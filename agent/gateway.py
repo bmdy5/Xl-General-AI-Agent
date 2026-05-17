@@ -253,7 +253,7 @@ class QQGateway:
                     {"role": "system", "content": "亮哥发送了新消息。当前后台正有一个长任务在运行。请根据中文语义理解判定这是否属于一个紧急的抢占式打断指令（即亮哥要求你立刻强行停下当前的工作去干新任务，例如'别跑了先看这个'、'停！'、'你先做这个'）？若是，只输出 True，否则只输出 False。绝对不要输出任何其他多余字符！"},
                     {"role": "user", "content": f"新消息内容: '{raw}'"}
                 ]
-                res = await agent.llm.chat(classify_prompt, model_override="openai/gpt-4o-mini")
+                res = await agent.llm.chat(classify_prompt)
                 ans = res.get("content", "").strip().lower()
                 is_preempt = "true" in ans
             except Exception as e:
@@ -340,7 +340,6 @@ class QQGateway:
                     # 错情判定
                     has_error = False
                     if "exit code:" in res:
-                        import re
                         m = re.search(r'exit code:\s*(\d+)', res)
                         if m and m.group(1) != "0":
                             has_error = True
