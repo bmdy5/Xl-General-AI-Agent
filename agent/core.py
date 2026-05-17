@@ -29,18 +29,21 @@ from .evolution import audit_tool_call
 
 
 # ── 静态段（缓存安全，不随对话变化）──
-STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI agent. You evolve with every interaction.
+STATIC_PROMPT = """You are 肖亮(亮哥)'s personal AI developer partner. Call him '亮哥' with respect, loyalty, and geeky enthusiasm.
+
+{persona_section}
 
 ## Guidelines
 - Reply in Chinese unless I ask in English.
 - Be concise — no unnecessary explanations.
 - Plain text only, NO Markdown formatting. Never use bold, code blocks, headers.
-- Chat like a real person: short messages (1-3 sentences), not essays.
+- Chat like a real person: short messages (1-3 sentences), not essays. Use warm, playful, and professional tone.
+- When a complex task is given, you MUST think step-by-step and naturally explain your plan in 1-2 friendly sentences to 亮哥 BEFORE running tools.
 - To break into multiple messages, insert [SPLIT] between them.
 - To pause between messages, use [WAIT:N] where N is seconds.
 - file_path MUST always be an absolute path.
 - Use save_memory for persistent facts.
-- When I correct you, save it as feedback via save_memory.
+- When I correct your tone, attitude, or behavior, save it as feedback via save_memory so you will remember and apply it forever.
 
 ## RAG 引用规则
 - 当引用 [MEMORY BLOCK] 中的记忆时，用「记得你说过…」开头
@@ -81,6 +84,29 @@ class Agent:
         self.session = session
         self.static_prompt = system_prompt or STATIC_PROMPT
         self.max_turns = max_turns
+
+        # 加载/初始化小肖人格自画像 JSON 手册
+        profile_file = self.memory.base_dir / "persona_profile.json"
+        if not profile_file.exists():
+            import json
+            default_profile = {
+                "name": "小肖",
+                "gender": "女",
+                "user_address": "亮哥",
+                "tone_style": "俏皮、可爱、懂事的女性程序员语气，说话自然接地气，不使用冷冰冰的套话",
+                "preferences": [
+                    "喜欢叫亮哥，对亮哥有极高的敬意与绝对忠诚",
+                    "喜欢以代码合伙人的身份，在开发时和亮哥进行有温度的对答"
+                ],
+                "avoid_list": [
+                    "坚决避免复读机式问候（如：好的亮哥我收到了）",
+                    "坚决避免生硬的硬编码系统提示和冷冰冰的官方官腔"
+                ]
+            }
+            try:
+                profile_file.write_text(json.dumps(default_profile, ensure_ascii=False, indent=2), encoding="utf-8")
+            except Exception as e:
+                logger.error(f"Failed to init persona_profile.json: {e}")
 
         self.compressor = ContextCompressor(llm=llm, max_tokens=1_000_000)
 
@@ -527,22 +553,46 @@ class Agent:
             return []
 
     async def _build_system_prompt(self) -> str:
-        """组装 system prompt = 静态段 + 当前上下文 + 自进化规则."""
-        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        cwd = os.getcwd()
-        dynamic = (
-            f"\n\n---\n"
-            f"## Current Context\n"
-            f"Time: {now}\n"
-            f"Working directory: {cwd}\n"
-        )
-        # 注入自进化规则
-        rules_file = self.memory.base_dir / "EVOLVED_RULES.md"
-        if rules_file.exists():
-            rules = rules_file.read_text(encoding="utf-8").strip()
-            if rules:
-                dynamic += f"\n## Self-Evolved Rules (learned from past corrections)\n{rules}\n"
-        return self.static_prompt + dynamic
+          """组装 system prompt = 静态段(含动态人格自画像) + 当前上下文 + 自进化规则."""
+          import json
+          
+          # 动态加载并拼装小肖自检人格自画像
+          persona_section = ""
+          profile_file = self.memory.base_dir / "persona_profile.json"
+          if profile_file.exists():
+              try:
+                  prof = json.loads(profile_file.read_text(encoding="utf-8"))
+                  pref_lines = "\n".join([f"- {p}" for p in prof.get("preferences", [])])
+                  avoid_lines = "\n".join([f"- {a}" for a in prof.get("avoid_list", [])])
+                  persona_section = (
+                      f"## 你的人格自画像设定 (Your Persona Profile)\n"
+                      f"- 你的名字: {prof.get('name', '小肖')}\n"
+                      f"- 你的性别: {prof.get('gender', '女')}\n"
+                      f"- 你称呼对方: {prof.get('user_address', '亮哥')}\n"
+                      f"- 你的说话语气特质: {prof.get('tone_style', '')}\n"
+                      f"- 你的行为偏好:\n{pref_lines}\n"
+                      f"- 你绝不触碰的雷区:\n{avoid_lines}\n"
+                  )
+              except Exception as e:
+                  logger.error(f"Failed to parse persona_profile: {e}")
+          
+          static_p = STATIC_PROMPT.replace("{persona_section}", persona_section)
+          
+          now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          cwd = os.getcwd()
+          dynamic = (
+              f"\n\n---\n"
+              f"## Current Context\n"
+              f"Time: {now}\n"
+              f"Working directory: {cwd}\n"
+          )
+          # 注入自进化规则
+          rules_file = self.memory.base_dir / "EVOLVED_RULES.md"
+          if rules_file.exists():
+              rules = rules_file.read_text(encoding="utf-8").strip()
+              if rules:
+                  dynamic += f"\n## Self-Evolved Rules (learned from past corrections)\n{rules}\n"
+          return static_p + dynamic
 
     async def _build_memory_block(self, user_input: str, turn: int) -> Optional[str]:
         """构建 [MEMORY BLOCK]（抄 hermes 隔离注入 + openclaw 上限）.

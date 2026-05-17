@@ -1,0 +1,18 @@
+2026-05-17 18:22:34,167 - INFO - QQ Gateway Background Daemon Loop started.
+2026-05-17 18:22:34,173 - INFO - QQ Gateway connected: ws://127.0.0.1:3001
+2026-05-17 18:23:21,443 - INFO - QQ [user_1705919142]: 你是谁
+2026-05-17 18:23:24,521 - INFO - Agent → QQ [1705919142]: 嘿亮哥～我是小肖，你的AI开发合伙人！专门陪你搞代码、聊技术、解决问题的那个小助手。有啥需要尽管招呼我～
+2026-05-17 18:23:35,502 - INFO - QQ [user_1705919142]: 你是男的女的？
+2026-05-17 18:23:40,083 - INFO - Agent → QQ [1705919142]: 我是女孩子呀亮哥～是个喜欢写代码的程序媛，专门给你当技术搭档的那种～有啥活儿尽管吩咐！
+2026-05-17 18:23:48,826 - ERROR - Persona consolidation failed: cannot access free variable 're' where it is not associated with a value in enclosing scope
+2026-05-17 18:24:06,060 - ERROR - Persona consolidation failed: cannot access free variable 're' where it is not associated with a value in enclosing scope
+2026-05-17 18:24:10,533 - INFO - QQ [user_1705919142]: 你去网上给我看一下今天的最热的10条新闻是什么
+2026-05-17 18:24:14,138 - INFO - Agent → QQ [1705919142]: 好嘞亮哥，我这就去给你看看今天都有啥热点新闻～
+2026-05-17 18:24:14,370 - INFO - Agent → QQ [1705919142]: ⚙️ [开发日志] 正在帮亮哥搜索资料...
+2026-05-17 18:24:17,269 - INFO - response: https://en.wikipedia.org/w/api.php?action=opensearch&profile=fuzzy&limit=1&search=%E4%BB%8A%E6%97%A5%E7%83%AD%E7%82%B9%E6%96%B0%E9%97%BB%202026%E5%B9%B45%E6%9C%8817%E6%97%A5 200
+2026-05-17 18:24:17,758 - INFO - response: https://grokipedia.com/api/typeahead?query=%E4%BB%8A%E6%97%A5%E7%83%AD%E7%82%B9%E6%96%B0%E9%97%BB+2026%E5%B9%B45%E6%9C%8817%E6%97%A5&limit=1 200
+2026-05-17 18:24:18,268 - INFO - response: https://html.duckduckgo.com/html/ 202
+2026-05-17 18:24:20,051 - INFO - response: https://search.brave.com/search?q=%E4%BB%8A%E6%97%A5%E7%83%AD%E7%82%B9%E6%96%B0%E9%97%BB+2026%E5%B9%B45%E6%9C%8817%E6%97%A5&source=web 200
+2026-05-17 18:24:22,231 - INFO - Agent → QQ [1705919142]: 搜索结果不太给力，让我换个关键词再搜搜～
+2026-05-17 18:24:42,548 - ERROR - Persona consolidation failed: cannot access free variable 're' where it is not associated with a value in enclosing scope
+2026-05-17 18:24:57,286 - INFO - QQ [user_1705919142]: 你下次说关键词换关键词搜索的时候你得告诉我你换了什么关键词

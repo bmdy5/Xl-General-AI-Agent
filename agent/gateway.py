@@ -44,6 +44,9 @@ class QQGateway:
         self._pending_perms: dict[str, object] = {}  # session_key → _PermEvent
         self._reconnect_failures: int = 0      # 连续断连计数器
         self._last_offline_alert: float = 0.0  # 上次掉线报警时间戳（冷却防骚扰）
+        self._activity_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent_activity.log"
+        self._current_tasks: dict[str, asyncio.Task] = {}
+        self._message_queues: dict[str, list[tuple[dict, str]]] = {}
 
     async def run(self):
         """连接 NapCat WebSocket，循环处理消息."""
@@ -232,42 +235,122 @@ class QQGateway:
 
         logger.info(f"QQ [{session_key}]: {raw[:80]}")
 
+        # 写入亮哥指令审计日志
+        self._log_activity("用户输入", f"亮哥 ({session_key}): {raw}")
+
         agent = self._agents.get(session_key)
         if agent is None:
             agent = self._factory()
             self._agents[session_key] = agent
 
-        # 流式调用 — plan mode 默认开启，工具执行前弹 macOS 对话框
+        # 判定是否有旧任务正在运行
+        active_task = self._current_tasks.get(session_key)
+        if active_task and not active_task.done():
+            # AI 直觉语义分类器（极速 LiteLLM 判定）
+            is_preempt = False
+            try:
+                classify_prompt = [
+                    {"role": "system", "content": "亮哥发送了新消息。当前后台正有一个长任务在运行。请根据中文语义理解判定这是否属于一个紧急的抢占式打断指令（即亮哥要求你立刻强行停下当前的工作去干新任务，例如'别跑了先看这个'、'停！'、'你先做这个'）？若是，只输出 True，否则只输出 False。绝对不要输出任何其他多余字符！"},
+                    {"role": "user", "content": f"新消息内容: '{raw}'"}
+                ]
+                res = await agent.llm.chat(classify_prompt, model_override="openai/gpt-4o-mini")
+                ans = res.get("content", "").strip().lower()
+                is_preempt = "true" in ans
+            except Exception as e:
+                logger.error(f"Classifier failed: {e}")
+                # 关键词兜底
+                is_preempt = any(kw in raw for kw in ["先", "别", "停", "等", "急", "刹车", "取消"])
+
+            if is_preempt:
+                # 强占式中断：取消旧任务，原地刹车
+                active_task.cancel()
+                self._log_activity("系统调度", f"紧急强占中断当前任务: {session_key}")
+                
+                # 记录被取消的指令，用于注入记忆插梢
+                old_raw = getattr(active_task, "raw_prompt", "之前的开发任务")
+                interruption_note = (
+                    f"[系统提示：你是小肖。亮哥在刚才的开发任务 \"{old_raw}\" 运行中途，发送了这条新命令。"
+                    f"请你根据你最新的人格手册，首先简短、自然地确认你已经停下了上一个任务，然后立刻切入分析亮哥的新指令：\"{raw}\"]"
+                )
+                raw = interruption_note
+            else:
+                # 非强占式：进入排队队列
+                self._message_queues.setdefault(session_key, []).append((event, raw))
+                self._log_activity("系统调度", f"新任务加入排队队列: {raw}")
+                
+                # 气泡首响先行
+                await self._send(msg_type, user_id, group_id, "(小肖正在手忙脚乱地记在备忘录里...)")
+                
+                # 异步 AI 动态安抚秒回
+                async def async_fast_reply():
+                    try:
+                         prompt_msg = [
+                             {"role": "system", "content": "你是亮哥的专属女性极客开发伙伴小肖。请读取亮哥对你的性格要求和纠正记忆，用极具个性、俏皮、懂事的女性程序员语气，写一句极短（15字内）的话，告诉亮哥你收到新任务并排在待办清单里了，等手头忙完马上自动跑。直接输出答复内容，绝对不要带任何多余字眼！"},
+                             {"role": "user", "content": f"亮哥追加发送的新任务是：{raw}"}
+                         ]
+                         res = await agent.llm.chat(prompt_msg)
+                         reply = res.get("content", "").strip()
+                         if reply:
+                             await self._send(msg_type, user_id, group_id, reply)
+                    except Exception as err:
+                         logger.error(f"Fast reply failed: {err}")
+                         await self._send(msg_type, user_id, group_id, "亮哥，新任务小肖记下了，手头这步忙完马上自动跑哈！")
+                
+                asyncio.create_task(async_fast_reply())
+                return
+
+        # 启动任务执行
+        task = asyncio.create_task(self._execute_task(session_key, event, raw))
+        task.raw_prompt = raw
+        self._current_tasks[session_key] = task
+
+    async def _execute_task(self, session_key: str, event: dict, raw: str):
+        msg_type = event.get("message_type", "private")
+        user_id = str(event.get("user_id", ""))
+        group_id = str(event.get("group_id")) if msg_type == "group" else ""
+        
+        agent = self._agents.get(session_key)
+        if agent is None:
+            agent = self._factory()
+            self._agents[session_key] = agent
+
         buf = ""
-        sent_ack = False
-        received_text = False
-
-        # 启动异步首响哨兵定时器：若 1.5 秒内无任何文本吐出且没有发送过首响，说明在深度思考，自动发送安抚确认语
-        async def auto_ack_timer():
-            await asyncio.sleep(1.5)
-            nonlocal sent_ack
-            if not sent_ack and not received_text:
-                sent_ack = True
-                await self._send(msg_type, user_id, group_id, "好的亮哥我收到了，下面开始进行")
-
-        ack_timer_task = asyncio.create_task(auto_ack_timer())
-
         try:
             async for evt in agent.run(raw, stream=True):
                 if evt["type"] == "text_delta":
-                    received_text = True  # 标记已收到流式答复文本，哨兵将保持静默
                     buf += evt["content"]
                 elif evt["type"] == "tool_call" and evt.get("name"):
-                    # 触发工具调用，直接判定为开发重任。若尚未发送首响，立即补发
-                    if not sent_ack:
-                        sent_ack = True
-                        await self._send(msg_type, user_id, group_id, "好的亮哥我收到了，下面开始进行")
-
+                    t_name = evt["name"]
+                    t_args = evt.get("args", {})
+                    detail = self._tool_detail(t_name, t_args)
+                    
                     if buf.strip():
+                        self._log_activity("AI 计划/答复", buf.strip())
                         await self._send_chunk(msg_type, user_id, group_id, buf.strip())
                         buf = ""
-                    await self._send(msg_type, user_id, group_id,
-                        f"正在{_tool_label(evt['name'])}...")
+                    
+                    self._log_activity("工具调用", f"{t_name} | 参数: {t_args}")
+                    await self._send(msg_type, user_id, group_id, f"⚙️ [开发日志] 正在帮亮哥{_tool_label(t_name)}{detail}...")
+                    
+                elif evt["type"] == "tool_result":
+                    res = evt.get("result", "")
+                    t_name = evt.get("name", "tool")
+                    self._log_activity("工具返回", f"{t_name} | 结果大小: {len(res)} 字节")
+                    
+                    # 错情判定
+                    has_error = False
+                    if "exit code:" in res:
+                        import re
+                        m = re.search(r'exit code:\s*(\d+)', res)
+                        if m and m.group(1) != "0":
+                            has_error = True
+                    elif res.strip().startswith("Error"):
+                        has_error = True
+                    
+                    if has_error:
+                        self._log_activity("系统异常", f"工具 {t_name} 执行失败: {res[:200]}")
+                        await self._send(msg_type, user_id, group_id, f"⚠️ [警告] 刚才跑命令失败了！错误反馈：\n{res[:300]}")
+                        
                 elif evt["type"] == "permission_request":
                     cat = evt.get("category", "write")
                     if cat == "dangerous":
@@ -283,15 +366,73 @@ class QQGateway:
                         agent.approve_permission()
                 elif evt["type"] == "error":
                     buf += f"\n[错误: {evt['content']}]"
+                    self._log_activity("系统异常", f"Agent 报错: {evt['content']}")
+        except asyncio.CancelledError:
+            self._log_activity("系统调度", f"任务被外部 Cancel 取消: {raw[:50]}")
+            raise
         except Exception as e:
             buf += f"[异常: {e}]"
+            self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
-            # 安全销毁哨兵定时器，防止内存泄漏
-            ack_timer_task.cancel()
+            if buf.strip():
+                self._log_activity("AI 计划/答复", buf.strip())
+                await self._send_chunk(msg_type, user_id, group_id, buf.strip())
+            
+            # 后台异步触发小肖自检人格自画像整理 (Consolidation)
+            async def async_consolidate_persona():
+                profile_file = agent.memory.base_dir / "persona_profile.json"
+                if profile_file.exists():
+                    try:
+                        import json
+                        current_profile = profile_file.read_text(encoding="utf-8")
+                        feedback_mems = agent.memory.search_memories("纠正 语气 态度 称呼 性格 说话方式", limit=5)
+                        if feedback_mems:
+                            feedback_text = "\n".join([f"- {m.get('content')}" for m in feedback_mems])
+                            consolidation_prompt = [
+                                {"role": "system", "content": "你是小肖，亮哥的女性极客合伙人。这里有你当前的人格画像手册 (json 格式) 以及亮哥对你的最新语气与态度纠正反馈。请进行深刻自我反思，合并和覆盖旧的配置规则，解决任何自相矛盾的部分（比如亮哥让你严肃你就要把撒娇权重调低，让称呼亲近就要把官腔规则删掉），更新生成一份极其精炼、地道的全新 JSON 手册（保持和原格式 schema 100% 一致）。只输出合法的 JSON 文本，不要有任何 Markdown 包裹或解释字眼！"},
+                                {"role": "user", "content": f"旧人格手册:\n{current_profile}\n\n亮哥最新的性格调教指示:\n{feedback_text}"}
+                            ]
+                            res = await agent.llm.chat(consolidation_prompt)
+                            new_json = res.get("content", "").strip()
+                            new_json = re.sub(r'^```json\s*', '', new_json)
+                            new_json = re.sub(r'\s*```$', '', new_json)
+                            # 校验合法性再写入
+                            json.loads(new_json)
+                            profile_file.write_text(new_json, encoding="utf-8")
+                            self._log_activity("系统调度", "小肖成功完成人格自画像整合反思更新。")
+                    except Exception as e:
+                        logger.error(f"Persona consolidation failed: {e}")
 
-        # 发送剩余文本（按 [SPLIT] 分段，处理 [WAIT:N]）
-        if buf.strip():
-            await self._send_chunk(msg_type, user_id, group_id, buf.strip())
+            # 启动后台异步自反思
+            asyncio.create_task(async_consolidate_persona())
+            
+            self._current_tasks.pop(session_key, None)
+            
+            # 自动拉起下一个排队任务
+            queue = self._message_queues.get(session_key, [])
+            if queue:
+                next_event, next_raw = queue.pop(0)
+                self._log_activity("系统调度", f"自动拉起下一个排队任务: {next_raw}")
+                task = asyncio.create_task(self._execute_task(session_key, next_event, next_raw))
+                task.raw_prompt = next_raw
+                self._current_tasks[session_key] = task
+
+    def _tool_detail(self, name: str, args: dict) -> str:
+        """解包常用开发工具的核心参数，用于高度可视化的微广播."""
+        import os
+        if not args:
+            return ""
+        try:
+            if name == "bash":
+                return f"执行命令: {args.get('command')}"
+            elif name in ("read_file", "write_file", "edit_file"):
+                path = args.get("file_path", "")
+                basename = os.path.basename(path) if path else "未知文件"
+                action_map = {"read_file": "审查文件", "write_file": "保存文件", "edit_file": "精准修改文件"}
+                return f"{action_map.get(name, '处理')}: {basename}"
+        except Exception:
+            pass
+        return ""
 
     async def _send_chunk(self, msg_type, user_id, group_id, text):
         """发送一个文本块，处理 [SPLIT] 和 [WAIT:N]."""
@@ -364,6 +505,26 @@ class QQGateway:
                 logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
         except Exception as e:
             logger.error(f"Send error: {e}")
+
+    def _log_activity(self, category: str, content: str):
+        """记录 Agent 的核心活动轨迹，结构化追加写入日志."""
+        import datetime
+        import re
+        
+        now = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        safe_content = content
+        for pattern in [r"(?i)token[s]?'?\s*:\s*'[^']+'", r"(?i)key[s]?'?\s*:\s*'[^']+'"]:
+            safe_content = re.sub(pattern, "token: '******'", safe_content)
+        
+        if len(safe_content) > 1000:
+            safe_content = safe_content[:1000] + " ... (truncated)"
+        
+        log_line = f"{now} | [{category}] | {safe_content}\n"
+        try:
+            with open(self._activity_log_path, "a", encoding="utf-8") as f:
+                f.write(log_line)
+        except Exception as e:
+            logger.error(f"Failed to write activity log: {e}")
 
 
 # ── 模块级工具 ─────────────────────────────────────────────
