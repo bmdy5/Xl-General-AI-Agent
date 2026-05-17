@@ -45,6 +45,7 @@ from agent.tools.spawn_agent_tool import SpawnAgentTool
 from agent.tools.stitch_tool import StitchTool
 from agent.tools.web_fetch_tool import WebFetchTool
 from agent.tools.web_search_tool import WebSearchTool
+from agent.tools.organize_notes_tool import OrganizeNotesTool
 
 
 # ── 终端辅助 ───────────────────────────────────────────────
@@ -113,6 +114,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(StitchTool())
         registry.register(MCPClientTool())
         registry.register(MemoryTool())
+        registry.register(OrganizeNotesTool())
 
     memory = MemoryManager()
     session = SessionHandler(session_id)
