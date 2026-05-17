@@ -354,9 +354,6 @@ class QQGateway:
                     t_args = evt.get("args", {})
                     detail = self._tool_detail(t_name, t_args)
                     
-                    if not sent_ack:
-                        sent_ack = True
-                    
                     if buf.strip():
                         self._log_activity("AI 计划/答复", buf.strip())
                         await self._send_chunk(msg_type, user_id, group_id, buf.strip())
