@@ -1,7 +1,7 @@
 # XL Agent — 工业级 Makefile (v3.0)
 # 用法: make setup | up | build | logs | qrcode | update
 
-.PHONY: setup up build logs qrcode update clean
+.PHONY: setup up build logs qrcode update clean gateway-restart
 
 # ── 检测国内环境 ──
 IS_CN := $(shell curl -s --connect-timeout 2 ipinfo.io/country 2>/dev/null | grep -q CN && echo true || echo false)
@@ -67,3 +67,10 @@ update:
 clean:
 	docker compose down
 	@echo "✅ 已停止"
+
+# ── 重启 launchd 托管的 QQ Gateway 守护进程 ──
+gateway-restart:
+	@echo "🔄 正在重新载入并重启 QQ Gateway 守护进程..."
+	launchctl unload ~/Library/LaunchAgents/com.myagent.qqgateway.plist || true
+	launchctl load ~/Library/LaunchAgents/com.myagent.qqgateway.plist
+	@echo "✅ QQ Gateway 已成功重启！"
