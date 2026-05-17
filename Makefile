@@ -68,9 +68,11 @@ clean:
 	docker compose down
 	@echo "✅ 已停止"
 
-# ── 重启 launchd 托管的 QQ Gateway 守护进程 ──
+# ── 重启 QQ Gateway（改完代码后执行） ──
 gateway-restart:
-	@echo "🔄 正在重新载入并重启 QQ Gateway 守护进程..."
-	launchctl unload ~/Library/LaunchAgents/com.myagent.qqgateway.plist || true
-	launchctl load ~/Library/LaunchAgents/com.myagent.qqgateway.plist
-	@echo "✅ QQ Gateway 已成功重启！"
+	@echo "🔄 正在重启 QQ Gateway..."
+	-pkill -f "main.py --gateway" 2>/dev/null
+	sleep 1
+	nohup venv/bin/python main.py --gateway > gateway.log 2>&1 &
+	@echo "✅ QQ Gateway 已重启"
+	@echo "   查看日志: tail -f gateway.log"
