@@ -43,6 +43,7 @@ class QQGateway:
         self._http: Optional[aiohttp.ClientSession] = None
         self._pending_perms: dict[str, object] = {}  # session_key → _PermEvent
         self._reconnect_failures: int = 0      # 连续断连计数器
+        self._last_offline_alert: float = 0.0  # 上次掉线报警时间戳（冷却防骚扰）
 
     async def run(self):
         """连接 NapCat WebSocket，循环处理消息."""
@@ -74,6 +75,7 @@ class QQGateway:
     async def _daemon_loop(self):
         """后台守护巡检线程：定时检测到期任务，向管理员 QQ 推送确认并安全执行"""
         from agent.task_queue import TaskQueue
+        import time
         logger.info("QQ Gateway Background Daemon Loop started.")
         q = TaskQueue()
         
@@ -90,6 +92,35 @@ class QQGateway:
                 await asyncio.sleep(10)
                 continue
 
+            # ── 1. QQ 登录态主动感知与 macOS 警告环 ────────────────────────────────────
+            try:
+                url = f"{NC_HTTP_URL}/get_login_info"
+                headers = {}
+                if NC_TOKEN:
+                    headers["Authorization"] = f"Bearer {NC_TOKEN}"
+                
+                async with self._http.get(url, headers=headers) as resp:
+                    is_online = False
+                    if resp.status == 200:
+                        res_data = await resp.json()
+                        if res_data.get("status") == "ok":
+                            is_online = res_data.get("data", {}).get("online", False)
+                    
+                    if not is_online:
+                        current_time = time.time()
+                        if current_time - self._last_offline_alert > 1800:  # 30分钟防刷冷却
+                            self._last_offline_alert = current_time
+                            logger.error("QQ Login Session expired! Triggering macOS native alert notification...")
+                            alert_cmd = (
+                                'osascript -e \'display notification "QQ 机器人登录态已过期，请点击 WebUI 重新扫码登录！" '
+                                'with title "⚠️ XL Agent 掉线警报" sound name "Glass"\''
+                            )
+                            proc = await asyncio.create_subprocess_shell(alert_cmd)
+                            await proc.wait()
+            except Exception as check_err:
+                logger.warning(f"Failed to check QQ login status: {check_err}")
+
+            # ── 2. 定时任务轮询逻辑 ──────────────────────────────────────────────────
             try:
                 due_tasks = q.process_due()
                 for task in due_tasks:
