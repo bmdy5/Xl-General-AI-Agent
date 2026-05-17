@@ -167,6 +167,16 @@ async def run_interactive():
     tools_list = ', '.join(agent.registry.list_names())
     model_short = agent.llm.model.split('/')[-1] if '/' in agent.llm.model else agent.llm.model
 
+    # 动态加载用户称呼
+    import json as _json
+    _ua = "亮哥"
+    try:
+        _pf = agent.memory.base_dir / "persona_profile.json"
+        if _pf.exists():
+            _ua = _json.loads(_pf.read_text(encoding="utf-8")).get("user_address", "亮哥")
+    except Exception:
+        pass
+
     print(fr"""
   ╔══════════════════════════════════════════════════════╗
   ║                                                      ║
@@ -186,7 +196,7 @@ async def run_interactive():
   ║  /exit   /clear   /memory   /tools   /mode          ║
   ╚══════════════════════════════════════════════════════╝
 
-  亮哥，我是你的小弟 XL，有什么吩咐？
+  {_ua}，我是你的小弟 XL，有什么吩咐？
 """)
 
     # 确保历史加载完成
