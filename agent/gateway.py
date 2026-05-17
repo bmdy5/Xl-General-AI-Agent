@@ -278,10 +278,7 @@ class QQGateway:
                 self._message_queues.setdefault(session_key, []).append((event, raw))
                 self._log_activity("系统调度", f"新任务加入排队队列: {raw}")
                 
-                # 气泡首响先行
-                await self._send(msg_type, user_id, group_id, "(小肖正在手忙脚乱地记在备忘录里...)")
-                
-                # 异步 AI 动态安抚秒回
+                # 异步 AI 动态安抚秒回（不发任何硬编码气泡）
                 async def async_fast_reply():
                     try:
                          prompt_msg = [
