@@ -247,7 +247,7 @@ class Agent:
             for m in self.messages:
                 copy = dict(m)
                 copy.pop("reasoning_content", None)
-                copy.pop("tool_calls", None)
+                # 不 pop tool_calls — DeepSeek 需要它来匹配后续 tool 消息
                 llm_messages.append(copy)
 
             tools = self.registry.get_definitions()
