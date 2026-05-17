@@ -45,7 +45,7 @@ class ContextCompressor:
         self.llm = llm
         self.max_tokens = max_tokens
         self.threshold = threshold
-        self.compress_at = int(max_tokens * threshold)
+        self.compress_at = int(max_tokens * threshold)  # 960K token 触发压缩
         self.max_summary_tokens = max_summary_tokens
 
         # 熔断器（抄 CC）

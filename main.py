@@ -90,12 +90,24 @@ def _flush_highlighted():
 
 def build_agent(session_id: str = "default") -> Agent:
     """组装 Agent：LLM + Tools + Memory + Session."""
-    model = os.getenv("MYAGENT_MODEL", "openai/gpt-4o")
+    # 主力模型（Mimo，用于视觉识别）
+    model_vision = os.getenv("MYAGENT_MODEL", "openai/gpt-4o")
     api_key = os.getenv("MYAGENT_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY")
     api_base = os.getenv("MYAGENT_API_BASE") or os.getenv("OPENAI_API_BASE")
 
+    # 日常/深度模型（DeepSeek）
+    model_flash = os.getenv("MYAGENT_MODEL_FLASH", "deepseek/deepseek-chat")
+    model_pro = os.getenv("MYAGENT_MODEL_PRO", "deepseek/deepseek-chat")
+
     max_tokens = int(os.getenv("MYAGENT_MAX_TOKENS", "16384"))
-    llm = LLMClient(model=model, api_key=api_key, api_base=api_base, max_tokens=max_tokens)
+    llm = LLMClient(
+        model=model_flash,            # 默认用 DeepSeek Flash（省钱）
+        api_key=api_key,              # Mimo API key（仅 Mimo 模型会用）
+        api_base=api_base,
+        max_tokens=max_tokens,
+        model_vision=model_vision,    # 视觉模型
+        model_pro=model_pro,          # 深度推理模型
+    )
 
     # 注册工具
     if not registry.list_names():
