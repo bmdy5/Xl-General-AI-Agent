@@ -27,6 +27,13 @@ NC_TOKEN = os.getenv("NAPCAT_TOKEN", "")
 MAX_REPLY_CHARS = 2000
 
 
+class _PermEvent(asyncio.Event):
+    """携带结果的异步事件 — 解决跨协程权限沟通的竞态条件。"""
+    def __init__(self):
+        super().__init__()
+        self.result: bool = False
+
+
 class QQGateway:
     """最小可行 QQ Gateway。WebSocket 收消息，HTTP API 发回复。"""
 
@@ -34,18 +41,93 @@ class QQGateway:
         self._factory = agent_factory          # () → Agent
         self._agents: dict[str, object] = {}   # user_id/group_id → Agent
         self._http: Optional[aiohttp.ClientSession] = None
-        self._pending_perms: dict[str, asyncio.Event] = {}  # session_key → Event
+        self._pending_perms: dict[str, object] = {}  # session_key → _PermEvent
 
     async def run(self):
         """连接 NapCat WebSocket，循环处理消息."""
         async with aiohttp.ClientSession() as http:
             self._http = http
+            # 开启后台守护巡检线程
+            asyncio.create_task(self._daemon_loop())
             while True:
                 try:
                     await self._ws_loop()
                 except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
                     logger.warning(f"WebSocket disconnected: {e}, retry in 5s...")
                     await asyncio.sleep(5)
+
+    async def _daemon_loop(self):
+        """后台守护巡检线程：定时检测到期任务，向管理员 QQ 推送确认并安全执行"""
+        from agent.task_queue import TaskQueue
+        logger.info("QQ Gateway Background Daemon Loop started.")
+        q = TaskQueue()
+        
+        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        if not admin_id:
+            logger.warning("QQ_ADMIN_ID not configured in .env. Background daemon is disabled.")
+            return
+
+        session_key = f"user_{admin_id}"
+
+        while True:
+            # 必须等 NapCat HTTP 连接就绪后才开始工作，避免 self._http 未就绪引发报错
+            if not self._http:
+                await asyncio.sleep(10)
+                continue
+
+            try:
+                due_tasks = q.process_due()
+                for task in due_tasks:
+                    task_id = task["id"]
+                    desc = task["description"]
+                    action = task["action"]
+
+                    # 1. 向管理员 QQ 私聊推送确认请求
+                    await self._send("private", admin_id, "", 
+                        f"⏰ [全天候中枢巡检]\n亮哥，检测到后台任务到期：\n【{desc}】\n\n回复「允许」或「y」授权我立即执行，回复其他取消。")
+
+                    # 2. 注册等待锁，阻止线程并挂起 5 分钟等待用户在 QQ 上的答复
+                    evt = _PermEvent()
+                    self._pending_perms[session_key] = evt
+                    try:
+                        await asyncio.wait_for(evt.wait(), timeout=300)
+                        approved = evt.result
+                    except asyncio.TimeoutError:
+                        approved = False
+                    finally:
+                        self._pending_perms.pop(session_key, None)
+
+                    # 3. 根据主人确认结果进行后台调度
+                    if approved:
+                        await self._send("private", admin_id, "", f"🚀 正在后台执行任务: {desc}...")
+                        agent = self._factory()
+                        buf = ""
+                        try:
+                            async for evt in agent.run(action, stream=True):
+                                if evt["type"] == "text_delta":
+                                    buf += evt["content"]
+                                elif evt["type"] == "permission_request":
+                                    # 因为后台任务已经在 QQ 外层总揽确认过了，内层具体子权限自动放行
+                                    agent.approve_permission()
+                                elif evt["type"] == "error":
+                                    buf += f"\n[错误: {evt['content']}]"
+                        except Exception as e:
+                            buf += f"\n[异常: {e}]"
+
+                        # 4. 标记任务状态 (定时任务会更新 last_run 戳，普通任务标记 done)
+                        q.mark_done(task_id)
+
+                        # 5. 反馈结果
+                        result_msg = f"✅ [执行完成]\n任务：{desc}\n\n执行结果反馈：\n{buf.strip()[:1500]}"
+                        await self._send("private", admin_id, "", result_msg)
+                    else:
+                        await self._send("private", admin_id, "", f"⏸️ 已跳过任务：{desc}")
+
+            except Exception as e:
+                logger.error(f"Daemon loop encountered an error: {e}")
+
+            # 每 5 分钟轮询一次
+            await asyncio.sleep(300)
 
     async def _ws_loop(self):
         headers = {}
@@ -89,9 +171,9 @@ class QQGateway:
         if perm is not None:
             lower = raw.lower().strip()
             if lower in ("允许", "y", "yes", "ok", "好", "可以", "行"):
-                self._perm_result = True
+                perm.result = True
             else:
-                self._perm_result = False
+                perm.result = False
             perm.set()
             return
 
