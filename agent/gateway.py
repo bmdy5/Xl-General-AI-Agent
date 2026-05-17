@@ -251,11 +251,11 @@ class QQGateway:
         await self._send(msg_type, user_id, group_id,
             f"准备执行: {tool_list}\n{plan_text[:200]}\n\n回复「允许」继续，其他取消。")
 
-        evt = asyncio.Event()
+        evt = _PermEvent()
         self._pending_perms[session_key] = evt
         try:
             await asyncio.wait_for(evt.wait(), timeout=120)
-            return self._perm_result
+            return evt.result
         except asyncio.TimeoutError:
             await self._send(msg_type, user_id, group_id, "超时，已取消。")
             return False
