@@ -311,7 +311,27 @@ class QQGateway:
             agent = self._factory()
             self._agents[session_key] = agent
 
+        import json
+        _persona_name = "小萤"
+        try:
+            _pf = agent.memory.base_dir / "persona_profile.json"
+            if _pf.exists():
+                _persona_name = json.loads(_pf.read_text(encoding="utf-8")).get("name", "小萤")
+        except Exception:
+            pass
+        await self._send(msg_type, user_id, group_id, f"⏳ ({_persona_name}正在飞速翻阅脑海中的记忆手册...)")
+
+        sent_ack = True
         buf = ""
+
+        async def auto_ack_timer():
+            await asyncio.sleep(1.5)
+            nonlocal sent_ack
+            if not sent_ack:
+                sent_ack = True
+                await self._send(msg_type, user_id, group_id, f"({_persona_name}正在思考中，稍等片刻...)")
+
+        ack_timer_task = asyncio.create_task(auto_ack_timer())
 
         # 流式段落/句子分发清洗逻辑，消除憋字挂起感
         try:
@@ -400,6 +420,8 @@ class QQGateway:
             buf += f"[异常: {e}]"
             self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
+            if not ack_timer_task.done():
+                ack_timer_task.cancel()
             if buf.strip():
                 self._log_activity("AI 计划/答复", buf.strip())
                 await self._send_chunk(msg_type, user_id, group_id, buf.strip())
@@ -508,6 +530,20 @@ class QQGateway:
 
     async def _send(self, msg_type: str, user_id: str, group_id: str, text: str):
         """通过 NapCat HTTP API 发送消息."""
+        import re
+        import os
+        def escape_invalid_cq(match):
+            cq_str = match.group(0)
+            if cq_str.startswith("[CQ:image,file="):
+                m_file = re.search(r'file=([^,\\]]+)', cq_str)
+                if m_file:
+                    file_path = m_file.group(1)
+                    if os.path.exists(file_path) or file_path.startswith("http://") or file_path.startswith("https://"):
+                        return cq_str
+            return cq_str.replace("[CQ:", "[ CQ:")
+        
+        text = re.sub(r'\[CQ:[^\]]+\]', escape_invalid_cq, text)
+
         if msg_type in ("private", "temp"):
             endpoint = "/send_private_msg"
             payload = {"user_id": int(user_id), "message": text}

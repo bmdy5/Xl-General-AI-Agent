@@ -57,10 +57,13 @@ class LLMClient:
         }
         if tools:
             kwargs["tools"] = tools
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
+            
+        model_name = model_override or self.model
+        if not model_name.startswith("deepseek/"):
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
 
         if abort_event and abort_event.is_set():
             return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
@@ -123,10 +126,13 @@ class LLMClient:
         }
         if tools:
             kwargs["tools"] = tools
-        if self.api_key:
-            kwargs["api_key"] = self.api_key
-        if self.api_base:
-            kwargs["api_base"] = self.api_base
+            
+        model_name = model_override or self.model
+        if not model_name.startswith("deepseek/"):
+            if self.api_key:
+                kwargs["api_key"] = self.api_key
+            if self.api_base:
+                kwargs["api_base"] = self.api_base
 
         response = await acompletion(**kwargs)
 

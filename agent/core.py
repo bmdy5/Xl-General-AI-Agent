@@ -584,7 +584,9 @@ class Agent:
           
           static_p = STATIC_PROMPT.replace("{persona_section}", persona_section)
           
-          now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+          from datetime import timezone, timedelta
+          beijing_tz = timezone(timedelta(hours=8))
+          now = datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S (北京时间)")
           cwd = os.getcwd()
           dynamic = (
               f"\n\n---\n"
