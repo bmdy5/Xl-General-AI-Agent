@@ -14,7 +14,7 @@ services:
       - ./napcat_data:/app/.config/QQ
       - ./napcat_data:/root/.config/QQ
     environment:
-      - ACCOUNT=3870213248 # 你的 QQ 号
+      # 不设 ACCOUNT，手动扫码登录更稳定
     networks:
       - agent-net
 
