@@ -96,7 +96,22 @@ class MemoryManager:
         if len(encoded) > max_bytes:
             content = encoded[:max_bytes].decode("utf-8", errors="ignore")
             content += "\n\n... (truncated)"
-        return f"\n\n{content}\n"
+
+        # Append recent error recipes to context
+        error_content = ""
+        error_log = self.base_dir / "error_log.md"
+        if error_log.exists():
+            try:
+                recent_errors = error_log.read_text(encoding="utf-8")
+                # Take last 2000 chars (most recent errors first since we append)
+                if len(recent_errors) > 2000:
+                    recent_errors = recent_errors[-2000:]
+                if recent_errors.strip():
+                    error_content = f"\n\n## 错误配方库（来源: 过往错误修复记录）\n{recent_errors}\n"
+            except Exception:
+                pass
+
+        return f"\n\n{content}\n{error_content}"
 
     async def save(self, filename: str, description: str, content: str,
                    note_path: Optional[str] = None) -> str:
