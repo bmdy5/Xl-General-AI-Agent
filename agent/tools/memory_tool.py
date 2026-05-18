@@ -41,7 +41,14 @@ class MemoryTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Manage persistent memories (add/replace/remove/read/search). Check before answering about preferences. Types: user/feedback/project/reference/learn.",
+                "description": (
+                    "Manage persistent memories. Check before answering about preferences.\n\n"
+                    "Types: user/feedback/project/reference/learn.\n\n"
+                    "ROUTING: user/feedback → core memory (always keep). "
+                    "learn/project/knowledge → set note_dir to archive content to learning notes. "
+                    "Read routing_rules.md (via read_file) to find the right directory path, "
+                    "e.g. '02-Agent技术/记忆系统' or '01-小萤/自学习笔记'."
+                ),
                 "parameters": {
                     "type": "object",
                     "properties": {
@@ -53,17 +60,22 @@ class MemoryTool(BaseTool):
                         "memory_type": {
                             "type": "string",
                             "enum": MEMORY_TYPES,
-                            "description": "Type of memory (user/feedback/project/reference/learn)",
+                            "description": "Type: user/feedback=core memory, learn/project=knowledge (use note_dir)",
                         },
                         "filename": {
                             "type": "string",
-                            "description": "File name for this memory (e.g. 'coding_prefs'). Only for 'add' action.",
+                            "description": "File name (e.g. 'RAG检索优化'). Only for 'add' action.",
                         },
                         "description": {
                             "type": "string",
                             "description": "One-line summary for MEMORY.md index. Only for 'add' action.",
                         },
-                        "content": {"type": "string", "description": "The memory content. For 'add'=full text, for 'replace'=new text."}, "query": {"type": "string", "description": "Search query for action=search."},
+                        "content": {"type": "string", "description": "The memory content. For 'add'=full text, for 'replace'=new text."},
+                        "note_dir": {
+                            "type": "string",
+                            "description": "Learning notes subdirectory for knowledge memories. Read routing_rules.md to find the right path. Leave empty for core memories.",
+                        },
+                        "query": {"type": "string", "description": "Search query for action=search."},
                         "old_text": {
                             "type": "string",
                             "description": "Text to match for replace/remove. Substring match is OK.",
@@ -133,17 +145,38 @@ class MemoryTool(BaseTool):
                 desc = input_args["description"]
                 content = input_args["content"]
 
-                # ── 冲突检测：检查是否存在同主题旧记忆 ──
+                # ── 冲突检测 ──
                 existing = await _find_similar_memory(mm, desc, filename)
                 if existing:
                     merged = await _merge_memories(context, existing, desc, content)
                     if merged:
                         content = merged
                         desc = f"{desc} (merged)"
-                        # 不同文件名 → 删旧文件防重复
                         if existing["filename"] != filename + ".md":
                             await mm.remove(existing["filename"])
 
+                # ── 路由：bot 指定 note_dir → 存学习笔记+指针；否则存核心记忆 ──
+                note_dir = input_args.get("note_dir", "").strip()
+                if note_dir:
+                    note_path = await mm.save_to_notes(note_dir, filename, content)
+                    if note_path:
+                        await mm.save(filename, f"[{memory_type}] {desc}",
+                                      f"→ 笔记位置: {note_path}", note_path=note_path)
+                        yield ToolResult(
+                            type="result",
+                            data=f"📖 已归档到学习笔记: {note_path}",
+                            result_for_assistant=(
+                                f"✅ 知识已归档: {note_path}\n"
+                                f"类型: {memory_type}, 描述: {desc}\n"
+                                f"MEMORY.md 已建立指针索引指向学习笔记。"
+                            ),
+                        )
+                        return
+                    else:
+                        # save_to_notes 失败 → 降级为核心记忆
+                        logger.warning(f"save_to_notes failed for {note_dir}, falling back to core memory")
+
+                # 核心记忆：存本地文件
                 timestamp = await mm.save(filename, f"[{memory_type}] {desc}", content)
                 is_new = "新增" if "<!-- updated:" not in (await mm.get_entry(filename) or "") else "更新"
                 yield ToolResult(
