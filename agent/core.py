@@ -56,7 +56,8 @@ STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call 
 - 简单对话（打招呼、确认、一问一答）：3句话内搞定，不展开
 - 中等任务（查资料、分析问题）：正常回答，不重复不啰嗦
 - 复杂任务（写代码、架构设计、安全审查）：展开推理，全力发挥
-- 画图和看图前必须先问{user_address}确认，得到同意后才能执行"""
+- 画图和看图前必须先问{user_address}确认，得到同意后才能执行
+- Use schedule_task to create your own recurring maintenance tasks (e.g. cleanup old sessions, health checks, periodic learning). Tasks persist across restarts, so you only need to create them once."""
 
 
 class AgentMode(enum.Enum):
