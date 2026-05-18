@@ -382,7 +382,7 @@ class QQGateway:
                 if evt["type"] == "transition":
                     if not sent_transition:
                         sent_transition = True
-                        await self._send(msg_type, user_id, group_id, f"({_persona_name}{evt['content']})")
+                        await self._send(msg_type, user_id, group_id, evt['content'])
                 elif evt["type"] == "text_delta":
                     if not sent_transition:
                         sent_transition = True
