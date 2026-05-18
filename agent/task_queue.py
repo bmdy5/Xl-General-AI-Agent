@@ -9,14 +9,75 @@
 """
 
 import json
+import re
 import time
 import logging
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
 
 QUEUE_DIR = Path("/Users/xiaofeng/bot-我的自搭建agent/agent培养/xl进化/任务队列")
+
+
+def parse_natural_time(text: str):
+    """Parse natural-language time into (cron_expression, next_run_iso).
+
+    Returns tuple: (cron: str, next_run: Optional[str])
+    - ("daily", None) for daily
+    - ("hourly", None) for hourly
+    - ("once", "<iso_timestamp>") for one-shot tasks
+    - ("cron expr", None) for cron expressions
+    """
+    text = text.strip().lower()
+
+    # "in N minutes/hours"
+    m = re.match(r'in\s+(\d+)\s*(min|minute|minutes|h|hour|hours)', text)
+    if m:
+        n = int(m.group(1))
+        seconds = n * 60 if 'min' in m.group(2) else n * 3600
+        run_at = (datetime.now(timezone.utc) + timedelta(seconds=seconds)).isoformat()
+        return ("once", run_at)
+
+    # "tomorrow [H:MM]"
+    m = re.match(r'tomorrow\s*(\d{1,2}):(\d{2})?', text)
+    if m:
+        h, mi = int(m.group(1)), int(m.group(2) or 0)
+        tomorrow = datetime.now(timezone.utc) + timedelta(days=1)
+        run_at = tomorrow.replace(hour=h, minute=mi, second=0, microsecond=0).isoformat()
+        return ("once", run_at)
+
+    # "daily [HH:MM]"
+    if text.startswith("daily"):
+        m = re.search(r'(\d{1,2}):(\d{2})', text)
+        if m:
+            return (f"{m.group(2)} {m.group(1)} * * *", None)
+        return ("daily", None)
+
+    # "hourly"
+    if text == "hourly":
+        return ("hourly", None)
+
+    # "every Monday 8am" / "every Mon 08:00"
+    day_map = {"mon": 1, "monday": 1, "tue": 2, "tuesday": 2,
+               "wed": 3, "wednesday": 3, "thu": 4, "thursday": 4,
+               "fri": 5, "friday": 5, "sat": 6, "saturday": 6,
+               "sun": 7, "sunday": 7}
+    m = re.match(r'every\s+(\w+)\s*(\d{1,2}):(\d{2})', text)
+    if m:
+        day_name = m.group(1).lower()
+        if day_name in day_map:
+            day = day_map[day_name]
+            mi, h = m.group(3), m.group(2)
+            return (f"{mi} {h} * * {day}", None)
+
+    # Already a cron expression? Pass through
+    if re.match(r'^[\d\*,/\-\s]+$', text):
+        return (text, None)
+
+    # Default: once, run now
+    run_at = datetime.now(timezone.utc).isoformat()
+    return ("once", run_at)
 
 
 class TaskQueue:
@@ -42,19 +103,38 @@ class TaskQueue:
             encoding="utf-8",
         )
 
-    def add(self, description: str, action: str, cron: str = "", priority: int = 0) -> dict:
-        """添加任务."""
+    def add(self, description: str, action: str, cron: str = "",
+            priority: int = 0, auto_execute: bool = False) -> dict:
+        """Add task with optional auto_execute flag."""
+        parsed_cron, once_at = parse_natural_time(cron)
+
         task = {
             "id": f"task_{int(time.time())}_{len(self._tasks)}",
             "description": description,
-            "action": action,  # 自然语言描述要执行的操作
-            "cron": cron,      # cron 表达式或 "once" / "daily" / "hourly"
+            "action": action,
+            "cron": parsed_cron,
             "priority": priority,
+            "auto_execute": auto_execute,
             "created": datetime.now(timezone.utc).isoformat(),
             "last_run": None,
-            "next_run": None,
+            "next_run": once_at,
             "done": False,
         }
+
+        # Dedup: same description + same cron → skip
+        for existing in self._tasks:
+            if not existing.get("done") and existing["description"] == description \
+               and existing.get("cron") == parsed_cron:
+                logger.info(f"Dedup: skipping duplicate task '{description}'")
+                return existing
+
+        # Max pending limit (20)
+        pending = [t for t in self._tasks if not t.get("done")]
+        if len(pending) >= 20:
+            oldest = min(pending, key=lambda t: t.get("created", ""))
+            self.mark_done(oldest["id"])
+            logger.info(f"Task limit reached, auto-closed oldest: {oldest['description']}")
+
         self._tasks.append(task)
         self._save()
         return task
@@ -85,15 +165,22 @@ class TaskQueue:
         self._save()
 
     def process_due(self, agent=None) -> list[dict]:
-        """处理到期的任务（被动：返回到期任务列表，由外部决定是否执行）. """
+        """Process due tasks with support for exact next_run timestamps."""
         now = datetime.now(timezone.utc)
         due = []
         for t in self._tasks:
             if t.get("done"):
                 continue
             cron = t.get("cron", "") or "once"
-            if cron == "once" and t.get("last_run") is None:
-                due.append(t)
+
+            if cron == "once":
+                next_run = t.get("next_run")
+                if next_run:
+                    run_at = datetime.fromisoformat(next_run)
+                    if now >= run_at:
+                        due.append(t)
+                elif t.get("last_run") is None:
+                    due.append(t)
             elif cron == "daily":
                 last = t.get("last_run")
                 if last:
@@ -109,6 +196,11 @@ class TaskQueue:
                     if (now - last_dt).total_seconds() > 3600:
                         due.append(t)
                 else:
+                    due.append(t)
+            else:
+                # Cron expression -- simple check
+                last = t.get("last_run")
+                if not last or datetime.fromisoformat(last).date() < now.date():
                     due.append(t)
         return due
 
