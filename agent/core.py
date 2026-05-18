@@ -26,6 +26,10 @@ from .compressor import ContextCompressor
 from .evolution import audit_tool_call
 from .memory.error_tracker import ErrorTracker, L1_TRANSIENT, L2_SELF_HEAL, L3_FATAL
 
+# v6: RAG 检索优化常量
+_KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')  # 中文2字+/英文3字+关键词提取
+_TYPE_PRIORITY = {"feedback": 0, "user": 1, "learn": 2, "project": 3}  # 规则重排优先级
+
 
 
 
@@ -131,21 +135,18 @@ class Agent:
         self._task_write_approved = False
         self._task_start_time = asyncio.get_event_loop().time()
 
-        # 首次运行时加载历史会话
+        # v7: 不加载完整历史，依赖 MEMORY BLOCK (RAG) 精准检索
         if self.session and not self._history_loaded:
             self._history_loaded = True
             try:
                 history = await self.session.initialize()
-                if history:
-                    # 压缩过长历史再加载
-                    if len(history) > 50:
-                        compressed, _ = await self.compressor.compress(history, memory=self.memory)
-                        self.messages = compressed
-                    else:
-                        self.messages = history
-                    logger.info(f"Session loaded: {len(self.messages)} messages from {self.session.session_id}")
+                system_msgs = [m for m in history if m.get("role") == "system"]
+                recent = [m for m in history if m.get("role") != "system"][-2:]
+                self.messages = system_msgs + recent
+                if self.messages:
+                    logger.info(f"Session restored: {len(self.messages)} msgs (RAG handles full context)")
             except Exception as e:
-                logger.warning(f"Failed to load session history: {e}")
+                logger.warning(f"Failed to load session context: {e}")
 
         # Load error recipes from previous sessions
         await self.error_tracker.load_recipes()
@@ -661,12 +662,30 @@ class Agent:
           return static_p + dynamic
 
     async def _build_memory_block(self, user_input: str, turn: int) -> Optional[str]:
-        """构建 [MEMORY BLOCK]（抄 hermes 隔离注入 + openclaw 上限）.
+        """构建 [MEMORY BLOCK] — FTS5 BM25 + 上下文增强 + 规则重排.
 
-        v3: Flash 模型提取关键词 → Top-5 注入（降 Token 30%）.
+        v6: 三合一优化
+          1. 上下文增强：从最近对话提取关键词拼入 query
+          2. 召回扩大：memory limit 5→20, notes limit 2→5
+          3. 规则重排：type 优先级 + recency 二次排序
         """
-        # v5: FTS5 全文搜索（BM25 排序），fallback 到时间倒序
-        search_results = self.memory.search_memories(user_input, limit=5)
+        # ── 上下文增强：取最近2轮用户消息提取关键词 ──
+        context_keywords = ""
+        user_msgs = [m.get("content", "") for m in self.messages[-6:]
+                     if m.get("role") == "user" and m.get("content")]
+        recent_user_msgs = user_msgs[-2:]  # 最近2轮
+        if recent_user_msgs:
+            keywords = []
+            for msg in recent_user_msgs:
+                words = _KEYWORD_RE.findall(msg)
+                keywords.extend(words[:6])
+            context_keywords = " ".join(keywords[:12])
+
+        # v6: 上下文增强 query
+        enhanced_query = f"{context_keywords} {user_input}".strip() if context_keywords else user_input
+
+        # v6: 扩大召回 → Top-20
+        search_results = self.memory.search_memories(enhanced_query, limit=20)
         if search_results:
             relevant = []
             seen_fnames = set()
@@ -675,8 +694,16 @@ class Agent:
                 if fname and fname not in seen_fnames:
                     seen_fnames.add(fname)
                     relevant.append(r)
-                if len(relevant) >= 5:
+                if len(relevant) >= 20:
                     break
+
+            # v6: 规则重排 — type 优先级 + 时间降序
+            # 先按时间倒序排（稳定排序），再按 type 优先级排（同 type 内保持时间序）
+            relevant.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
+            relevant.sort(key=lambda r: _TYPE_PRIORITY.get(
+                str(r.get("memory_type", "")).split("/")[0].strip().lower(), 4
+            ))
+            relevant = relevant[:5]  # 重排后取 Top-5 注入
         else:
             # Fallback: FTS5 无结果时，解析 index 按时间倒序取 5 条
             entries = self.memory._parse_index()
@@ -715,7 +742,7 @@ class Agent:
         try:
             note_results = []
             if len(user_input) > 20:  # 短输入跳过 RAG，省 token
-                note_results = self.memory.search_notes(user_input, limit=2)
+                note_results = self.memory.search_notes(enhanced_query, limit=5)
             if note_results:
                 lines.append("")
                 lines.append("## 相关知识（来源: 学习笔记）")

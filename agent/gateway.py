@@ -139,6 +139,7 @@ class QQGateway:
 
             # ── 2. 定时任务轮询逻辑 ──────────────────────────────────────────────────
             try:
+                q._load()  # 重新加载 tasks.json（bot 可能已创建新任务）
                 due_tasks = q.process_due()
                 for task in due_tasks:
                     task_id = task["id"]
@@ -228,7 +229,7 @@ class QQGateway:
                 logger.error(f"Daemon task processing error: {e}")
 
             # 每 5 分钟轮询一次
-            await asyncio.sleep(300)
+            await asyncio.sleep(30)  # 每30秒巡检一次
 
     async def _ws_loop(self):
         headers = {}
