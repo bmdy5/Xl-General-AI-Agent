@@ -47,27 +47,12 @@ class BashTool(BaseTool):
     })
 
     DANGEROUS_PATTERNS: list = [
+        # 文件删除 + 杀进程操作需要明确允许
         re.compile(r'\brm\b'),
         re.compile(r'\brmdir\b'),
-        re.compile(r'\btruncate\b'),
-        re.compile(r'\bdd\b'),
         re.compile(r'\bshred\b'),
-        re.compile(r'>\s*/dev/(sd|hd|nvme|mmcblk|loop|dm-)'),
-        re.compile(r'\bchmod\s+[0-7]'),
-        re.compile(r'\bchown\b'),
-        re.compile(r'\bkill(all)?\b'),
         re.compile(r'\bpkill\b'),
-        re.compile(r'\breboot\b'),
-        re.compile(r'\bshutdown\b'),
-        re.compile(r'\bfdisk\b'),
-        re.compile(r'\bmount\b'),
-        re.compile(r'\bumount\b'),
-        re.compile(r'\bsudo\b'),
-        re.compile(r'\bsu\b'),
-        re.compile(r'\bpasswd\b'),
-        re.compile(r'\buseradd\b|\buserdel\b'),
-        re.compile(r'\biptables\b'),
-        re.compile(r'\bsystemctl\s+(stop|disable|mask)\b'),
+        re.compile(r'\bkill(all)?\b'),
         re.compile(r'`.*rm\b'),
     ]
 

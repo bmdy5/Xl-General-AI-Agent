@@ -416,7 +416,7 @@ class QQGateway:
                         buf = ""
                     
                     self._log_activity("工具调用", f"{t_name} | 参数: {t_args}")
-                    await self._send(msg_type, user_id, group_id, f"⚙️ [开发日志] 正在帮{_user_address}{_tool_label(t_name)}{detail}...")
+                    # 让 agent 自己决定怎么说，系统不发硬编码状态
                     
                 elif evt["type"] == "tool_result":
                     res = evt.get("result", "")
@@ -554,7 +554,7 @@ class QQGateway:
         session_key = f"group_{group_id}" if group_id else f"user_{user_id}"
         tool_list = ", ".join(tools)
         await self._send(msg_type, user_id, group_id,
-            f"准备执行: {tool_list}\n{plan_text[:200]}\n\n回复「允许」继续，其他取消。")
+            f"🔧 需要执行以下操作：\n{plan_text[:200]}\n\n回复「允许」放行，回复其他取消。")
 
         evt = _PermEvent()
         self._pending_perms[session_key] = evt
