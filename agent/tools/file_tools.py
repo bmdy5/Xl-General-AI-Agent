@@ -12,7 +12,7 @@ from typing import Any, AsyncGenerator, Optional
 
 from .base_tool import BaseTool, ToolResult
 
-MAX_READ_SIZE = 100 * 1024  # 100KB
+MAX_READ_SIZE = 30 * 1024  # 30KB（省钱：100KB→30KB）
 
 
 class ReadFileTool(BaseTool):

@@ -151,7 +151,7 @@ class Agent:
             except Exception as e:
                 logger.error(f"Failed to init persona_profile.json: {e}")
 
-        self.compressor = ContextCompressor(llm=llm, max_tokens=100_000)  # DeepSeek 128K 窗口留余量
+        self.compressor = ContextCompressor(llm=llm, max_tokens=40_000)  # 省token: 30K触发压缩
 
         self.messages: list[dict] = []
         self._history_loaded = False
@@ -297,7 +297,7 @@ class Agent:
             if self._abort.is_set():
                 yield {"type": "aborted"}
                 return
-            if self.compressor.estimate_tokens(self.messages) > 90_000:
+            if self.compressor.estimate_tokens(self.messages) > 35_000:
                 yield {"type": "ctx_warning", "pct": 90}
 
             # ── 上下文压缩 ──
@@ -828,7 +828,7 @@ class Agent:
         lines.append("[/MEMORY BLOCK]")
         block = "\n".join(lines)
 
-        max_chars = 2000  # 从 3000 降到 2000（省 token）
+        max_chars = 1200  # 省 token: 2000→1200
         if len(block) > max_chars:
             block = block[:max_chars] + "\n... (truncated)\n[/MEMORY BLOCK]"
 
