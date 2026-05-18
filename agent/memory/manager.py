@@ -1,5 +1,6 @@
 """Memory system - CC MEMORY.md pattern + timestamp evolution + knowledge index."""
 
+import logging
 import os
 import re
 import sqlite3
@@ -10,8 +11,28 @@ from typing import Optional
 from .fts_index import create_table, populate as fts_populate, search as fts_search, rebuild
 from .notes_fts import search as notes_search, index_all, scan_files
 
+logger = logging.getLogger(__name__)
+
 KB_DIR = os.getenv("MYAGENT_KB_DIR", "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西")
 KNOWLEDGE_INDEX = Path(KB_DIR) / "知识索引.md"
+
+DEFAULT_ROUTING_RULES = """\
+# 知识路由规则
+
+学习笔记根目录: /Users/xiaofeng/Desktop/学习笔记
+
+## 路由判断
+1. 跟小萤自身相关（人格、行为、成长、自学习）→ 01-小萤/自学习笔记/
+2. Agent 通用技术（工具、记忆、多智能体、循环）→ 02-Agent技术/记忆系统/
+3. 具体项目经验、踩坑记录、bug修复 → 06-工作记录/工程实践/
+4. 用户知识（亮哥教给我的）→ 01-小萤/自学习笔记/
+
+## 记忆类型路由
+- feedback/behavior → core memory (不写笔记)
+- learn/technical → 知识索引 → 上述笔记目录
+- project/experience → 06-工作记录/工程实践/
+- personal/identity → core memory (不写笔记)
+"""
 
 
 def update_knowledge_index(section: str, entry: str):
@@ -38,6 +59,9 @@ class MemoryManager:
             self.base_dir = Path.home() / ".my-agent" / "memory"
         self.base_dir.mkdir(parents=True, exist_ok=True)
         self.index_file = self.base_dir / "MEMORY.md"
+        self.rules_file = self.base_dir / "routing_rules.md"
+        if not self.rules_file.exists():
+            self.rules_file.write_text(DEFAULT_ROUTING_RULES, encoding="utf-8")
         self._db: sqlite3.Connection | None = None
 
     def _get_db(self) -> sqlite3.Connection:
@@ -169,6 +193,34 @@ class MemoryManager:
         if topic_file.exists():
             return topic_file.read_text(encoding="utf-8")
         return None
+
+    def get_routing_rules(self) -> str:
+        """返回当前路由规则，供 bot 读取和修改."""
+        if self.rules_file and self.rules_file.exists():
+            return self.rules_file.read_text(encoding="utf-8")
+        return DEFAULT_ROUTING_RULES
+
+    async def save_to_notes(self, dir_path: str, filename: str, content: str) -> Optional[str]:
+        """Save knowledge to learning notes directory. Returns the full path or None."""
+        try:
+            import re
+            from pathlib import Path as _Path
+            rules = self.get_routing_rules()
+            m = re.search(r'学习笔记根目录:\s*(.+)', rules)
+            if not m:
+                return None
+            base = _Path(m.group(1).strip())
+            target_dir = base / dir_path
+            target_dir.mkdir(parents=True, exist_ok=True)
+            safe_name = filename.replace("/", "_").replace("\\", "_")
+            if not safe_name.endswith(".md"):
+                safe_name += ".md"
+            filepath = target_dir / safe_name
+            filepath.write_text(content, encoding="utf-8")
+            return str(filepath)
+        except Exception as e:
+            logger.warning(f"Failed to save to notes: {e}")
+            return None
 
     def search_notes(self, query: str, limit: int = 5) -> list[dict]:
         """搜索笔记知识库（学习笔记目录）。返回 BM25 排序的分块结果。"""
