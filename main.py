@@ -142,7 +142,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry=registry,
         memory=memory,
         session=session,
-        max_turns=int(os.getenv("MYAGENT_MAX_TURNS", "200")),
+        max_turns=int(os.getenv("MYAGENT_MAX_TURNS", "40"))  # 省钱: 200→40,
     )
 
 

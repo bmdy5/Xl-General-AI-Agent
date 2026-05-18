@@ -14,7 +14,7 @@ from typing import Any, AsyncGenerator, Optional
 from .base_tool import BaseTool, ToolResult
 
 BASH_TIMEOUT = 60  # 最长执行时间
-MAX_OUTPUT = 50 * 1024  # 输出截断 50KB
+MAX_OUTPUT = 10 * 1024  # 输出截断 10KB（省钱）
 
 
 class BashTool(BaseTool):
