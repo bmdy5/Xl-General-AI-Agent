@@ -15,6 +15,7 @@ import logging
 import os
 import re
 import urllib.request
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
@@ -143,56 +144,88 @@ class QQGateway:
                     task_id = task["id"]
                     desc = task["description"]
                     action = task["action"]
+                    auto = task.get("auto_execute", False)
 
                     _pn, _ua = self._load_persona()
-                    await self._send("private", admin_id, "", 
-                        f"⏰ [全天候中枢巡检]\n{_ua}，检测到后台任务到期：\n【{desc}】\n\n回复「允许」或「y」授权我立即执行，回复其他取消。")
 
-                    # 2. 注册等待锁，阻止线程并挂起 5 分钟等待用户在 QQ 上的答复
-                    evt = _PermEvent()
-                    self._pending_perms[session_key] = evt
-                    try:
-                        await asyncio.wait_for(evt.wait(), timeout=300)
-                        approved = evt.result
-                    except asyncio.TimeoutError:
-                        approved = False
-                    finally:
-                        self._pending_perms.pop(session_key, None)
+                    if auto:
+                        # Auto-execute: run immediately, no permission prompt
+                        await self._send("private", admin_id, "",
+                            f"🤖 [自动任务] {desc} — 正在执行...")
+                        approved = True
+                    else:
+                        # Need user confirmation
+                        await self._send("private", admin_id, "",
+                            f"⏰ [定时任务到期]\n{_ua}，任务「{desc}」到期。\n回复「允许」执行，回复其他跳过。")
+                        evt = _PermEvent()
+                        self._pending_perms[session_key] = evt
+                        try:
+                            await asyncio.wait_for(evt.wait(), timeout=300)
+                            approved = evt.result
+                        except asyncio.TimeoutError:
+                            approved = False
+                        finally:
+                            self._pending_perms.pop(session_key, None)
 
-                    # 3. 根据主人确认结果进行后台调度
                     if approved:
-                        await self._send("private", admin_id, "", f"🚀 正在后台执行任务: {desc}...")
-                        agent = self._factory()
+                        await self._send("private", admin_id, "", f"🚀 执行中: {desc}...")
+
+                        agent = self._factory(session_key)
                         buf = ""
                         try:
                             async for evt in agent.run(action, stream=True):
                                 if evt["type"] == "text_delta":
                                     buf += evt["content"]
                                 elif evt["type"] == "tool_call" and evt.get("name"):
-                                    # 广播后台工具调用状态给亮哥，让后台执行透明化
-                                    await self._send("private", admin_id, "", 
-                                        f"⚙️ [后台巡检中] 正在{_tool_label(evt['name'])}...")
+                                    await self._send("private", admin_id, "",
+                                        f"⚙️ [{desc}] {_tool_label(evt['name'])}...")
                                 elif evt["type"] == "permission_request":
-                                    # 因为后台任务已经在 QQ 外层总揽确认过了，内层具体子权限自动放行
                                     agent.approve_permission()
                                 elif evt["type"] == "error":
                                     buf += f"\n[错误: {evt['content']}]"
-                        except Exception as e:
-                            buf += f"\n[异常: {e}]"
 
-                        # 4. 标记任务状态 (定时任务会更新 last_run 戳，普通任务标记 done)
-                        q.mark_done(task_id)
+                            # Deliver result
+                            result_summary = buf[:800] + ("..." if len(buf) > 800 else "")
 
-                        # 5. 反馈结果：通过 _send_chunk 动态分包发送，杜绝物理字数截断
-                        result_msg = f"✅ [执行完成]\n任务：{desc}\n\n执行结果反馈：\n{buf.strip()}"
-                        await self._send_chunk("private", admin_id, "", result_msg)
-                    else:
-                        # 核心修复：即使跳过了任务，也必须标记或更新它的时间戳，否则下个循环（5分钟后）它又会被判定为到期，造成无限循环轰炸！
-                        q.mark_done(task_id)
-                        await self._send("private", admin_id, "", f"⏸️ 已跳过任务：{desc}")
+                            # Check if QQ is online
+                            is_online = False
+                            try:
+                                async with self._http.get(
+                                    f"{NC_HTTP_URL}/get_login_info",
+                                    headers={"Authorization": f"Bearer {NC_TOKEN}"} if NC_TOKEN else {}
+                                ) as resp:
+                                    is_online = resp.status == 200
+                            except Exception:
+                                pass
+
+                            if is_online:
+                                await self._send("private", admin_id, "",
+                                    f"✅ [任务完成] {desc}\n\n{result_summary}")
+
+                            # Always save result to learning notes
+                            try:
+                                note_content = (
+                                    f"# 定时任务: {desc}\n\n"
+                                    f"执行时间: {datetime.now(timezone.utc).isoformat()}\n\n"
+                                    f"## 结果\n{result_summary}"
+                                )
+                                agent.memory.save_to_notes(
+                                    dir_path="06-工作记录/定时任务",
+                                    filename=f"task_{task_id}.md",
+                                    content=note_content,
+                                )
+                            except Exception as save_err:
+                                logger.warning(f"Failed to save task result to notes: {save_err}")
+
+                        except Exception as run_err:
+                            logger.error(f"Task execution failed: {run_err}")
+                            await self._send("private", admin_id, "",
+                                f"❌ [任务失败] {desc}: {str(run_err)[:200]}")
+
+                    q.mark_done(task_id)
 
             except Exception as e:
-                logger.error(f"Daemon loop encountered an error: {e}")
+                logger.error(f"Daemon task processing error: {e}")
 
             # 每 5 分钟轮询一次
             await asyncio.sleep(300)
@@ -254,7 +287,7 @@ class QQGateway:
 
         agent = self._agents.get(session_key)
         if agent is None:
-            agent = self._factory()
+            agent = self._factory(session_key)
             self._agents[session_key] = agent
 
         # 判定是否有旧任务正在运行
@@ -322,7 +355,7 @@ class QQGateway:
         
         agent = self._agents.get(session_key)
         if agent is None:
-            agent = self._factory()
+            agent = self._factory(session_key)
             self._agents[session_key] = agent
 
         import json
@@ -571,6 +604,12 @@ class QQGateway:
         """通过 NapCat HTTP API 发送消息."""
         import re
         import os
+
+        # 去除 markdown 格式（QQ 不支持 markdown 渲染）
+        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)  # **粗体**
+        text = re.sub(r'\*(.+?)\*', r'\1', text)      # *斜体*
+        text = re.sub(r'__(.+?)__', r'\1', text)      # __粗体2__
+
         def escape_invalid_cq(match):
             cq_str = match.group(0)
             if cq_str.startswith("[CQ:image,file="):
