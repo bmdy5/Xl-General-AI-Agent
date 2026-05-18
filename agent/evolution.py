@@ -35,9 +35,9 @@ AUDIT_PROMPT = """检查这个工具调用结果，判断是否有学习价值�
 
 async def audit_tool_call(agent, tool_name: str, args: dict, result: str):
     """工具执行后审计，发现有价值的信息自动存记忆."""
-    # 只在工具调用明显失败或返回重要信息时审计
+    # 只在工具调用失败/异常时审计，成功直接跳过（省 LLM 审计费用 70-90%）
     triggers = ["error", "Error", "failed", "not found", "permission denied",
-                "成功", "已创建", "已部署", "已安装"]
+                "Error:", "失败", "异常", "Traceback"]
     if not any(t in str(result)[:500] for t in triggers):
         return
 
