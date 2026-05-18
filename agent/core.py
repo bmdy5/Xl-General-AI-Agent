@@ -24,6 +24,7 @@ from .session.handler import SessionHandler
 from .tools.registry import ToolRegistry
 from .compressor import ContextCompressor
 from .evolution import audit_tool_call
+from .memory.error_tracker import ErrorTracker, L1_TRANSIENT, L2_SELF_HEAL, L3_FATAL
 
 
 
@@ -107,15 +108,17 @@ class Agent:
             except Exception as e:
                 logger.error(f"Failed to init persona_profile.json: {e}")
 
-        self.compressor = ContextCompressor(llm=llm, max_tokens=1_000_000)
+        self.compressor = ContextCompressor(llm=llm, max_tokens=100_000)  # DeepSeek 128K 窗口留余量
 
         self.messages: list[dict] = []
+        self._history_loaded = False
         self._abort = asyncio.Event()
         self._permission_granted = asyncio.Event()
         self._turn_count = 0
         self._mode = AgentMode.NORMAL
         self._task_write_approved = False
         self._task_start_time = 0.0
+        self.error_tracker = ErrorTracker()
 
     # ── public API ─────────────────────────────────────────────
 
@@ -126,6 +129,25 @@ class Agent:
         self._total_tokens = 0
         self._task_write_approved = False
         self._task_start_time = asyncio.get_event_loop().time()
+
+        # 首次运行时加载历史会话
+        if self.session and not self._history_loaded:
+            self._history_loaded = True
+            try:
+                history = await self.session.initialize()
+                if history:
+                    # 压缩过长历史再加载
+                    if len(history) > 50:
+                        compressed, _ = await self.compressor.compress(history, memory=self.memory)
+                        self.messages = compressed
+                    else:
+                        self.messages = history
+                    logger.info(f"Session loaded: {len(self.messages)} messages from {self.session.session_id}")
+            except Exception as e:
+                logger.warning(f"Failed to load session history: {e}")
+
+        # Load error recipes from previous sessions
+        await self.error_tracker.load_recipes()
 
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
@@ -139,6 +161,27 @@ class Agent:
             yield {"type": "aborted"}
         finally:
             self._abort.clear()
+
+    async def _handle_tool_error(self, tool_name: str, error_text: str, retry_count: int) -> dict:
+        """Process tool error through ErrorTracker. Returns action dict."""
+        should_report, level = self.error_tracker.should_report(error_text)
+
+        if level == L1_TRANSIENT and retry_count < 2:
+            await asyncio.sleep(3 * (retry_count + 1))
+            return {"action": "retry", "delay": 3 * (retry_count + 1)}
+
+        if level == L2_SELF_HEAL:
+            recipe = self.error_tracker.find_recipe(error_text)
+            if recipe:
+                self.error_tracker.save_recipe(error_text, recipe)
+                return {"action": "self_heal", "recipe": recipe}
+
+        if should_report or retry_count >= 2:
+            if self.error_tracker._counts.get(self.error_tracker._key(error_text), 0) >= 3:
+                logger.warning(f"Error pattern detected for {tool_name}: {error_text[:100]}")
+            return {"action": "report", "level": level, "tool": tool_name, "error": error_text[:200]}
+
+        return {"action": "silent", "level": level}
 
     async def _repair_history(self):
         """确保对话历史符合 LLM 规范：assistant 的 tool_calls 必须跟有对应的 tool 结果。"""
@@ -217,7 +260,7 @@ class Agent:
             if self._abort.is_set():
                 yield {"type": "aborted"}
                 return
-            if self.compressor.estimate_tokens(self.messages) > 900_000:
+            if self.compressor.estimate_tokens(self.messages) > 90_000:
                 yield {"type": "ctx_warning", "pct": 90}
 
             # ── 上下文压缩 ──
@@ -380,9 +423,19 @@ class Agent:
                         self.registry.dispatch(tool_name, tool_args, context=self),
                         timeout=tool_timeout,
                     )
+                    # ErrorTracker: check tool result for error patterns
+                    _error_indicators = ["Error:", "失败", "Traceback", "exception"]
+                    if any(ind in (result_str or "") for ind in _error_indicators):
+                        action = await self._handle_tool_error(tool_name, result_str, retry_count=0)
+                        if action.get("action") == "report":
+                            logger.warning(f"Tool error [{tool_name}]: {action.get('error', '')[:100]}")
                 except asyncio.TimeoutError:
                     result_str = f'{{"error": "Tool call timed out after {tool_timeout}s: {tool_name}"}}'
                     logger.warning(f"Tool timeout: {tool_name} exceeded {tool_timeout}s")
+                    # ErrorTracker: classify timeout error
+                    action = await self._handle_tool_error(tool_name, result_str, retry_count=0)
+                    if action.get("action") == "report":
+                        logger.warning(f"Tool error [{tool_name}]: {action.get('error', '')[:100]}")
                     yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
                     self.messages.append({
                         "role": "tool", "tool_call_id": tc["id"],
