@@ -10,3 +10,8 @@ node_modules/
 .obsidian/
 images/
 test_blue.png
+*.log
+gateway.err
+startup.log
+napcat_data/
+qrcode_login.png

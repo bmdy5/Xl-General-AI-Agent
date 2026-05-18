@@ -22,7 +22,7 @@ import aiohttp
 logger = logging.getLogger(__name__)
 
 NC_WS_URL = os.getenv("NAPCAT_WS_URL", "ws://127.0.0.1:3001")
-NC_HTTP_URL = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3000")
+NC_HTTP_URL = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3020")
 NC_TOKEN = os.getenv("NAPCAT_TOKEN", "")
 MAX_REPLY_CHARS = 2000
 

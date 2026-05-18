@@ -8,13 +8,13 @@ services:
     restart: always
     ports:
       - "6099:6099"  # WebUI 端口
-      - "3000:3000"  # HTTP API
+      - "3020:3000"  # HTTP API
       - "3001:3001"  # WebSocket
     volumes:
       - ./napcat_data:/app/.config/QQ
       - ./napcat_data:/root/.config/QQ
     environment:
-      # 不设 ACCOUNT，手动扫码登录更稳定
+      - ACCOUNT=3870213248
     networks:
       - agent-net
 
@@ -30,7 +30,7 @@ services:
       - napcat
     environment:
       - NAPCAT_WS_URL=ws://napcat:3001
-      - NAPCAT_HTTP_URL=http://napcat:3000
+      - NAPCAT_HTTP_URL=http://napcat:3000  # 容器内端口不变
       - MYAGENT_MODEL=${MYAGENT_MODEL}
       - MYAGENT_API_KEY=${MYAGENT_API_KEY}
       - MYAGENT_API_BASE=${MYAGENT_API_BASE}

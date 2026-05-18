@@ -420,7 +420,7 @@ async def run_gateway():
 
     print("\n  MyAgent — QQ Gateway 模式")
     print(f"  WebSocket: {os.getenv('NAPCAT_WS_URL', 'ws://localhost:3001')}")
-    print(f"  HTTP API:  {os.getenv('NAPCAT_HTTP_URL', 'http://localhost:3000')}")
+    print(f"  HTTP API:  {os.getenv('NAPCAT_HTTP_URL', 'http://localhost:3020')}")
     print()
 
     gw = QQGateway(build_agent)
