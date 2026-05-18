@@ -336,7 +336,22 @@ class QQGateway:
                 _user_address = _prof.get("user_address", "亮哥")
         except Exception:
             pass
-        await self._send(msg_type, user_id, group_id, f"⏳ ({_persona_name}正在飞速翻阅脑海中的记忆手册...)")
+        # 状态提示随机轮换，每次不同
+        import random as _rand
+        _status_msgs = [
+            f"正在飞速翻阅脑海中的记忆手册",
+            f"正在努力思考中",
+            f"正在翻找相关的知识",
+            f"正在整理思路",
+            f"正在查询记忆库",
+            f"正在检索相关资料",
+            f"正在快速分析",
+            f"正在联想相关经验",
+            f"正在查阅笔记",
+            f"思考了一下",
+            f"正在连接知识点",
+        ]
+        await self._send(msg_type, user_id, group_id, f"⏳ ({_persona_name}{_rand.choice(_status_msgs)}...)")
 
         sent_ack = True
         buf = ""
@@ -346,7 +361,14 @@ class QQGateway:
             nonlocal sent_ack
             if not sent_ack:
                 sent_ack = True
-                await self._send(msg_type, user_id, group_id, f"({_persona_name}正在思考中，稍等片刻...)")
+                _hold_msgs = [
+                    "正在努力思考中...",
+                    "正在调集智慧...",
+                    "正在认真分析...",
+                    "稍等一下下...",
+                    "正在运转大脑...",
+                ]
+                await self._send(msg_type, user_id, group_id, f"({_persona_name}{_rand.choice(_hold_msgs)})")
 
         ack_timer_task = asyncio.create_task(auto_ack_timer())
 
