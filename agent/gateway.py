@@ -370,46 +370,22 @@ class QQGateway:
                 _user_address = _prof.get("user_address", "亮哥")
         except Exception:
             pass
-        # 状态提示随机轮换，每次不同
+        # 状态提示，模拟真人对话的自然过渡
         import random as _rand
-        _status_msgs = [
-            f"正在飞速翻阅脑海中的记忆手册",
-            f"正在努力思考中",
-            f"正在翻找相关的知识",
-            f"正在整理思路",
-            f"正在查询记忆库",
-            f"正在检索相关资料",
-            f"正在快速分析",
-            f"正在联想相关经验",
-            f"正在查阅笔记",
-            f"思考了一下",
-            f"正在连接知识点",
-        ]
-        await self._send(msg_type, user_id, group_id, f"⏳ ({_persona_name}{_rand.choice(_status_msgs)}...)")
-
-        sent_ack = True
+        # 自然过渡：AI 自主决定，在 core.py _run_loop 中 yield transition 事件
+        sent_transition = False
         buf = ""
-
-        async def auto_ack_timer():
-            await asyncio.sleep(1.5)
-            nonlocal sent_ack
-            if not sent_ack:
-                sent_ack = True
-                _hold_msgs = [
-                    "正在努力思考中...",
-                    "正在调集智慧...",
-                    "正在认真分析...",
-                    "稍等一下下...",
-                    "正在运转大脑...",
-                ]
-                await self._send(msg_type, user_id, group_id, f"({_persona_name}{_rand.choice(_hold_msgs)})")
-
-        ack_timer_task = asyncio.create_task(auto_ack_timer())
 
         # 流式段落/句子分发清洗逻辑，消除憋字挂起感
         try:
             async for evt in agent.run(raw, stream=True):
-                if evt["type"] == "text_delta":
+                if evt["type"] == "transition":
+                    if not sent_transition:
+                        sent_transition = True
+                        await self._send(msg_type, user_id, group_id, f"({_persona_name}{evt['content']})")
+                elif evt["type"] == "text_delta":
+                    if not sent_transition:
+                        sent_transition = True
                     buf += evt["content"]
 
                     if "[SPLIT]" in buf:
@@ -493,8 +469,6 @@ class QQGateway:
             buf += f"[异常: {e}]"
             self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
-            if not ack_timer_task.done():
-                ack_timer_task.cancel()
             if buf.strip():
                 self._log_activity("AI 计划/答复", buf.strip())
                 await self._send_chunk(msg_type, user_id, group_id, buf.strip())
