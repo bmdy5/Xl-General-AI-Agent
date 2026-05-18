@@ -35,7 +35,8 @@ class BashTool(BaseTool):
         return False
 
     def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
-        return True  # 所有 bash 命令都需要审批
+        cmd = (input_args or {}).get("command", "")
+        return self.classify_command(cmd) == "dangerous"
 
     # ── 命令分类 ───────────────────────────────────────────────
 
