@@ -23,7 +23,7 @@ from .memory.manager import MemoryManager
 from .session.handler import SessionHandler
 from .tools.registry import ToolRegistry
 from .compressor import ContextCompressor
-from .evolution import audit_tool_call
+from .evolution import audit_tool_call, on_session_end
 from .memory.error_tracker import ErrorTracker, L1_TRANSIENT, L2_SELF_HEAL, L3_FATAL
 
 # v6: RAG 检索优化常量
@@ -186,7 +186,7 @@ class Agent:
         return {"action": "silent", "level": level}
 
     async def _repair_history(self):
-        """确保对话历史符合 LLM 规范：assistant 的 tool_calls 必须跟有对应的 tool 结果。"""
+        """双向修复：补全缺失的 tool 结果 + 删除孤立的 tool 消息."""
         if not self.messages:
             return
 
@@ -194,53 +194,44 @@ class Agent:
         repair_logger = logging.getLogger("agent.repair")
 
         # 1. 扫描所有 assistant 发出的 tool_call_ids
-        assistant_calls = []
+        assistant_tc_ids: set[str] = set()
         for m in self.messages:
             if m.get("role") == "assistant" and m.get("tool_calls"):
                 for tc in m["tool_calls"]:
                     if tc.get("id"):
-                        assistant_calls.append({
-                            "id": tc["id"],
-                            "name": tc.get("function", {}).get("name", "unknown")
-                        })
+                        assistant_tc_ids.add(tc["id"])
 
-        # 2. 扫描所有已有的 tool 结果 ids
-        existing_tool_ids = {
-            m["tool_call_id"] for m in self.messages
-            if m.get("role") == "tool" and m.get("tool_call_id")
-        }
+        # 2. 扫描所有 tool 消息
+        tool_msgs = [(i, m) for i, m in enumerate(self.messages)
+                     if m.get("role") == "tool" and m.get("tool_call_id")]
 
-        # 3. 找出缺失结果的 IDs
-        missing = [c for c in assistant_calls if c["id"] not in existing_tool_ids]
-        
-        if not missing:
-            return
+        # 3. 删除孤立的 tool 消息（没有对应 assistant.tool_calls）
+        orphan_tools = [(i, m) for i, m in tool_msgs
+                        if m["tool_call_id"] not in assistant_tc_ids]
+        if orphan_tools:
+            for i, m in reversed(orphan_tools):
+                del self.messages[i]
+            repair_logger.warning(
+                f"Transcript repair: removed {len(orphan_tools)} orphan tool messages "
+                f"(no matching assistant.tool_calls)"
+            )
 
-        repair_logger.warning(f"检测到 {len(missing)} 个孤儿工具调用，正在自动补全占位符以修复对话链...")
+        # 4. 补全缺失的 tool 结果（assistant 有 tool_calls 但没有对应 tool 消息）
+        existing_tool_ids = {m["tool_call_id"] for _, m in tool_msgs}
+        missing = [tc_id for tc_id in assistant_tc_ids if tc_id not in existing_tool_ids]
 
-        # 4. 补全缺失的 tool 消息 (精准插队)
-        for item in missing:
-            placeholder = {
-                "role": "tool",
-                "tool_call_id": item["id"],
-                "name": item["name"],
-                "content": "正在等待人工确认/已恢复执行"
-            }
-            # 找到对应的 assistant 消息位置，插在它后面
-            target_idx = -1
-            for idx, m in enumerate(self.messages):
-                if m.get("role") == "assistant" and m.get("tool_calls"):
-                    if any(tc.get("id") == item["id"] for tc in m["tool_calls"]):
-                        target_idx = idx
-                        break
-            
-            if target_idx != -1:
-                self.messages.insert(target_idx + 1, placeholder)
-                repair_logger.info(f"已在位置 {target_idx + 1} 插入占位符修复对话链")
-            else:
+        if missing:
+            repair_logger.warning(f"检测到 {len(missing)} 个孤儿工具调用，正在自动补全占位符...")
+            for tc_id in missing:
+                placeholder = {
+                    "role": "tool",
+                    "tool_call_id": tc_id,
+                    "name": "unknown",
+                    "content": "已恢复执行"
+                }
                 self.messages.append(placeholder)
-                
-        if self.session:
+
+        if (orphan_tools or missing) and self.session:
             await self.session.replace_all(self.messages)
 
     async def _run_loop(self, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
@@ -353,6 +344,7 @@ class Agent:
 
             if not tool_calls_list:
                 yield {"type": "completed"}
+                asyncio.create_task(on_session_end(self))
                 return
 
             # ── 权限检查 + 工具执行（合并循环）──
@@ -466,6 +458,7 @@ class Agent:
                 yield {"type": "nudge", "turn": self._turn_count}
 
         yield {"type": "max_turns"}
+        asyncio.create_task(on_session_end(self))
 
     async def _llm_chat(self, messages: list[dict], tools: list[dict]) -> tuple:
         """非流式 LLM 调用，返回 (content, reasoning, tool_calls)."""
@@ -761,6 +754,20 @@ class Agent:
                         lines.append("## 关联外链摘要（来源: 笔记链接）")
                         lines.append(link_summaries)
                 # -----------------------------
+
+            # v7: 跨会话搜索 — 从历史聊天记录中检索相关内容
+            if self.session and len(user_input) > 20:
+                try:
+                    from agent.session.handler import SessionHandler
+                    past = await self.session.search_all_sessions(
+                        user_input, self.llm, max_results=3
+                    )
+                    if past and "No past conversations" not in past:
+                        lines.append("")
+                        lines.append("## 相关历史对话（来源: 跨会话检索）")
+                        lines.append(past[:500])
+                except Exception:
+                    pass
         except Exception as e:
             logger.warning(f"Error in RAG/Layer4 injection: {e}")
 

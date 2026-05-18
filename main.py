@@ -20,7 +20,11 @@ import sys
 from dotenv import load_dotenv
 
 import logging
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s',
+    handlers=[logging.StreamHandler(sys.stdout)],
+)
 logging.getLogger("LiteLLM").setLevel(logging.WARNING)
 import warnings
 warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")

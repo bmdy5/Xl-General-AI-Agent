@@ -296,16 +296,20 @@ class MemoryManager:
             return []
 
     def search_memories(self, query: str, limit: int = 5) -> list[dict]:
-        """FTS5 全文搜索记忆，返回 BM25 排序结果。自动清理特殊字符。"""
+        """FTS5 全文搜索记忆，BM25 排序 + LIKE 降级."""
         import re
         clean = re.sub(r'[^\w\u4e00-\u9fff\s]', ' ', query).strip()
         if not clean or len(clean) < 2:
             return []
         try:
-            # 多词用 OR 搜索（默认 MATCH 是短语搜索）
             fts_query = ' OR '.join(clean.split())
             db = self._get_db()
-            return fts_search(db, fts_query, limit)
+            results = fts_search(db, fts_query, limit)
+            # LIKE fallback for CJK queries where FTS5 tokenization fails
+            if len(results) < 2 and clean:
+                like_results = _like_search(db, "memories_fts", clean, limit)
+                return like_results or results
+            return results
         except Exception:
             return []
 
@@ -355,3 +359,31 @@ class MemoryManager:
         if profile_file.exists():
             return f"\n\n## Who You Are (User Profile)\n{profile_file.read_text(encoding='utf-8')}\n"
         return ""
+
+def _like_search(db, table: str, query: str, limit: int = 5) -> list[dict]:
+    """LIKE 降级搜索 — CJK FTS5 分词失效时的兜底方案."""
+    import re
+    results = []
+    keywords = [k for k in re.split(r'\s+', query) if len(k) >= 2]
+    if not keywords:
+        keywords = [query]
+    for kw in keywords[:3]:  # 最多3个关键词
+        try:
+            cur = db.execute(
+                f"SELECT content, description, memory_type, filename, timestamp "
+                f"FROM {table} WHERE content LIKE ? LIMIT ?",
+                (f"%{kw}%", limit),
+            )
+            for row in cur:
+                results.append({
+                    "content": row[0], "description": row[1],
+                    "memory_type": row[2], "filename": row[3],
+                    "timestamp": row[4],
+                })
+                if len(results) >= limit:
+                    break
+        except Exception:
+            continue
+        if len(results) >= limit:
+            break
+    return results[:limit]
