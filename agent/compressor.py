@@ -141,6 +141,21 @@ class ContextCompressor:
                 "role": "system",
                 "content": f"[历史对话摘要]\n{summary}",
             }
+
+            # auto-persist compressed summary to memory
+            if memory and hasattr(memory, 'save'):
+                try:
+                    from datetime import datetime, timezone
+                    date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                    await memory.save(
+                        filename=f"compressed_{date_str}",
+                        description=f"[compressed] 对话压缩摘要 {date_str}",
+                        content=f"# 对话压缩摘要\n\n日期: {date_str}\n\n{summary}",
+                    )
+                    logger.info("Compressed summary saved to memory")
+                except Exception as e:
+                    logger.warning(f"Failed to save compressed summary: {e}")
+
             new_messages = [summary_msg] + tail
 
             # 成功 → 重置熔断器
