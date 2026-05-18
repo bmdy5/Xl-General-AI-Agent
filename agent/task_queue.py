@@ -1,9 +1,9 @@
 """任务队列 — 文件持久化，支持定时/重复任务.
 
+Agent 通过 schedule_task tool 自主管理任务，无需硬编码。
 用法:
   queue = TaskQueue()
-  queue.add("清理旧日志", cron="daily")       # 每日执行
-  queue.add("备份记忆", cron="0 */6 * * *")  # 每 6 小时
+  queue.add(description, action, cron)         # cron: daily / hourly / once / cron expr
   queue.list()                                 # 列出待办
   queue.process_due()                          # 处理到期的
 """
