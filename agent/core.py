@@ -11,6 +11,7 @@ import enum
 import json
 import logging
 import os
+import random as _random
 import re
 from datetime import datetime, timezone
 from pathlib import Path
@@ -29,6 +30,21 @@ from .memory.error_tracker import ErrorTracker, L1_TRANSIENT, L2_SELF_HEAL, L3_F
 # v6: RAG 检索优化常量
 _KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')  # 中文2字+/英文3字+关键词提取
 _TYPE_PRIORITY = {"feedback": 0, "user": 1, "learn": 2, "project": 3}  # 规则重排优先级
+
+# ── 自然过渡语规则 ──
+_TRANSITION_RULES = [
+    (re.compile(r'查|搜|找|搜索|查找'), "search"),
+    (re.compile(r'为什么|怎么|如何|什么原因|咋回事|干啥的|干嘛的'), "think"),
+    (re.compile(r'代码|实现|def |class |import |bug|报错|错误|函数'), "code"),
+]
+
+_TRANSITION_TEMPLATES = {
+    "search": ["好嘞，我查查", "我翻翻看", "行，我搜一下", "嗯，我来查查"],
+    "think": ["嗯，这个我想想", "有意思，让我捋一捋", "这个我分析一下"],
+    "code": ["我看看代码", "代码我瞅瞅", "让我看看这个"],
+    "long": ["信息量不小，我捋一捋", "内容有点多，我先理一理", "好嘞，我消化一下"],
+    "default": ["好嘞", "收到", "好的"],
+}
 
 
 
@@ -238,6 +254,12 @@ class Agent:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
         cached_prompt = await self._build_system_prompt()
         cached_block = await self._build_memory_block(user_input, 0)
+
+        # ── 自然过渡语：AI 自主决定是否先说一句再处理 ──
+        if turn == 0:
+            transition = self._quick_transition(user_input)
+            if transition:
+                yield {"type": "transition", "content": transition}
 
         while turn < self.max_turns:
             # ── 超时检查 ──
@@ -602,6 +624,31 @@ class Agent:
             return result[:5]
         except Exception:
             return []
+
+    def _quick_transition(self, user_input: str) -> Optional[str]:
+        """快速判断是否需要自然过渡语。
+
+        用规则匹配输入特征，返回一句自然的过渡语（不是固定列表，每次从模板中取样）。
+        如果不需要过渡（短问候、直接回答），返回 None。
+        """
+        n = len(user_input)
+        if n < 10:
+            return None  # 短问候不需要
+
+        # 匹配规则，提取关键词上下文
+        for pattern, category in _TRANSITION_RULES:
+            m = pattern.search(user_input)
+            if m:
+                templates = _TRANSITION_TEMPLATES.get(category, _TRANSITION_TEMPLATES["default"])
+                text = _random.choice(templates)
+                return text
+
+        # 长输入也需要过渡
+        if n > 50:
+            return _random.choice(_TRANSITION_TEMPLATES["long"])
+
+        # 普通输入（10-50字）用默认过渡
+        return _random.choice(_TRANSITION_TEMPLATES["default"])
 
     async def _build_system_prompt(self) -> str:
           """组装 system prompt = 静态段(含动态人格自画像) + 当前上下文 + 自进化规则."""
