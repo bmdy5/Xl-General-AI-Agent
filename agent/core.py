@@ -34,8 +34,8 @@ _TYPE_PRIORITY = {"feedback": 0, "user": 1, "learn": 2, "project": 3}  # 规则�
 # ── 自然过渡语规则 ──
 _TRANSITION_RULES = [
     (re.compile(r'查|搜|找|搜索|查找'), "search"),
+    (re.compile(r'代码|def |class |import |bug|报错|错误|函数'), "code"),
     (re.compile(r'为什么|怎么|如何|什么原因|咋回事|干啥的|干嘛的'), "think"),
-    (re.compile(r'代码|实现|def |class |import |bug|报错|错误|函数'), "code"),
 ]
 
 _TRANSITION_TEMPLATES = {
@@ -45,6 +45,28 @@ _TRANSITION_TEMPLATES = {
     "long": ["信息量不小，我捋一捋", "内容有点多，我先理一理", "好嘞，我消化一下"],
     "default": ["好嘞", "收到", "好的"],
 }
+
+
+def quick_transition(user_input: str) -> Optional[str]:
+    """快速判断是否需要自然过渡语（模块级，可直接导入测试）。
+
+    用规则匹配输入特征，返回一句自然的过渡语。
+    如果不需要过渡（短问候、直接回答），返回 None。
+    """
+    n = len(user_input)
+    if n < 10:
+        return None
+
+    for pattern, category in _TRANSITION_RULES:
+        m = pattern.search(user_input)
+        if m:
+            templates = _TRANSITION_TEMPLATES.get(category, _TRANSITION_TEMPLATES["default"])
+            return _random.choice(templates)
+
+    if n > 50:
+        return _random.choice(_TRANSITION_TEMPLATES["long"])
+
+    return _random.choice(_TRANSITION_TEMPLATES["default"])
 
 
 
@@ -626,29 +648,8 @@ class Agent:
             return []
 
     def _quick_transition(self, user_input: str) -> Optional[str]:
-        """快速判断是否需要自然过渡语。
-
-        用规则匹配输入特征，返回一句自然的过渡语（不是固定列表，每次从模板中取样）。
-        如果不需要过渡（短问候、直接回答），返回 None。
-        """
-        n = len(user_input)
-        if n < 10:
-            return None  # 短问候不需要
-
-        # 匹配规则，提取关键词上下文
-        for pattern, category in _TRANSITION_RULES:
-            m = pattern.search(user_input)
-            if m:
-                templates = _TRANSITION_TEMPLATES.get(category, _TRANSITION_TEMPLATES["default"])
-                text = _random.choice(templates)
-                return text
-
-        # 长输入也需要过渡
-        if n > 50:
-            return _random.choice(_TRANSITION_TEMPLATES["long"])
-
-        # 普通输入（10-50字）用默认过渡
-        return _random.choice(_TRANSITION_TEMPLATES["default"])
+        """Agent 实例方法，委托给模块级 quick_transition."""
+        return quick_transition(user_input)
 
     async def _build_system_prompt(self) -> str:
           """组装 system prompt = 静态段(含动态人格自画像) + 当前上下文 + 自进化规则."""
