@@ -104,7 +104,7 @@ def build_agent(session_id: str = "default") -> Agent:
     model_flash = os.getenv("MYAGENT_MODEL_FLASH", "deepseek/deepseek-v4-flash")
     model_pro = os.getenv("MYAGENT_MODEL_PRO", "deepseek/deepseek-v4-pro")
 
-    max_tokens = int(os.getenv("MYAGENT_MAX_TOKENS", "16384"))
+    max_tokens = int(os.getenv("MYAGENT_MAX_TOKENS", "8192"))
     llm = LLMClient(
         model=model_flash,            # 默认用 DeepSeek Flash（省钱）
         api_key=api_key,              # Mimo API key（仅 Mimo 模型会用）
