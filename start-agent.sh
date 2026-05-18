@@ -58,11 +58,11 @@ if docker ps -a --format '{{.Names}}' | grep -q "^napcat$"; then
     fi
 else
     echo "   创建新 NapCat 容器..." | tee -a "$STARTUP_LOG"
-    # 使用持久化数据卷，不加 ACCOUNT 参数（防止 -q 快速登录用过期 token）
     docker run -d --name napcat \
-        -p 3000:3000 -p 3001:3001 -p 6099:6099 \
+        -p 3020:3000 -p 3001:3001 -p 6099:6099 \
         -v "$NAPCAT_DATA_DIR:/app/.config/QQ" \
         -v "$NAPCAT_DATA_DIR:/root/.config/QQ" \
+        -e ACCOUNT=3870213248 \
         mlikiowa/napcat-docker:latest 2>&1 | tee -a "$STARTUP_LOG"
     echo "   ✓ NapCat 容器已创建" | tee -a "$STARTUP_LOG"
 fi
@@ -73,7 +73,7 @@ echo "4. 等待 NapCat 就绪..." | tee -a "$STARTUP_LOG"
 NAPCAT_READY=false
 for i in $(seq 1 20); do
     sleep 3
-    if curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1; then
+    if curl -s --connect-timeout 2 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1; then
         NAPCAT_READY=true
         echo "   ✓ NapCat API 就绪" | tee -a "$STARTUP_LOG"
         break
@@ -94,7 +94,7 @@ if [ "$NAPCAT_READY" = false ]; then
     # 再次等待就绪
     for i in $(seq 1 20); do
         sleep 3
-        if curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1; then
+        if curl -s --connect-timeout 2 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1; then
             NAPCAT_READY=true
             echo "   ✓ NapCat 已登录" | tee -a "$STARTUP_LOG"
             break
@@ -148,7 +148,7 @@ EOF
     sleep 10
     
     # 检查是否登录还在（持久化数据卷应该保留了登录态）
-    if curl -s --connect-timeout 3 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1; then
+    if curl -s --connect-timeout 3 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1; then
         echo "   ✓ 登录态保持" | tee -a "$STARTUP_LOG"
     else
         echo "   ⚠️ 登录态丢失，请重新扫码..." | tee -a "$STARTUP_LOG"
@@ -159,7 +159,7 @@ EOF
         # 等待登录
         for i in $(seq 1 20); do
             sleep 3
-            curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1 && break
+            curl -s --connect-timeout 2 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1 && break
         done
         echo "   ✓ NapCat 已登录" | tee -a "$STARTUP_LOG"
     fi
