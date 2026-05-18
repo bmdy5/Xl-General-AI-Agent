@@ -98,25 +98,43 @@ class MemoryManager:
             content += "\n\n... (truncated)"
         return f"\n\n{content}\n"
 
-    async def save(self, filename: str, description: str, content: str) -> str:
-        """Save memory with auto timestamp. Returns timestamp string."""
+    async def save(self, filename: str, description: str, content: str,
+                   note_path: Optional[str] = None) -> str:
+        """Save memory. If note_path given, stores pointer instead of full content."""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
         if not safe_name.endswith(".md"):
             safe_name += ".md"
         topic_file = self.base_dir / safe_name
         is_update = topic_file.exists()
-        if is_update:
-            old_content = topic_file.read_text(encoding="utf-8")
-            content = (
-                f"<!-- updated: {timestamp} -->\n{content}\n\n"
-                f"---\n<!-- previous version -->\n{old_content[:500]}"
+
+        if note_path:
+            # Knowledge index mode: store pointer, not content
+            index_content = (
+                f"<!-- pointer -->\n"
+                f"# {description}\n\n"
+                f"→ 笔记位置: {note_path}\n\n"
+                f"_内容存储在{note_path}，这里只做索引。_"
             )
-        topic_file.write_text(content, encoding="utf-8")
-        index_line = f"- [{description}]({safe_name}) `{timestamp}`"
+            topic_file.write_text(index_content, encoding="utf-8")
+            index_line = f"- [{description}]({note_path}) `{timestamp}`"
+            mtype = "knowledge"
+            update_knowledge_index("knowledge", f"{mtype} | {description} | {note_path}")
+        else:
+            # Core memory mode: store full content (existing behavior)
+            if is_update:
+                old_content = topic_file.read_text(encoding="utf-8")
+                content = (
+                    f"<!-- updated: {timestamp} -->\n{content}\n\n"
+                    f"---\n<!-- previous version -->\n{old_content[:500]}"
+                )
+            topic_file.write_text(content, encoding="utf-8")
+            index_line = f"- [{description}]({safe_name}) `{timestamp}`"
+            mtype = description.split("]")[0].replace("[", "") if "[" in description else "other"
+            update_knowledge_index("memory", f"{mtype} | {description} | {safe_name}")
+
         self._upsert_index(safe_name, index_line)
-        mtype = description.split("]")[0].replace("[", "") if "[" in description else "other"
-        update_knowledge_index("memory", f"{mtype} | {description} | {safe_name}")
+
         # 同步到 FTS5 索引
         try:
             db = self._get_db()
@@ -221,6 +239,25 @@ class MemoryManager:
         except Exception as e:
             logger.warning(f"Failed to save to notes: {e}")
             return None
+
+    async def verify_index(self) -> list[dict]:
+        """Check MEMORY.md for broken note pointers. Returns list of broken entries."""
+        broken = []
+        entries = self._parse_index()
+        from pathlib import Path as _Path
+        import re
+        rules = self.get_routing_rules()
+        m = re.search(r'学习笔记根目录:\s*(.+)', rules)
+        base = _Path(m.group(1).strip()) if m else _Path.home() / "Desktop" / "学习笔记"
+
+        for e in entries:
+            fname = e.get("filename", "")
+            # Check if it's a pointer (has directory separators or starts with 0N-)
+            if "/" in fname or (fname.startswith("0") and "-" in fname[:3]):
+                full_path = base / fname
+                if not full_path.exists():
+                    broken.append({**e, "expected_path": str(full_path)})
+        return broken
 
     def search_notes(self, query: str, limit: int = 5) -> list[dict]:
         """搜索笔记知识库（学习笔记目录）。返回 BM25 排序的分块结果。"""
