@@ -159,7 +159,8 @@ class QQGateway:
             prompt = MAINTENANCE_MERGE_PROMPT.format(reflect_list=reflect_list)
 
             agent = self._factory(session_key)
-            agent.max_turns = 10  # 熔断：最多10轮
+            agent.max_turns = 10       # 熔断：最多10轮
+            agent.is_maintenance = True  # 分权：merge_to_core 免签
             try:
                 async for evt in agent.run(prompt, stream=True):
                     if evt["type"] == "permission_request":

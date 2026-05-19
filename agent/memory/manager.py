@@ -109,15 +109,17 @@ class MemoryManager:
 
         existing = filepath.read_text(encoding="utf-8")
 
-        # 去重
-        content_clean = content[:300].replace("\n", " ").replace(" ", "")
-        existing_clean = existing.replace("\n", " ").replace(" ", "")
-        if content_clean in existing_clean:
+        # MD5 精准去重
+        import hashlib
+        content_hash = hashlib.md5(content.strip().encode('utf-8')).hexdigest()
+        hash_tag = f"<!-- hash:{content_hash} -->"
+        if hash_tag in existing:
             return timestamp
 
         append_entry = (
             f"\n\n---\n"
             f"<!-- {timestamp} -->\n"
+            f"{hash_tag}\n"
             f"### {description}\n"
             f"{content}\n"
         )
