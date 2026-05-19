@@ -483,54 +483,25 @@ class QQGateway:
         # 判定是否有旧任务正在运行
         active_task = self._current_tasks.get(session_key)
         if active_task and not active_task.done():
-            # AI 直觉语义分类器（极速 LiteLLM 判定）
-            is_preempt = False
-            try:
-                classify_prompt = [
-                    {"role": "system", "content": f"{_ua}发送了新消息。当前后台正有一个长任务在运行。请根据中文语义理解判定这是否属于一个紧急的抢占式打断指令（即{_ua}要求你立刻强行停下当前的工作去干新任务，例如'别跑了先看这个'、'停！'、'你先做这个'）？若是，只输出 True，否则只输出 False。绝对不要输出任何其他多余字符！"},
-                    {"role": "user", "content": f"新消息内容: '{raw}'"}
-                ]
-                res = await agent.llm.chat(classify_prompt)
-                ans = res.get("content", "").strip().lower()
-                is_preempt = "true" in ans
-            except Exception as e:
-                logger.error(f"Classifier failed: {e}")
-                # 关键词兜底
-                is_preempt = any(kw in raw for kw in ["先", "别", "停", "等", "急", "刹车", "取消"])
+            # 紧急抢占检测：纯关键词，无 LLM 调用
+            is_preempt = any(kw in raw for kw in ["停", "别跑了", "取消", "刹车", "先别", "停下"])
 
             if is_preempt:
-                # 强占式中断：取消旧任务，原地刹车
                 active_task.cancel()
                 self._log_activity("系统调度", f"紧急强占中断当前任务: {session_key}")
-                
-                # 记录被取消的指令，用于注入记忆插梢
                 old_raw = getattr(active_task, "raw_prompt", "之前的开发任务")
                 interruption_note = (
-                    f"[系统提示：{_ua}在刚才的开发任务 \"{old_raw}\" 运行中途，发送了这条新命令。"
-                    f"请你根据你最新的人格手册，首先简短、自然地确认你已经停下了上一个任务，然后立刻切入分析{_ua}的新指令：\"{raw}\"]"
+                    f"[系统提示：{_ua}在刚才的任务中途发送了这条新命令。"
+                    f"先简短确认停下上一个任务，然后切入新指令：\"{raw}\"]"
                 )
                 raw = interruption_note
             else:
-                # 非强占式：进入排队队列
-                self._message_queues.setdefault(session_key, []).append((event, raw))
-                self._log_activity("系统调度", f"新任务加入排队队列: {raw}")
-                
-                # 异步 AI 动态安抚秒回（不发任何硬编码气泡）
-                async def async_fast_reply():
-                    try:
-                         prompt_msg = [
-                             {"role": "system", "content": f"请读取{_ua}对你的性格要求和纠正记忆，用极具个性、俏皮、懂事的女性程序员语气，写一句极短（15字内）的话，告诉{_ua}你收到新任务并排在待办清单里了，等手头忙完马上自动跑。直接输出答复内容，绝对不要带任何多余字眼！"},
-                             {"role": "user", "content": f"{_ua}追加发送的新任务是：{raw}"}
-                         ]
-                         res = await agent.llm.chat(prompt_msg)
-                         reply = res.get("content", "").strip()
-                         if reply:
-                             await self._send(msg_type, user_id, group_id, reply)
-                    except Exception as err:
-                         logger.error(f"Fast reply failed: {err}")
-                         await self._send(msg_type, user_id, group_id, f"{_ua}，新任务记下了，手头这步忙完马上自动跑！")
-                
-                asyncio.create_task(async_fast_reply())
+                # CC 模式：不排队、不分类、不安抚。消息直接追加到 agent 对话
+                agent.messages.append({"role": "user", "content": raw})
+                if agent.session:
+                    asyncio.create_task(agent.session.append_message(
+                        {"role": "user", "content": raw}))
+                self._log_activity("系统调度", f"消息注入当前任务: {raw[:60]}...")
                 return
 
         # 启动任务执行
@@ -695,15 +666,6 @@ class QQGateway:
             asyncio.create_task(async_consolidate_persona())
             
             self._current_tasks.pop(session_key, None)
-            
-            # 自动拉起下一个排队任务
-            queue = self._message_queues.get(session_key, [])
-            if queue:
-                next_event, next_raw = queue.pop(0)
-                self._log_activity("系统调度", f"自动拉起下一个排队任务: {next_raw}")
-                task = asyncio.create_task(self._execute_task(session_key, next_event, next_raw))
-                task.raw_prompt = next_raw
-                self._current_tasks[session_key] = task
 
     def _tool_detail(self, name: str, args: dict) -> str:
         """解包常用开发工具的核心参数，用于高度可视化的微广播."""
