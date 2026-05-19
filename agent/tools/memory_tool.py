@@ -100,8 +100,11 @@ class MemoryTool(BaseTool):
 
     async def validate_input(self, input_args: dict, context: Any = None) -> dict:
         action = input_args.get("action", "")
-        if action not in ("add", "replace", "remove", "read", "search"):
+        if action not in ("add", "replace", "remove", "read", "search", "merge_to_core"):
             return {"result": False, "message": f"Invalid action: {action}"}
+        if action == "merge_to_core":
+            if not input_args.get("target_file") or not input_args.get("content"):
+                return {"result": False, "message": "target_file and content required for merge_to_core"}
         if action == "search" and not input_args.get("query"):
             return {"result": False, "message": "query required for search action"}
         if action in ("add", "replace") and not input_args.get("content"):
