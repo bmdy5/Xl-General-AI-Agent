@@ -199,6 +199,12 @@ class QQGateway:
                 applied = await auto_apply_rules(analysis, agent_coach.memory)
                 if applied:
                     logger.info(f"Coach auto-applied {applied} rule(s)")
+
+                # 数据飞轮阶段3: 自测验证
+                from agent.evo_tester import run_self_test, save_test_report
+                test_report = await run_self_test(agent_coach.llm, agent_coach.memory)
+                if test_report["total"] > 0:
+                    save_test_report(test_report)
             try:
                 agent_coach._abort.set()
             except Exception:
