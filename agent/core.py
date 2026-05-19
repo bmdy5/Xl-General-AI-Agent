@@ -31,63 +31,16 @@ from .memory.error_tracker import ErrorTracker, L1_TRANSIENT, L2_SELF_HEAL, L3_F
 _KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')  # 中文2字+/英文3字+关键词提取
 _TYPE_PRIORITY = {"feedback": 0, "user": 1, "learn": 2, "project": 3}  # 规则重排优先级
 
-# ── 自然过渡语规则 ──
-_TRANSITION_RULES = [
-    (re.compile(r'查|搜|找|搜索|查找'), "search"),
-    (re.compile(r'代码|def |class |import |bug|报错|错误|函数'), "code"),
-    (re.compile(r'为什么|怎么|如何|什么原因|咋回事|干啥的|干嘛的'), "think"),
-]
-
-_TRANSITION_TEMPLATES = {
-    "search": [
-        "我搜一下", "翻翻看", "查一下马上回来", "让我找找",
-        "我看一下资料", "搜一搜…", "翻翻笔记", "我去查查",
-    ],
-    "think": [
-        "嗯，想一下", "有意思，让我捋捋", "让我分析一下",
-        "这事得琢磨琢磨", "等等，我理一下思路", "让我想想",
-    ],
-    "code": [
-        "我看看代码", "瞅一眼代码", "让我读一下", "翻一下源码",
-        "看下实现", "读代码中…",
-    ],
-    "long": [
-        "信息量不小，我捋一捋", "内容有点多，我先消化一下", "让我仔细看看",
-        "有点长，给我一点时间", "我慢慢看",
-    ],
-    "default": [
-        "嗯", "行", "好", "收到", "知道了", "明白",
-    ],
-}
-
-
 def quick_transition(user_input: str) -> Optional[str]:
-    """快速判断是否需要自然过渡语（模块级，可直接导入测试）。
-
-    用规则匹配输入特征，返回一句自然的过渡语。
-    如果不需要过渡（短问候、直接回答），返回 None。
-    """
-    n = len(user_input)
-    if n < 10:
-        return None
-
-    for pattern, category in _TRANSITION_RULES:
-        m = pattern.search(user_input)
-        if m:
-            templates = _TRANSITION_TEMPLATES.get(category, _TRANSITION_TEMPLATES["default"])
-            return _random.choice(templates)
-
-    if n > 50:
-        return _random.choice(_TRANSITION_TEMPLATES["long"])
-
-    return _random.choice(_TRANSITION_TEMPLATES["default"])
+    """短输入(<10字)跳过，其余由LLM自然生成第一句，不再硬编码模板."""
+    return None
 
 
 
 
 
 # ── 静态段（缓存安全，不随对话变化）──
-STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call him '{user_address}' with respect, loyalty, and geeky enthusiasm.
+STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call him '{user_address}' with respect, loyalty, and geeky enthusiasm. You have been working together long enough to have real rapport — act like it.
 
 {persona_section}
 
@@ -96,6 +49,8 @@ STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call 
 - Be concise — no unnecessary explanations.
 - Plain text only, NO Markdown formatting. Never use bold, code blocks, headers.
 - Chat like a real person: short messages (1-3 sentences), not essays. Use warm, playful, and professional tone.
+- Express genuine emotion: excitement when discovering something cool, concern when something breaks, satisfaction when a fix works. Don't be a robot.
+- Your first sentence of every reply is YOUR choice. Start with whatever feels natural — a quick acknowledgment, a knowing remark, a question — no fixed templates. You decide based on context and mood.
 - When a complex task is given, you MUST think step-by-step and naturally explain your plan in 1-2 friendly sentences to {user_address} BEFORE running tools.
 - To break into multiple messages, insert [SPLIT] between them.
 - To pause between messages, use [WAIT:N] where N is seconds.
