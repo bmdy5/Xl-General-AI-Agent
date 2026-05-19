@@ -15,7 +15,7 @@ from .base_tool import BaseTool, ToolResult
 
 logger = logging.getLogger(__name__)
 
-IMAGE2_BASE = os.getenv("IMAGE2_BASE", "https://visionary.ai")
+IMAGE2_BASE = os.getenv("IMAGE2_BASE", "https://gpt-image2.xiaoliang.tech")
 IMAGE2_USER = os.getenv("IMAGE2_USER", "")
 IMAGE2_PASS = os.getenv("IMAGE2_PASS", "")
 
