@@ -48,35 +48,21 @@ class Image2GenerateTool(BaseTool):
                 "name": self.name,
                 "description": (
                     "Generate pixel art images using XiaoFeng's Image2 API. "
-                    "Use this to create textures for the pixel office dashboard: "
-                    "furniture, floor tiles, wall textures, character sprites, decorations. "
-                    "The generated image will be saved to the dashboard assets folder. "
-                    "Quality: 'standard'(5pts), 'hd'(10pts), 'master'(15pts). "
-                    "Aspect ratios: '1:1' for sprites/icons, '16:9' for wide textures."
+                    "Use this to create textures, sprites, or any pixel art. "
+                    "To send the generated image via QQ, include this in your reply: "
+                    "[CQ:image,file=FILE_PATH] where FILE_PATH is the saved file path."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": (
-                                "Detailed pixel art prompt. Include 'pixel art, Stardew Valley style, "
-                                "16-bit, top-down view, game asset'. Be specific about colors, size, and usage."
-                            ),
-                        },
-                        "quality": {
-                            "type": "string",
-                            "enum": ["standard", "hd", "master"],
-                            "description": "standard=5pts, hd=10pts, master=15pts",
+                            "description": "Detailed pixel art prompt. Be specific about colors, style, and usage.",
                         },
                         "aspect_ratio": {
                             "type": "string",
                             "enum": ["1:1", "16:9", "9:16"],
                             "description": "1:1 for sprites/icons, 16:9 for wide textures",
-                        },
-                        "style": {
-                            "type": "string",
-                            "description": "Style ID, default is 'default'",
                         },
                     },
                     "required": ["prompt"],
@@ -95,9 +81,7 @@ class Image2GenerateTool(BaseTool):
         self, input_args: dict, context: Any = None
     ) -> AsyncGenerator[ToolResult, None]:
         prompt = input_args["prompt"]
-        quality = input_args.get("quality", "standard")
         aspect = input_args.get("aspect_ratio", "1:1")
-        style = input_args.get("style", "default")
 
         loop = asyncio.get_running_loop()
 
@@ -111,7 +95,7 @@ class Image2GenerateTool(BaseTool):
 
             # Step 2: Generate
             yield ToolResult(type="progress", data=f"生成中: {prompt[:60]}...")
-            task_id = await loop.run_in_executor(None, self._generate, token, prompt, quality, aspect, style)
+            task_id = await loop.run_in_executor(None, self._generate, token, prompt, aspect)
             if not task_id:
                 yield ToolResult(type="result", data="Error: generate failed")
                 return
@@ -137,15 +121,17 @@ class Image2GenerateTool(BaseTool):
             # Step 4: Download
             yield ToolResult(type="progress", data="下载图片...")
             filename = await loop.run_in_executor(None, self._download, image_url, prompt)
-            if filename:
+            filepath = str(ASSETS_DIR / filename) if filename else ""
+            if filename and filepath:
+                cq_code = f"[CQ:image,file={filepath}]"
                 yield ToolResult(
                     type="result",
-                    data=f"✅ 生成完成: {filename}",
+                    data=f"✅ 生成完成: {filename}\n{cq_code}",
                     result_for_assistant=(
-                        f"图片生成成功！保存在 dashboard_v2/assets/{filename}\n"
-                        f"Prompt: {prompt}\n"
-                        f"URL: {image_url}\n"
-                        f"可以在 office.html 中引用此图片替换对应位置的 fillRect。"
+                        f"图片生成成功！\n"
+                        f"文件路径: {filepath}\n"
+                        f"要在 QQ 发送图片，在回复中直接输出: {cq_code}\n"
+                        f"（Gateway 验证文件存在后自动放行此 CQ 码）"
                     ),
                 )
             else:
@@ -170,10 +156,9 @@ class Image2GenerateTool(BaseTool):
             logger.error(f"Image2 login failed: {e}")
             return None
 
-    def _generate(self, token, prompt, quality, aspect, style):
+    def _generate(self, token, prompt, aspect):
         body = json.dumps({
-            "prompt": prompt, "quality": quality,
-            "aspect_ratio": aspect, "style": style,
+            "prompt": prompt, "aspect_ratio": aspect,
         }).encode()
         req = urllib.request.Request(
             f"{IMAGE2_BASE}/api/image/generate",
