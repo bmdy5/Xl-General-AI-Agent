@@ -886,8 +886,8 @@ class Agent:
                     )
                     if past and "No past conversations" not in past:
                         lines.append("")
-                        lines.append("## 相关历史对话（来源: 跨会话检索）")
-                        lines.append(past[:500])
+                        lines.append("## 相关历史对话（仅供参考，当前对话优先）")
+                        lines.append(past[:200])  # 收紧到200字，防噪声污染
                 except Exception:
                     pass
         except Exception as e:
