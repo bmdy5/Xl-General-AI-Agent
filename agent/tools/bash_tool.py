@@ -118,10 +118,26 @@ class BashTool(BaseTool):
             return {"result": False, "message": "command is required"}
         return {"result": True, "message": ""}
 
+    # sed 滥用检测正则
+    _SED_ABUSE_RE = re.compile(r'sed\s+-n\b.*\.(md|py|java|go|ts|js|json|yaml|yml|txt|log)',
+                                re.IGNORECASE)
+
     async def call(
         self, input_args: dict, context: Any = None
     ) -> AsyncGenerator[ToolResult, None]:
         command = input_args["command"]
+
+        # sed -n 读文本文件 → 拦截并引导至 read_file
+        if self._SED_ABUSE_RE.search(command):
+            yield ToolResult(
+                type="result",
+                data=(
+                    f"[行为纠正]: 严禁使用 bash sed 分段读取文件来规避长度限制！"
+                    f"这会导致上下文爆炸。请直接使用 read_file 工具，"
+                    f"并传入 start_line 和 end_line 参数进行精确行号切片！"
+                ),
+            )
+            return
 
         try:
             process = await asyncio.create_subprocess_shell(

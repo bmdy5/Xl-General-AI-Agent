@@ -116,6 +116,12 @@ class PermissionCategory(enum.Enum):
 NORMAL_TIMEOUT = 300    # 5 分钟
 DEEP_TIMEOUT = 7200     # 2 小时
 
+# 统一错误特征词 — core.py 内各处截断判定复用
+ERROR_INDICATORS = ["Error", "Traceback", "Exception", "failed", "失败", "报错", "异常"]
+
+# 非新任务特征词 — 如果用户输入包含这些词，不覆盖 _original_goal
+DEBUG_KEYWORDS = ["报错", "异常", "不对", "错误", "失败", "bug", "怎么回事", "为啥不行"]
+
 
 class Agent:
     """通用 Agent — while-true 核心循环 + 三层记忆注入."""
@@ -136,20 +142,25 @@ class Agent:
         self.static_prompt = system_prompt or STATIC_PROMPT
         self.max_turns = max_turns
 
-        # 初始化运行期人格自画像 JSON（从外部模板读取，不硬编码）
+        # 人格自画像 — 启动时一次读入缓存，避免每轮 _build_system_prompt() 磁盘 IO
+        import json as _json
         profile_file = self.memory.base_dir / "persona_profile.json"
         if not profile_file.exists():
-            import json
             template_file = Path(__file__).parent / "default_persona.json"
             if template_file.exists():
-                default_profile = json.loads(template_file.read_text(encoding="utf-8"))
+                default_profile = _json.loads(template_file.read_text(encoding="utf-8"))
             else:
                 default_profile = {"name": "小萤", "gender": "女", "user_address": "亮哥",
                                    "tone_style": "", "preferences": [], "avoid_list": []}
             try:
-                profile_file.write_text(json.dumps(default_profile, ensure_ascii=False, indent=2), encoding="utf-8")
+                profile_file.write_text(_json.dumps(default_profile, ensure_ascii=False, indent=2), encoding="utf-8")
             except Exception as e:
                 logger.error(f"Failed to init persona_profile.json: {e}")
+        try:
+            self._persona_cache = _json.loads(profile_file.read_text(encoding="utf-8"))
+        except Exception:
+            self._persona_cache = {"name": "小萤", "gender": "女", "user_address": "亮哥",
+                                   "tone_style": "", "preferences": [], "avoid_list": []}
 
         self.compressor = ContextCompressor(llm=llm, max_tokens=40_000)  # 省token: 30K触发压缩
 
@@ -195,8 +206,8 @@ class Agent:
         if self.session:
             await self.session.append_message({"role": "user", "content": user_input})
 
-        # 锁定首发意图：复杂任务（>20字）才 pin，简单问候不 pin
-        if self._original_goal is None and len(user_input) > 20:
+        # 智能首发意图锁定：新任务覆盖旧goal，故障排查不覆盖
+        if len(user_input) > 30 and not any(kw in user_input for kw in DEBUG_KEYWORDS):
             self._original_goal = {"role": "user", "content": user_input}
 
         turn = 0
@@ -208,26 +219,20 @@ class Agent:
         finally:
             self._abort.clear()
 
-    async def _handle_tool_error(self, tool_name: str, error_text: str, retry_count: int) -> dict:
-        """Process tool error through ErrorTracker. Returns action dict."""
+    async def _handle_tool_error(self, tool_name: str, error_text: str):
+        """工具错误分类记录。L1瞬态/L2自愈 → 静默记入 ErrorTracker；L3模式 → 日志警告."""
         should_report, level = self.error_tracker.should_report(error_text)
-
-        if level == L1_TRANSIENT and retry_count < 2:
-            await asyncio.sleep(3 * (retry_count + 1))
-            return {"action": "retry", "delay": 3 * (retry_count + 1)}
 
         if level == L2_SELF_HEAL:
             recipe = self.error_tracker.find_recipe(error_text)
             if recipe:
                 self.error_tracker.save_recipe(error_text, recipe)
-                return {"action": "self_heal", "recipe": recipe}
 
-        if should_report or retry_count >= 2:
-            if self.error_tracker._counts.get(self.error_tracker._key(error_text), 0) >= 3:
-                logger.warning(f"Error pattern detected for {tool_name}: {error_text[:100]}")
-            return {"action": "report", "level": level, "tool": tool_name, "error": error_text[:200]}
-
-        return {"action": "silent", "level": level}
+        if should_report:
+            err_key = self.error_tracker._key(error_text)
+            count = self.error_tracker._counts.get(err_key, 0)
+            if count >= 3:
+                logger.warning(f"Error pattern [{tool_name}]: {error_text[:100]} (x{count})")
 
     async def _repair_history(self):
         """双向修复：补全缺失的 tool 结果 + 删除孤立的 tool 消息."""
@@ -308,7 +313,7 @@ class Agent:
             if m.get("role") == "tool" and m.get("content"):
                 name = m.get("name", "?")
                 text = str(m.get("content", ""))
-                if len(text) > 20 and "Error" not in text[:30]:
+                if len(text) > 20 and not any(ind in text[:30] for ind in ERROR_INDICATORS):
                     tool_snippets.append(f"[{name}] {text[:120].strip()}")
 
         # 首个 system 消息去旧留新（消除 Scratchpad 肿瘤）
@@ -530,19 +535,12 @@ class Agent:
                         self.registry.dispatch(tool_name, tool_args, context=self),
                         timeout=tool_timeout,
                     )
-                    # ErrorTracker: check tool result for error patterns
-                    _error_indicators = ["Error:", "失败", "Traceback", "exception"]
-                    if any(ind in (result_str or "") for ind in _error_indicators):
-                        action = await self._handle_tool_error(tool_name, result_str, retry_count=0)
-                        if action.get("action") == "report":
-                            logger.warning(f"Tool error [{tool_name}]: {action.get('error', '')[:100]}")
+                    if any(ind in (result_str or "") for ind in ERROR_INDICATORS):
+                        await self._handle_tool_error(tool_name, result_str)
                 except asyncio.TimeoutError:
                     result_str = f'{{"error": "Tool call timed out after {tool_timeout}s: {tool_name}"}}'
                     logger.warning(f"Tool timeout: {tool_name} exceeded {tool_timeout}s")
-                    # ErrorTracker: classify timeout error
-                    action = await self._handle_tool_error(tool_name, result_str, retry_count=0)
-                    if action.get("action") == "report":
-                        logger.warning(f"Tool error [{tool_name}]: {action.get('error', '')[:100]}")
+                    await self._handle_tool_error(tool_name, result_str)
                     yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
                     self.messages.append({
                         "role": "tool", "tool_call_id": tc["id"],
@@ -738,29 +736,22 @@ class Agent:
         return quick_transition(user_input)
 
     async def _build_system_prompt(self) -> str:
-          """组装 system prompt = 静态段(含动态人格自画像) + 当前上下文 + 自进化规则."""
-          import json
-          
-          # 动态加载并拼装人格自画像
-          prof = {}
+          """组装 system prompt = 静态段(含缓存人格自画像) + 当前上下文 + 自进化规则."""
+
+          prof = self._persona_cache
           persona_section = ""
-          profile_file = self.memory.base_dir / "persona_profile.json"
-          if profile_file.exists():
-              try:
-                  prof = json.loads(profile_file.read_text(encoding="utf-8"))
-                  pref_lines = "\n".join([f"- {p}" for p in prof.get("preferences", [])])
-                  avoid_lines = "\n".join([f"- {a}" for a in prof.get("avoid_list", [])])
-                  persona_section = (
-                      f"## 你的人格自画像设定 (Your Persona Profile)\n"
-                      f"- 你的名字: {prof.get('name', '小萤')}\n"
-                      f"- 你的性别: {prof.get('gender', '女')}\n"
-                      f"- 你称呼对方: {prof.get('user_address', '亮哥')}\n"
-                      f"- 你的说话语气特质: {prof.get('tone_style', '')}\n"
-                      f"- 你的行为偏好:\n{pref_lines}\n"
-                      f"- 你绝不触碰的雷区:\n{avoid_lines}\n"
-                  )
-              except Exception as e:
-                  logger.error(f"Failed to parse persona_profile: {e}")
+          if prof:
+              pref_lines = "\n".join([f"- {p}" for p in prof.get("preferences", [])])
+              avoid_lines = "\n".join([f"- {a}" for a in prof.get("avoid_list", [])])
+              persona_section = (
+                  f"## 你的人格自画像设定 (Your Persona Profile)\n"
+                  f"- 你的名字: {prof.get('name', '小萤')}\n"
+                  f"- 你的性别: {prof.get('gender', '女')}\n"
+                  f"- 你称呼对方: {prof.get('user_address', '亮哥')}\n"
+                  f"- 你的说话语气特质: {prof.get('tone_style', '')}\n"
+                  f"- 你的行为偏好:\n{pref_lines}\n"
+                  f"- 你绝不触碰的雷区:\n{avoid_lines}\n"
+              )
           
           static_p = STATIC_PROMPT.replace("{persona_section}", persona_section)
           # 动态渲染人格属性到静态提示词模板
