@@ -249,24 +249,10 @@ class SessionHandler:
             sid, role, snippet = row
             matches.append(f"[{sid}] {role}: {snippet}")
 
-        try:
-            response = await llm.chat(
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"搜索'{query}'，找到以下历史对话片段。"
-                        f"请用3-5句话总结相关内容:\n"
-                        + "\n".join(matches[:max_results * 3])
-                    ),
-                }],
-                tools=None,
-            )
-            return response.get("content", "\n".join(matches[:max_results]))
-        except Exception:
-            return "\n".join(matches[:max_results])
+        return "\n".join(matches[:max_results])
 
     async def _grep_fallback(self, query: str, llm, max_results: int = 5) -> str:
-        """原有 grep 逻辑作为降级方案."""
+        """原有 grep 逻辑作为降级方案（不调 LLM，省 token + 延迟）."""
         if not self.storage_dir.exists():
             return ""
 
@@ -285,29 +271,14 @@ class SessionHandler:
                 if any(kw in line.lower() for kw in keywords):
                     try:
                         msg = json.loads(line)
-                        text = str(msg.get("content", ""))[:300]
+                        text = str(msg.get("content", ""))[:200]
                         if text:
-                            matches.append(f"[{f.stem}:{i}] {text}")
+                            matches.append(f"[{f.stem}] {text}")
                     except json.JSONDecodeError:
                         continue
-            if len(matches) >= 20:
+            if len(matches) >= 10:
                 break
 
         if not matches:
-            return "No past conversations found."
-
-        try:
-            response = await llm.chat(
-                messages=[{
-                    "role": "user",
-                    "content": (
-                        f"搜索'{query}'，找到以下历史对话片段。"
-                        f"请用3-5句话总结相关内容:\n"
-                        + "\n".join(matches[:max_results * 3])
-                    ),
-                }],
-                tools=None,
-            )
-            return response.get("content", "\n".join(matches[:max_results]))
-        except Exception:
-            return "\n".join(matches[:max_results])
+            return ""
+        return "\n".join(matches[:max_results])
