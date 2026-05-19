@@ -85,6 +85,17 @@ class ReadFileTool(BaseTool):
         end = input_args.get("end_line")
         path = Path(file_path)
 
+        # ── 行号参数校验 ──
+        if start is not None and (not isinstance(start, int) or start < 1):
+            yield ToolResult(type="result", data="Error: start_line must be a positive integer")
+            return
+        if end is not None and (not isinstance(end, int) or end < 1):
+            yield ToolResult(type="result", data="Error: end_line must be a positive integer")
+            return
+        if start is not None and end is not None and start > end:
+            yield ToolResult(type="result", data=f"Error: start_line ({start}) must be <= end_line ({end})")
+            return
+
         if not path.exists():
             yield ToolResult(
                 type="result",
@@ -103,9 +114,10 @@ class ReadFileTool(BaseTool):
         try:
             size = path.stat().st_size
 
-            # ── LRU 防抖：60s内同路径同大小 → 拦截 ──
+            # ── LRU 防抖：60s内同路径同大小同行号范围 → 拦截 ──
+            cache_key = f"{file_path}:{start}:{end}"
             now = time.time()
-            cached = self._read_cache.get(file_path)
+            cached = self._read_cache.get(cache_key)
             if cached:
                 cached_ts, cached_size = cached
                 if now - cached_ts < 60 and cached_size == size:
@@ -120,8 +132,7 @@ class ReadFileTool(BaseTool):
                     return
 
             # 更新缓存
-            self._read_cache[file_path] = (now, size)
-            # 缓存上限 20 条，超出删最旧
+            self._read_cache[cache_key] = (now, size)
             if len(self._read_cache) > 20:
                 oldest = min(self._read_cache, key=lambda k: self._read_cache[k][0])
                 del self._read_cache[oldest]
@@ -130,8 +141,8 @@ class ReadFileTool(BaseTool):
             lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
 
             if start is not None or end is not None:
-                s = max(1, start or 1)
-                e = min(len(lines), end or len(lines))
+                s = start or 1
+                e = end if end is not None else len(lines)
                 content = "\n".join(lines[s - 1:e])
                 yield ToolResult(
                     type="result",
