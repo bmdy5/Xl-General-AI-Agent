@@ -1,9 +1,7 @@
-"""笔记知识库 FTS5 索引 — RAG 检索.
+"""笔记知识库 FTS5 索引 — PageIndex 全文检索（不切块）。
 
-用于索引 /Users/xiaofeng/Desktop/学习笔记/ 下的 .md 文件。
-与 memories_fts 独立，数据生命周期和检索逻辑不同。
-
-参考: fts_index.py (同类实现), hermes-agent session_search_tool.py
+索引 /Users/xiaofeng/Desktop/学习笔记/ 下的 .md 文件。
+每个文件一行，BM25 全文匹配，LLM 用 read_file 精读结果。
 """
 
 import os
@@ -20,7 +18,7 @@ NOTES_DIR = Path("/Users/xiaofeng/Desktop/学习笔记")
 
 
 def create_table(conn: sqlite3.Connection):
-    """创建笔记知识库 FTS5 表."""
+    """创建 PageIndex FTS5 表。"""
     conn.execute("""
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
         USING fts5(content, title, path, directory,
@@ -45,49 +43,29 @@ def scan_files(base: Path = NOTES_DIR) -> list[dict]:
     return results
 
 
-def chunk_text(text: str, max_chars: int = 2000) -> list[str]:
-    """将长文本切成段落块，每块不超过 max_chars 字符。"""
-    chunks = []
-    current = ""
-    for line in text.split("\n"):
-        if len(current) + len(line) + 1 > max_chars and current:
-            chunks.append(current.strip())
-            current = line
-        else:
-            if current:
-                current += "\n" + line
-            else:
-                current = line
-    if current:
-        chunks.append(current.strip())
-    return chunks if chunks else [text.strip()]
-
-
 def index_all(conn: sqlite3.Connection, base: Path = NOTES_DIR) -> int:
-    """扫描全部 .md 文件，分块后插入 FTS5 索引。返回总块数。"""
+    """PageIndex 全量重建：每文件一行，不切块。返回总文件数。"""
     files = scan_files(base)
-    total_chunks = 0
-    conn.execute("DELETE FROM notes_fts")  # 全量重建前清理
+    conn.execute("DELETE FROM notes_fts")
+    count = 0
     for f in files:
         try:
             with open(f["full_path"], "r", encoding="utf-8", errors="replace") as fh:
                 raw = fh.read()
         except Exception:
             continue
-        chunks = chunk_text(raw)
-        for i, chunk in enumerate(chunks):
-            conn.execute(
-                "INSERT INTO notes_fts(content, title, path, directory) VALUES (?, ?, ?, ?)",
-                (chunk[:5000], f["title"][:200], f["path"][:500], f["directory"][:500]),
-            )
-            total_chunks += 1
+        conn.execute(
+            "INSERT INTO notes_fts(content, title, path, directory) VALUES (?, ?, ?, ?)",
+            (raw[:10000], f["title"][:200], f["path"][:500], f["directory"][:500]),
+        )
+        count += 1
     conn.commit()
-    return total_chunks
+    return count
 
 
 def search(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[dict]:
-    """FTS5 搜索笔记知识库，BM25 排序。"""
-    clean = re.sub(r'[^\w\u4e00-\u9fff\s]', " ", query).strip()
+    """FTS5 全文搜索笔记库，BM25 排序。返回文件级匹配。"""
+    clean = re.sub(r'[^\w一-鿿\s]', " ", query).strip()
     if not clean or len(clean) < 2:
         return []
     fts_query = " OR ".join(clean.split())
@@ -98,7 +76,7 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[dict]:
         (fts_query, limit),
     ).fetchall()
     return [
-        {"id": r[0], "content": r[1], "title": r[2],
+        {"id": r[0], "content": r[1][:200], "title": r[2],
          "path": r[3], "directory": r[4], "rank": r[5]}
         for r in rows
     ]
@@ -119,15 +97,12 @@ def extract_urls(md_content: str) -> list[str]:
     自动去重。
     """
     urls = []
-    # 匹配 [text](url) 中的 url，支持一层嵌套括号
     md_links = re.findall(
-        # 排除 `(` 以强制触发 `\(...\)` 分支，正确处理URL中的平衡括号
         r'\[[^\[\]]*\]\((https?://(?:[^\s\)(]|\([^\s\)]*\))+)\)',
         md_content
     )
     urls.extend(md_links)
 
-    # 匹配裸露的 http/https 链接（排除已被 markdown 语法捕获的）
     raw_links = re.findall(
         r'(?<!\()(https?://(?:[^\s\>\)\[(]|\([^\s\>\)\]]*\))+)',
         md_content
@@ -141,16 +116,7 @@ def extract_urls(md_content: str) -> list[str]:
 
 
 def is_safe_url(url: str) -> bool:
-    """校验 URL 是否安全可 fetch：仅允许公开 http/https，拒绝内网地址。
-
-    拦截规则：
-    - 非 http/https 协议
-    - 环回地址（127.0.0.0/8, ::1, localhost）
-    - 私有地址（10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16）
-    - 链路本地地址（169.254.0.0/16）
-    - 未指定地址（0.0.0.0）
-    - 单标签主机名（内网简名）
-    """
+    """校验 URL 是否安全可 fetch：仅允许公开 http/https，拒绝内网地址。"""
     if not url.startswith(('http://', 'https://')):
         return False
 
@@ -160,21 +126,18 @@ def is_safe_url(url: str) -> bool:
         if not hostname:
             return False
 
-        # IP 地址检查
         try:
             ip = ipaddress.ip_address(hostname)
             if ip.is_private or ip.is_loopback or ip.is_link_local or ip.is_unspecified:
                 return False
         except ValueError:
-            pass  # 域名，不是 IP
+            pass
 
-        # 域名检查
         hostname_lower = hostname.lower()
         if hostname_lower in ('localhost', 'localhost.localdomain'):
             return False
         if hostname_lower.endswith('.local') or hostname_lower.endswith('.internal'):
             return False
-        # 单标签主机名（不含点号）→ 内网简名，拒绝
         if '.' not in hostname_lower:
             return False
 
@@ -243,7 +206,6 @@ async def get_link_summaries(note_paths: list[str], llm) -> str:
             continue
 
     all_urls = list(set(all_urls))
-    # 安全检查：只 fetch 公开 URL
     safe_urls = [u for u in all_urls if is_safe_url(u)]
     if not safe_urls:
         return ""
@@ -257,7 +219,6 @@ async def get_link_summaries(note_paths: list[str], llm) -> str:
 
     async with aiohttp.ClientSession(timeout=timeout, headers=headers) as session:
         for url in safe_urls:
-            # 查缓存
             cached = _cache_get(url)
             if cached is not None:
                 if cached:
@@ -267,17 +228,15 @@ async def get_link_summaries(note_paths: list[str], llm) -> str:
             try:
                 async with session.get(url) as resp:
                     if resp.status != 200:
-                        _cache_set(url, "")  # 缓存失败状态，避免重复请求
+                        _cache_set(url, "")
                         continue
                     html = await resp.text()
 
-                # BS4 解析放入线程池，避免阻塞事件循环
                 loop = asyncio.get_running_loop()
                 text = await loop.run_in_executor(None, _extract_text_sync, html)
                 if not text:
                     continue
 
-                # 调用 LiteLLM 客户端生成摘要
                 prompt = f"请用一句话总结以下网页内容：\n\n{text}"
                 res = await llm.chat(messages=[{"role": "user", "content": prompt}])
                 summary = res.get("content", "").strip()
@@ -289,7 +248,7 @@ async def get_link_summaries(note_paths: list[str], llm) -> str:
             except Exception as e:
                 import logging
                 logging.getLogger(__name__).warning(f"获取链接 {url} 摘要失败: {e}")
-                _cache_set(url, "")  # 失败也缓存，避免重复尝试
+                _cache_set(url, "")
                 continue
 
     return "\n".join(summaries)
