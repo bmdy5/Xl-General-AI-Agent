@@ -13,6 +13,19 @@ from .notes_fts import search as notes_search, index_all, scan_files
 
 logger = logging.getLogger(__name__)
 
+# 9 个核心记忆文件 — save() 时自动匹配追加，不再新建碎片文件
+CORE_FILES: dict[str, list[str]] = {
+    "user_profile.md":           ["用户", "偏好", "亮哥", "称呼", "模型配置", "情绪", "表达偏好", "个人", "profile"],
+    "communication_rules.md":    ["沟通", "格式", "开场", "消息", "回复", "星号", "markdown", "纯文本", "拆分", "对话"],
+    "operation_rules.md":        ["操作", "代码纪律", "搜索验证", "执行纪律", "费用", "工作流程", "workaround", "根因"],
+    "xl_tool_guide.md":          ["bash", "read_file", "write_file", "web_fetch", "避坑", "成本", "工具", "命令", "超时"],
+    "xl_architecture.md":        ["架构", "系统设计", "模块", "组件", "缓存", "DeepSeek", "FTS5", "索引"],
+    "xl_code_review.md":         ["代码审查", "review", "bug", "代码质量", "代码"],
+    "xl_identity.md":            ["身份", "人格", "小萤", "自我认知", "agent定义"],
+    "xl_debugging.md":           ["调试", "debug", "排查", "日志", "traceback", "错误", "报错"],
+    "xl_requirement_analysis.md": ["需求分析", "方案设计", "需求理解", "需求"],
+}
+
 KB_DIR = os.getenv("MYAGENT_KB_DIR", "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西")
 KNOWLEDGE_INDEX = Path(KB_DIR) / "知识索引.md"
 
@@ -71,6 +84,63 @@ class MemoryManager:
             create_table(self._db)
         return self._db
 
+    @staticmethod
+    def _match_core_file(description: str, content: str) -> Optional[str]:
+        """根据描述和内容关键词匹配核心文件。返回文件名或 None."""
+        text = f"{description} {content[:200]}"
+        for fname, keywords in CORE_FILES.items():
+            score = sum(1 for kw in keywords if kw in text)
+            if score >= 2:
+                return fname
+        return None
+
+    async def append_to_core(self, target_file: str, description: str, content: str) -> str:
+        """追加到核心文件。去重，加时间戳分隔线，更新索引和 FTS5."""
+        from datetime import datetime, timezone as _tz
+        timestamp = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        filepath = self.base_dir / target_file
+
+        # 确保核心文件存在
+        if not filepath.exists():
+            filepath.write_text(
+                f"# {target_file.replace('.md','').replace('_',' ').title()}\n\n",
+                encoding="utf-8"
+            )
+
+        existing = filepath.read_text(encoding="utf-8")
+
+        # 去重
+        content_clean = content[:300].replace("\n", " ").replace(" ", "")
+        existing_clean = existing.replace("\n", " ").replace(" ", "")
+        if content_clean in existing_clean:
+            return timestamp
+
+        append_entry = (
+            f"\n\n---\n"
+            f"<!-- {timestamp} -->\n"
+            f"### {description}\n"
+            f"{content}\n"
+        )
+        with open(filepath, "a", encoding="utf-8") as f:
+            f.write(append_entry)
+
+        self._upsert_index(target_file, f"- [{description}]({target_file}) `{timestamp}`")
+
+        try:
+            db = self._get_db()
+            fts_populate(db, [{
+                "content": content[:5000],
+                "description": description[:200],
+                "memory_type": "merged",
+                "filename": target_file,
+                "timestamp": timestamp,
+            }])
+            db.commit()
+        except Exception:
+            pass
+
+        return timestamp
+
     async def load_context(self) -> str:
         """Read MEMORY.md, sort by timestamp, latest first."""
         if not self.index_file.exists():
@@ -117,6 +187,12 @@ class MemoryManager:
                    note_path: Optional[str] = None) -> str:
         """Save memory. If note_path given, stores pointer instead of full content."""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+
+        # 先匹配核心文件 → 追加而非新建碎片
+        core_file = self._match_core_file(description, content)
+        if core_file and not note_path:
+            return await self.append_to_core(core_file, description, content)
+
         safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
         if not safe_name.endswith(".md"):
             safe_name += ".md"

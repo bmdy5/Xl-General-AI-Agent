@@ -14,6 +14,11 @@ logger = logging.getLogger(__name__)
 
 MEMORY_TYPES = ["user", "feedback", "project", "reference", "learn"]
 
+try:
+    from agent.memory.manager import CORE_FILES
+except ImportError:
+    CORE_FILES = {}  # fallback for tests
+
 
 
 
@@ -34,7 +39,10 @@ class MemoryTool(BaseTool):
         return False
 
     def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
-        return True  # 记忆修改需要用户审批
+        action = (input_args or {}).get("action", "")
+        if action == "merge_to_core":
+            return False  # 合并操作自动放行
+        return True  # 其他记忆修改需要用户审批
 
     def get_tool_definition(self) -> dict:
         return {
@@ -54,8 +62,8 @@ class MemoryTool(BaseTool):
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["add", "replace", "remove", "read", "search"],
-                            "description": "add=save new memory, replace=update existing, remove=delete, read=list all",
+                            "enum": ["add", "replace", "remove", "read", "search", "merge_to_core"],
+                            "description": "add=save new, replace=update, remove=delete, read=list, merge_to_core=append to core file (auto-approved)",
                         },
                         "memory_type": {
                             "type": "string",
@@ -76,6 +84,10 @@ class MemoryTool(BaseTool):
                             "description": "Learning notes subdirectory for knowledge memories. Read routing_rules.md to find the right path. Leave empty for core memories.",
                         },
                         "query": {"type": "string", "description": "Search query for action=search."},
+                        "target_file": {
+                            "type": "string",
+                            "description": "Target core filename for merge_to_core. One of: user_profile.md, communication_rules.md, operation_rules.md, xl_tool_guide.md, xl_architecture.md, xl_code_review.md, xl_identity.md, xl_debugging.md, xl_requirement_analysis.md",
+                        },
                         "old_text": {
                             "type": "string",
                             "description": "Text to match for replace/remove. Substring match is OK.",
@@ -124,6 +136,25 @@ class MemoryTool(BaseTool):
                     for r in results:
                         lines.append(f"- [{r.get('memory_type','?')}] {r.get('description','')[:80]}")
                     yield ToolResult(type="result", data="\n".join(lines))
+                return
+
+            if action == "merge_to_core":
+                target = input_args.get("target_file", "")
+                content = input_args.get("content", "")
+                desc = input_args.get("description", "merged reflect")
+                if not target or not content:
+                    yield ToolResult(type="result", data="Error: target_file and content required")
+                    return
+                if target not in CORE_FILES:
+                    opts = ", ".join(CORE_FILES.keys())
+                    yield ToolResult(type="result", data=f"Error: {target} not in core files. Options: {opts}")
+                    return
+                timestamp = await mm.append_to_core(target, desc, content)
+                yield ToolResult(
+                    type="result",
+                    data=f"Merged to {target} ({timestamp})",
+                    result_for_assistant=f"已合并到核心文件 {target}，时间戳 {timestamp}",
+                )
                 return
 
             if action == "read":

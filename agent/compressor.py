@@ -142,17 +142,17 @@ class ContextCompressor:
                 "content": f"[历史对话摘要]\n{summary}",
             }
 
-            # auto-persist compressed summary to memory
-            if memory and hasattr(memory, 'save'):
+            # auto-persist compressed summary to core memory
+            if memory and hasattr(memory, 'append_to_core'):
                 try:
                     from datetime import datetime, timezone
                     date_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                    await memory.save(
-                        filename=f"compressed_{date_str}",
-                        description=f"[compressed] 对话压缩摘要 {date_str}",
-                        content=f"# 对话压缩摘要\n\n日期: {date_str}\n\n{summary}",
+                    await memory.append_to_core(
+                        target_file="xl_architecture.md",
+                        description=f"对话压缩摘要 {date_str}",
+                        content=f"## 对话压缩摘要\n\n日期: {date_str}\n\n{summary}",
                     )
-                    logger.info("Compressed summary saved to memory")
+                    logger.info("Compressed summary appended to core memory")
                 except Exception as e:
                     logger.warning(f"Failed to save compressed summary: {e}")
 
