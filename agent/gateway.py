@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import urllib.request
-from datetime import datetime, timezone
+from datetime import datetime, timezone, timedelta
 from typing import Optional
 
 import aiohttp
@@ -26,6 +26,25 @@ NC_WS_URL = os.getenv("NAPCAT_WS_URL", "ws://127.0.0.1:3001")
 NC_HTTP_URL = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3020")
 NC_TOKEN = os.getenv("NAPCAT_TOKEN", "")
 MAX_REPLY_CHARS = 2000
+
+# 硬编码每日维护 prompt — 流水线：合并 reflect → 清理过期 → 审计总结
+DAILY_MAINTENANCE_PROMPT = """执行每日维护（流水线模式，按顺序完成，每一项做完再做下一项）:
+
+## 步骤1: 合并 reflect 到核心文件
+- bash ls ~/.my-agent/memory/reflect_*.md 列出所有 reflect 文件
+- 对每个文件: read_file 读内容 → 判断归属 → 用 merge_to_core(target_file, description, content) 追加
+- merge_to_core 不用确认，直接跑。9个核心文件: user_profile.md, communication_rules.md, operation_rules.md, xl_tool_guide.md, xl_architecture.md, xl_code_review.md, xl_identity.md, xl_debugging.md, xl_requirement_analysis.md
+- 合并完后: bash mv 将已合并的 reflect 移到 ~/.my-agent/memory_backup/ 归档
+
+## 步骤2: 清理过期备份
+- ls ~/.my-agent/memory_backup/reflect_*.md 列出备份
+- 文件名日期超过7天的: bash rm 删除
+
+## 步骤3: 审计总结
+- bash wc -l ~/.my-agent/memory/*.md 统计核心文件行数
+- 用 merge_to_core 追加维护记录到 xl_architecture.md: "每日维护 {today}: reflect合并数=X, 过期清理=Y"
+
+完成后输出: "维护完成 — reflect合并=X 清理=Y"。静默维护，不要给亮哥发消息。"""
 
 
 class _PermEvent(asyncio.Event):
@@ -89,19 +108,59 @@ class QQGateway:
                     else:
                         await asyncio.sleep(5)
 
+    async def _run_daily_maintenance(self, session_key: str):
+        """硬编码每日维护 — 先备份 → 再流水线维护 → 静默执行."""
+        import shutil
+        from pathlib import Path as _Path
+
+        mem_dir = _Path.home() / ".my-agent" / "memory"
+        backup_base = _Path.home() / ".my-agent" / "memory_backup"
+        backup_base.mkdir(parents=True, exist_ok=True)
+
+        # 备份：只备份 .md 文件（不含大的 .db）
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        backup_dir = backup_base / f"auto_{today}"
+        if not backup_dir.exists():
+            backup_dir.mkdir(parents=True, exist_ok=True)
+        count = 0
+        for f in mem_dir.glob("*.md"):
+            if f.name != "MEMORY.md":  # MEMORY.md 由 memory manager 自己管
+                shutil.copy2(f, backup_dir / f.name)
+                count += 1
+        logger.info(f"Maintenance backup: {count} files → {backup_dir}")
+
+        agent = self._factory(session_key)
+        try:
+            async for evt in agent.run(DAILY_MAINTENANCE_PROMPT, stream=True):
+                if evt["type"] == "permission_request":
+                    agent.approve_permission()
+                elif evt["type"] == "error":
+                    logger.warning(f"Maintenance error: {evt['content']}")
+                elif evt["type"] == "text_delta":
+                    pass  # 静默
+        except Exception as e:
+            logger.error(f"Maintenance execution failed: {e}")
+        finally:
+            try:
+                agent._abort.set()
+            except Exception:
+                pass
+        logger.info("Daily maintenance completed")
+
     async def _daemon_loop(self):
-        """后台守护巡检线程：定时检测到期任务，向管理员 QQ 推送确认并安全执行"""
+        """后台守护巡检线程：定时检测到期任务 + 硬编码每日维护"""
         from agent.task_queue import TaskQueue
         import time
         logger.info("QQ Gateway Background Daemon Loop started.")
         q = TaskQueue()
-        
+
         admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
         if not admin_id:
             logger.warning("QQ_ADMIN_ID not configured in .env. Background daemon is disabled.")
             return
 
         session_key = f"user_{admin_id}"
+        _last_maintenance_date = ""  # 跟踪每日维护是否已执行
 
         while True:
             # 必须等 NapCat HTTP 连接就绪后才开始工作，避免 self._http 未就绪引发报错
@@ -136,6 +195,18 @@ class QQGateway:
                             await proc.wait()
             except Exception as check_err:
                 logger.warning(f"Failed to check QQ login status: {check_err}")
+
+            # ── 1.5. 硬编码每日维护（凌晨 2:00–5:00 执行一次） ─────────────────────
+            try:
+                beijing_now = datetime.now(timezone.utc) + timedelta(hours=8)
+                today_str = beijing_now.strftime("%Y-%m-%d")
+                hour = beijing_now.hour
+                if 2 <= hour < 5 and _last_maintenance_date != today_str:
+                    _last_maintenance_date = today_str
+                    logger.info(f"Daily maintenance triggered for {today_str}")
+                    await self._run_daily_maintenance(session_key)
+            except Exception as maint_err:
+                logger.error(f"Daily maintenance error: {maint_err}")
 
             # ── 2. 定时任务轮询逻辑 ──────────────────────────────────────────────────
             try:
@@ -210,7 +281,7 @@ class QQGateway:
                                     f"执行时间: {datetime.now(timezone.utc).isoformat()}\n\n"
                                     f"## 结果\n{result_summary}"
                                 )
-                                agent.memory.save_to_notes(
+                                await agent.memory.save_to_notes(
                                     dir_path="06-工作记录/定时任务",
                                     filename=f"task_{task_id}.md",
                                     content=note_content,
