@@ -15,7 +15,7 @@ import logging
 import os
 import re
 import urllib.request
-from datetime import datetime, timezone, timedelta
+from datetime import datetime, timezone
 from typing import Optional
 
 import aiohttp
@@ -27,24 +27,18 @@ NC_HTTP_URL = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3020")
 NC_TOKEN = os.getenv("NAPCAT_TOKEN", "")
 MAX_REPLY_CHARS = 2000
 
-# 硬编码每日维护 prompt — 流水线：合并 reflect → 清理过期 → 审计总结
-DAILY_MAINTENANCE_PROMPT = """执行每日维护（流水线模式，按顺序完成，每一项做完再做下一项）:
+# 硬编码每日维护 — LLM 只用 merge_to_core，文件操作全由 Python 处理
+MAINTENANCE_MERGE_PROMPT = """把以下 reflect 内容合并到核心记忆：
 
-## 步骤1: 合并 reflect 到核心文件
-- bash ls ~/.my-agent/memory/reflect_*.md 列出所有 reflect 文件
-- 对每个文件: read_file 读内容 → 判断归属 → 用 merge_to_core(target_file, description, content) 追加
-- merge_to_core 不用确认，直接跑。9个核心文件: user_profile.md, communication_rules.md, operation_rules.md, xl_tool_guide.md, xl_architecture.md, xl_code_review.md, xl_identity.md, xl_debugging.md, xl_requirement_analysis.md
-- 合并完后: bash mv 将已合并的 reflect 移到 ~/.my-agent/memory_backup/ 归档
+{reflect_list}
 
-## 步骤2: 清理过期备份
-- ls ~/.my-agent/memory_backup/reflect_*.md 列出备份
-- 文件名日期超过7天的: bash rm 删除
+对每条 reflect:
+1. 判断归属的核心文件（user_profile / communication_rules / operation_rules / xl_tool_guide / xl_architecture / xl_code_review / xl_identity / xl_debugging / xl_requirement_analysis）
+2. 调用 merge_to_core(target_file="{文件名}", description="{简短描述}", content="{萃取后的内容}")
+3. merge_to_core 自动批准，直接跑
 
-## 步骤3: 审计总结
-- bash wc -l ~/.my-agent/memory/*.md 统计核心文件行数
-- 用 merge_to_core 追加维护记录到 xl_architecture.md: "每日维护 {today}: reflect合并数=X, 过期清理=Y"
-
-完成后输出: "维护完成 — reflect合并=X 清理=Y"。静默维护，不要给亮哥发消息。"""
+只萃取每条 reflect 中唯一的、有价值的信息写入对应核心文件，重复的跳过。
+完成后输出 "merge_done: N"。"""
 
 
 class _PermEvent(asyncio.Event):
@@ -109,7 +103,8 @@ class QQGateway:
                         await asyncio.sleep(5)
 
     async def _run_daily_maintenance(self, session_key: str):
-        """硬编码每日维护 — 先备份 → 再流水线维护 → 静默执行."""
+        """硬编码每日维护 — Python 管文件，LLM 只调 merge_to_core."""
+        import json
         import shutil
         from pathlib import Path as _Path
 
@@ -117,35 +112,103 @@ class QQGateway:
         backup_base = _Path.home() / ".my-agent" / "memory_backup"
         backup_base.mkdir(parents=True, exist_ok=True)
 
-        # 备份：只备份 .md 文件（不含大的 .db）
+        # 维护状态持久化
+        maint_file = _Path.home() / ".my-agent" / "maintenance.json"
+        maint_state = {}
+        if maint_file.exists():
+            try:
+                maint_state = json.loads(maint_file.read_text())
+            except Exception:
+                pass
+
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        if maint_state.get("last_date") == today and maint_state.get("status") == "ok":
+            return  # 今天已跑过
+
+        # ── 1. Python: 备份 .md 文件 ──
         backup_dir = backup_base / f"auto_{today}"
         if not backup_dir.exists():
             backup_dir.mkdir(parents=True, exist_ok=True)
         count = 0
         for f in mem_dir.glob("*.md"):
-            if f.name != "MEMORY.md":  # MEMORY.md 由 memory manager 自己管
+            if f.name != "MEMORY.md":
                 shutil.copy2(f, backup_dir / f.name)
                 count += 1
         logger.info(f"Maintenance backup: {count} files → {backup_dir}")
 
-        agent = self._factory(session_key)
-        try:
-            async for evt in agent.run(DAILY_MAINTENANCE_PROMPT, stream=True):
-                if evt["type"] == "permission_request":
-                    agent.approve_permission()
-                elif evt["type"] == "error":
-                    logger.warning(f"Maintenance error: {evt['content']}")
-                elif evt["type"] == "text_delta":
-                    pass  # 静默
-        except Exception as e:
-            logger.error(f"Maintenance execution failed: {e}")
-        finally:
+        # ── 2. Python: 列出未合并的 reflect ──
+        reflect_files = sorted(mem_dir.glob("reflect_*.md"))
+        unmerged = []
+        for rf in reflect_files:
             try:
-                agent._abort.set()
+                content = rf.read_text(encoding="utf-8")
+                if "merged:" not in content[:100]:
+                    unmerged.append((rf.name, content[:600]))
             except Exception:
                 pass
-        logger.info("Daily maintenance completed")
+
+        merged_count = 0
+        if not unmerged:
+            logger.info("No unmerged reflect files")
+        else:
+            # ── 3. Python: 构建 prompt → LLM: merge_to_core ──
+            reflect_list = "\n\n".join(
+                f"### {name}\n```\n{content}\n```"
+                for name, content in unmerged[:10]
+            )
+            prompt = MAINTENANCE_MERGE_PROMPT.format(reflect_list=reflect_list)
+
+            agent = self._factory(session_key)
+            agent.max_turns = 10  # 熔断：最多10轮
+            try:
+                async for evt in agent.run(prompt, stream=True):
+                    if evt["type"] == "permission_request":
+                        agent.approve_permission()
+                    elif evt["type"] == "error":
+                        logger.warning(f"Maintenance merge error: {evt['content']}")
+            except Exception as e:
+                logger.error(f"Maintenance merge failed: {e}")
+            finally:
+                try:
+                    agent._abort.set()
+                except Exception:
+                    pass
+
+            # ── 4. Python: mv 已合并的 reflect 到 backup ──
+            for rf in reflect_files:
+                try:
+                    content = rf.read_text(encoding="utf-8")
+                    if "merged:" in content[:100]:
+                        shutil.move(str(rf), str(backup_dir / rf.name))
+                        merged_count += 1
+                except Exception:
+                    pass
+
+        # ── 5. Python: rm 过期备份目录（>7天）──
+        cleaned = 0
+        for bd in sorted(backup_base.glob("auto_*")):
+            try:
+                dir_date = bd.name.replace("auto_", "")
+                dir_dt = datetime.fromisoformat(dir_date).replace(tzinfo=timezone.utc)
+                if (datetime.now(timezone.utc) - dir_dt).days > 7:
+                    shutil.rmtree(bd)
+                    cleaned += 1
+            except Exception:
+                pass
+
+        # ── 6. Python: 持久化维护状态 ──
+        maint_state = {
+            "last_date": today,
+            "status": "ok",
+            "merged": merged_count,
+            "cleaned": cleaned,
+            "backup_files": count,
+        }
+        maint_file.write_text(json.dumps(maint_state, ensure_ascii=False, indent=2))
+
+        logger.info(
+            f"Maintenance done: backup={count}, merged={merged_count}, cleaned_dirs={cleaned}"
+        )
 
     async def _daemon_loop(self):
         """后台守护巡检线程：定时检测到期任务 + 硬编码每日维护"""
@@ -160,7 +223,6 @@ class QQGateway:
             return
 
         session_key = f"user_{admin_id}"
-        _last_maintenance_date = ""  # 跟踪每日维护是否已执行
 
         while True:
             # 必须等 NapCat HTTP 连接就绪后才开始工作，避免 self._http 未就绪引发报错
@@ -196,14 +258,22 @@ class QQGateway:
             except Exception as check_err:
                 logger.warning(f"Failed to check QQ login status: {check_err}")
 
-            # ── 1.5. 硬编码每日维护（凌晨 2:00–5:00 执行一次） ─────────────────────
+            # ── 1.5. 硬编码每日维护（每天跑一次，不绑定时钟） ─────────────────────
             try:
-                beijing_now = datetime.now(timezone.utc) + timedelta(hours=8)
-                today_str = beijing_now.strftime("%Y-%m-%d")
-                hour = beijing_now.hour
-                if 2 <= hour < 5 and _last_maintenance_date != today_str:
-                    _last_maintenance_date = today_str
-                    logger.info(f"Daily maintenance triggered for {today_str}")
+                import json
+                from pathlib import Path as _Path
+                maint_file = _Path.home() / ".my-agent" / "maintenance.json"
+                need_maint = True
+                if maint_file.exists():
+                    try:
+                        st = json.loads(maint_file.read_text())
+                        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+                        if st.get("last_date") == today_str and st.get("status") == "ok":
+                            need_maint = False
+                    except Exception:
+                        pass
+                if need_maint:
+                    logger.info("Daily maintenance triggered")
                     await self._run_daily_maintenance(session_key)
             except Exception as maint_err:
                 logger.error(f"Daily maintenance error: {maint_err}")
