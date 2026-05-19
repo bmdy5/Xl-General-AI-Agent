@@ -187,6 +187,25 @@ class QQGateway:
             except Exception:
                 pass
 
+        # ── 5.5. 数据飞轮：夜间教练分析 ──
+        coach_report = ""
+        try:
+            from agent.evo_coach import run_coach_analysis, save_coach_report, auto_apply_rules
+            agent_coach = self._factory(session_key)
+            agent_coach.max_turns = 5
+            analysis = await run_coach_analysis(agent_coach.llm, today)
+            if analysis:
+                coach_report = save_coach_report(analysis) or ""
+                applied = await auto_apply_rules(analysis, agent_coach.memory)
+                if applied:
+                    logger.info(f"Coach auto-applied {applied} rule(s)")
+            try:
+                agent_coach._abort.set()
+            except Exception:
+                pass
+        except Exception as e:
+            logger.warning(f"Coach analysis skipped: {e}")
+
         # ── 6. Python: 持久化维护状态 ──
         maint_state = {
             "last_date": today,
