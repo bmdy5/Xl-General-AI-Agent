@@ -62,11 +62,21 @@ def record_correction(user_input: str, recent_tool: Optional[str] = None):
         if not lines:
             return
 
-        # 标记最近一条 trace
+        # 标记最近一条 trace + 萃取 expected_behavior（Hermes-style）
+        import re as _re
         last = lines[-1]
         last["user_correction"] = user_input[:200]
+
+        # 萃取"应该做什么"：匹配 应该/要用/正确的做法 等引导词
+        eb_match = _re.search(
+            r'(?:应该|要用|正确的?(?:做法|方式|路径)?(?:是)?)[:：]?\s*(.+?)(?:[。！\n]|$)',
+            user_input
+        )
+        last["expected_behavior"] = (eb_match.group(1).strip()[:150] if eb_match
+                                     else user_input[:150])
+
         _write_traces(traces_file, lines)
-        logger.info(f"Correction recorded on {last.get('tool', '?')}: {user_input[:60]}")
+        logger.info(f"Correction [{last.get('tool', '?')}]: {user_input[:60]}")
     except Exception as e:
         logger.debug(f"Correction record failed: {e}")
 
