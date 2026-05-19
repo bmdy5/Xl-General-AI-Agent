@@ -302,6 +302,8 @@ class Agent:
             await self._repair_history()
             
             # ── 滑动窗口截断 + 首发意图锁定 + 工具摘要防蒸发 ──
+            # 方案 B (融合顶端流): goal + scratchpad 全部拼入首个 system 消息正文，
+            # 保证 [system] 永远是绝对数组顶部 → 角色顺序合规 + 命中 DeepSeek 前缀缓存
             if len(self.messages) > 22:
                 split_idx = len(self.messages) - 20
                 safe_split = -1
@@ -319,7 +321,7 @@ class Agent:
                     split_idx += 1
 
                 if safe_split != -1:
-                    # ── 提取被丢弃的工具结果摘要 (Scratchpad) ──
+                    # ── 提取被丢弃的工具结果摘要 ──
                     discarded = self.messages[:safe_split]
                     tool_snippets = []
                     for m in discarded:
@@ -328,27 +330,31 @@ class Agent:
                             text = str(m.get("content", ""))
                             if len(text) > 20 and "Error" not in text[:30]:
                                 tool_snippets.append(f"[{name}] {text[:120].strip()}")
-                    scratchpad = None
-                    if tool_snippets:
-                        scratchpad = {
-                            "role": "system",
-                            "content": "## 历史工具结果速查 (Scratchpad)\n" +
-                                       "\n".join(tool_snippets[-8:])  # 最多8条
-                        }
 
+                    # ── 首个 system 消息去旧留新（消除 Scratchpad 肿瘤）──
                     sys_msgs = [m for m in self.messages if m.get("role") == "system"]
-                    recent_msgs = self.messages[safe_split:]
+                    primary = sys_msgs[0] if sys_msgs else {"role": "system", "content": ""}
+                    base = primary["content"]
+                    for marker in ("\n\n## 原始目标\n", "\n\n## 工具速查\n"):
+                        idx = base.find(marker)
+                        if idx >= 0:
+                            base = base[:idx]
 
-                    # ── 锁定首发意图 (Pin Original Goal) ──
-                    pinned = []
-                    if self._original_goal and self._original_goal not in recent_msgs:
-                        pinned = [self._original_goal]
+                    # ── 拼入 goal + scratchpad 到 system 正文 ──
+                    additions = []
+                    if self._original_goal:
+                        goal_text = self._original_goal["content"][:300]
+                        additions.append(f"## 原始目标\n{goal_text}")
+                    if tool_snippets:
+                        additions.append("## 工具速查\n" + "\n".join(tool_snippets[-8:]))
+                    if additions:
+                        base = base.rstrip() + "\n\n" + "\n\n".join(additions)
 
-                    self.messages = sys_msgs + pinned + recent_msgs
+                    merged_sys = {"role": "system", "content": base}
+                    recent_msgs = [m for m in self.messages[safe_split:]
+                                   if m.get("role") != "system"]
 
-                    # ── 注入 Scratchpad ──
-                    if scratchpad:
-                        self.messages.insert(len(sys_msgs) + len(pinned), scratchpad)
+                    self.messages = [merged_sys] + recent_msgs
 
                     if self.session:
                         await self.session.replace_all(self.messages)
