@@ -16,8 +16,8 @@ TEST_PROMPT = """你是一个 Agent 行为测试官。以下是之前用户纠�
 
 ## 纠正场景
 工具: {tool}
-场景: {context}
-用户纠正: {correction}
+错误: {correction}
+期望行为: {expected}
 
 ## 当前规则
 {current_rules}
@@ -30,11 +30,11 @@ TEST_PROMPT = """你是一个 Agent 行为测试官。以下是之前用户纠�
   "reasoning": "一句话说明为什么"
 }}
 
-如果 would_repeat=true，说明这个纠正还没被系统学会，需要加强规则。"""
+如果 would_repeat=true，说明纠正还没被系统学会。"""
 
 
 async def run_self_test(llm, memory, days: int = 3) -> dict:
-    """从最近的纠正事件生成测试，验证是否已学会。返回测试报告。"""
+    """从纠正事件生成测试，用 expected_behavior 做标准答案验证。"""
     from .evo_traces import get_recent_corrections
 
     corrections = get_recent_corrections(days=days)
@@ -42,19 +42,18 @@ async def run_self_test(llm, memory, days: int = 3) -> dict:
         logger.info("Tester: no recent corrections to test")
         return {"total": 0, "passed": 0, "failed": 0, "details": []}
 
-    # 读取当前规则
     rules_content = ""
     rules_file = memory.base_dir / "EVOLVED_RULES.md"
     if rules_file.exists():
         rules_content = rules_file.read_text(encoding="utf-8")[:2000]
 
     results = []
-    for c in corrections[-10:]:  # 最多测10条
+    for c in corrections[-10:]:
         try:
             prompt = TEST_PROMPT.format(
                 tool=c.get("tool", "?"),
-                context=c.get("result_snippet", "?")[:150],
                 correction=c.get("user_correction", "?")[:150],
+                expected=c.get("expected_behavior", "?")[:150],
                 current_rules=rules_content,
             )
             response = await llm.chat(
@@ -62,14 +61,15 @@ async def run_self_test(llm, memory, days: int = 3) -> dict:
                 tools=None,
             )
             text = response.get("content", "").strip()
-            import re
-            json_match = re.search(r'\{[\s\S]*\}', text)
+            import re as _re
+            json_match = _re.search(r'\{[\s\S]*\}', text)
             if not json_match:
                 continue
 
             result = json.loads(json_match.group(0))
             result["tool"] = c.get("tool", "?")
             result["correction"] = c.get("user_correction", "?")[:80]
+            result["expected_behavior"] = c.get("expected_behavior", "?")[:80]
             results.append(result)
         except Exception as e:
             logger.debug(f"Self-test item failed: {e}")

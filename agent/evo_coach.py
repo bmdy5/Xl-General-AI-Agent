@@ -69,7 +69,9 @@ async def run_coach_analysis(llm, today_str: str = "") -> dict | None:
     if corrections:
         lines.append(f"\n## 今日纠正事件 ({len(corrections)}次)")
         for c in corrections[-10:]:
-            lines.append(f"- [{c['tool']}] {c['user_correction'][:120]}")
+            expected = c.get('expected_behavior', '')
+            exp = f" → 期望行为: {expected[:60]}" if expected else ""
+            lines.append(f"- [{c['tool']}] {c['user_correction'][:80]}{exp}")
 
     traces_text = "\n".join(lines)
 
