@@ -557,8 +557,7 @@ class Agent:
 
                 # v3: 智能结果截断，防止大体积返回撑爆上下文，同时保留关键报错堆栈
                 if len(result_str) > 2000:
-                    _err_indicators = ["Error", "Traceback", "Exception", "failed", "失败", "报错"]
-                    if any(ind in result_str for ind in _err_indicators):
+                    if any(ind in result_str for ind in ERROR_INDICATORS):
                         # 如果是报错，保留头500字和尾1500字（报错堆栈信息通常在开头和结尾）
                         truncated = result_str[:500] + "\n\n...[中间部分已省略]...\n\n" + result_str[-1500:]
                     else:
