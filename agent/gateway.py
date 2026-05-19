@@ -469,6 +469,10 @@ class QQGateway:
 
         raw = _download_cq_images(raw)
 
+        # 数据飞轮：检测并记录用户纠正信号
+        from agent.evo_traces import record_correction
+        record_correction(raw)
+
         logger.info(f"QQ [{session_key}]: {raw[:80]}")
 
         # 写入用户指令审计日志
