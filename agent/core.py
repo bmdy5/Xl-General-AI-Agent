@@ -161,6 +161,7 @@ class Agent:
         self._mode = AgentMode.NORMAL
         self._task_write_approved = False
         self._task_start_time = 0.0
+        self._original_goal = None  # 首发意图锁定（Pin Original Goal）
         self.error_tracker = ErrorTracker()
         self.is_maintenance = False  # Gateway 维护模式标记，放行 merge_to_core
 
@@ -193,6 +194,10 @@ class Agent:
         self.messages.append({"role": "user", "content": user_input})
         if self.session:
             await self.session.append_message({"role": "user", "content": user_input})
+
+        # 锁定首发意图：复杂任务（>20字）才 pin，简单问候不 pin
+        if self._original_goal is None and len(user_input) > 20:
+            self._original_goal = {"role": "user", "content": user_input}
 
         turn = 0
         try:
@@ -296,16 +301,13 @@ class Agent:
             # 在每轮 LLM 调用前，确保对话历史符合规范（解决 DeepSeek 孤儿 tool_call 报错）
             await self._repair_history()
             
-            # ── 滑动窗口截断（替代频繁触发总结压缩，节省大量 token） ──
-            # 保证系统 prompt 永远存在，其余消息只保留最近 20 条左右，且带断点保护（决不在 tool_calls/tool 链中间切断）
+            # ── 滑动窗口截断 + 首发意图锁定 + 工具摘要防蒸发 ──
             if len(self.messages) > 22:
-                # 寻找安全的切分点：从倒数第 20 条开始往后找第一个安全的 user 消息
                 split_idx = len(self.messages) - 20
                 safe_split = -1
                 while split_idx < len(self.messages):
                     msg = self.messages[split_idx]
                     if msg.get("role") == "user":
-                        # 检查前一个消息是否是带 tool_calls 的 assistant
                         prev_is_incomplete = False
                         if split_idx > 0:
                             prev_msg = self.messages[split_idx - 1]
@@ -315,12 +317,39 @@ class Agent:
                             safe_split = split_idx
                             break
                     split_idx += 1
-                
-                # 仅当找到安全的切分点时才执行截断，否则本轮跳过，留给大总结 compressor 兜底
+
                 if safe_split != -1:
+                    # ── 提取被丢弃的工具结果摘要 (Scratchpad) ──
+                    discarded = self.messages[:safe_split]
+                    tool_snippets = []
+                    for m in discarded:
+                        if m.get("role") == "tool" and m.get("content"):
+                            name = m.get("name", "?")
+                            text = str(m.get("content", ""))
+                            if len(text) > 20 and "Error" not in text[:30]:
+                                tool_snippets.append(f"[{name}] {text[:120].strip()}")
+                    scratchpad = None
+                    if tool_snippets:
+                        scratchpad = {
+                            "role": "system",
+                            "content": "## 历史工具结果速查 (Scratchpad)\n" +
+                                       "\n".join(tool_snippets[-8:])  # 最多8条
+                        }
+
                     sys_msgs = [m for m in self.messages if m.get("role") == "system"]
                     recent_msgs = self.messages[safe_split:]
-                    self.messages = sys_msgs + recent_msgs
+
+                    # ── 锁定首发意图 (Pin Original Goal) ──
+                    pinned = []
+                    if self._original_goal and self._original_goal not in recent_msgs:
+                        pinned = [self._original_goal]
+
+                    self.messages = sys_msgs + pinned + recent_msgs
+
+                    # ── 注入 Scratchpad ──
+                    if scratchpad:
+                        self.messages.insert(len(sys_msgs) + len(pinned), scratchpad)
+
                     if self.session:
                         await self.session.replace_all(self.messages)
 
