@@ -420,8 +420,9 @@ class QQGateway:
             perm.set()
             # 不return，继续走下面的对话流程
 
-        # 下载QQ图片到本地（bot可通过read_image查看）
+        # 下载QQ图片到本地持久化目录（bot可通过read_image查看）
         import re as _re
+        import hashlib as _hl
         def _download_cq_images(text: str) -> str:
             def _dl(match):
                 cq = match.group(0)
@@ -431,19 +432,39 @@ class QQGateway:
                     return cq
                 img_url = url_m.group(1)
                 fname = file_m.group(1) if file_m else "qq_image"
-                local_path = f"/tmp/qq_{fname}"
+                # 持久化到 ~/.my-agent/images/，重启不丢
+                img_dir = os.path.expanduser("~/.my-agent/images")
+                os.makedirs(img_dir, exist_ok=True)
+                local_path = os.path.join(img_dir, fname)
                 try:
                     import urllib.request as _ur
-                    headers = {"User-Agent": "Mozilla/5.0"}
-                    if NC_TOKEN:
-                        headers["Authorization"] = f"Bearer {NC_TOKEN}"
-                    req = _ur.Request(img_url, headers=headers)
+                    # 先试直接下载
+                    req = _ur.Request(img_url, headers={"User-Agent": "Mozilla/5.0"})
                     with _ur.urlopen(req, timeout=15) as resp:
                         with open(local_path, "wb") as f:
                             f.write(resp.read())
-                    return f"[图片已下载到: {local_path}]"
                 except Exception:
-                    return f"[图片: {fname}] (下载失败，请用文字描述图片内容)"
+                    # 降级：通过 NapCat get_image API 下载
+                    try:
+                        nc_url = f"{NC_HTTP_URL}/get_image?file={fname}"
+                        import urllib.request as _ur2
+                        hdrs = {"User-Agent": "Mozilla/5.0"}
+                        if NC_TOKEN:
+                            hdrs["Authorization"] = f"Bearer {NC_TOKEN}"
+                        req2 = _ur2.Request(nc_url, headers=hdrs)
+                        with _ur2.urlopen(req2, timeout=15) as resp2:
+                            data = json.loads(resp2.read())
+                            img_url2 = data.get("data", {}).get("url", "")
+                            if img_url2:
+                                req3 = _ur2.Request(img_url2, headers={"User-Agent": "Mozilla/5.0"})
+                                with _ur2.urlopen(req3, timeout=15) as resp3:
+                                    with open(local_path, "wb") as f:
+                                        f.write(resp3.read())
+                    except Exception:
+                        pass
+                if os.path.exists(local_path) and os.path.getsize(local_path) > 0:
+                    return f"[图片已保存: {local_path} (可用read_image查看)]"
+                return f"[图片: {fname}] (自动下载失败，请用文字描述图片内容。URL: {img_url[:60]}...)"
             return _re.sub(r'\[CQ:image,[^\]]+\]', _dl, text)
 
         raw = _download_cq_images(raw)
