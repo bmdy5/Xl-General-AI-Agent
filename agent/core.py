@@ -294,6 +294,35 @@ class Agent:
             # ── 鲁棒性修护 ──
             # 在每轮 LLM 调用前，确保对话历史符合规范（解决 DeepSeek 孤儿 tool_call 报错）
             await self._repair_history()
+            
+            # ── 滑动窗口截断（替代频繁触发总结压缩，节省大量 token） ──
+            # 保证系统 prompt 永远存在，其余消息只保留最近 20 条左右，且带断点保护（决不在 tool_calls/tool 链中间切断）
+            if len(self.messages) > 22:
+                # 寻找安全的切分点：从倒数第 20 条开始往后找第一个安全的 user 消息
+                split_idx = len(self.messages) - 20
+                safe_split = -1
+                while split_idx < len(self.messages):
+                    msg = self.messages[split_idx]
+                    if msg.get("role") == "user":
+                        # 检查前一个消息是否是带 tool_calls 的 assistant
+                        prev_is_incomplete = False
+                        if split_idx > 0:
+                            prev_msg = self.messages[split_idx - 1]
+                            if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+                                prev_is_incomplete = True
+                        if not prev_is_incomplete:
+                            safe_split = split_idx
+                            break
+                    split_idx += 1
+                
+                # 仅当找到安全的切分点时才执行截断，否则本轮跳过，留给大总结 compressor 兜底
+                if safe_split != -1:
+                    sys_msgs = [m for m in self.messages if m.get("role") == "system"]
+                    recent_msgs = self.messages[safe_split:]
+                    self.messages = sys_msgs + recent_msgs
+                    if self.session:
+                        await self.session.replace_all(self.messages)
+
             if self._abort.is_set():
                 yield {"type": "aborted"}
                 return
@@ -484,10 +513,22 @@ class Agent:
                     continue
                 yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
 
-                asyncio.create_task(audit_tool_call(self, tool_name, tool_args, result_str))
+                # 高危/写入操作必须审计以确保行为对齐，即使成功；安全操作仅在报错时才审计
+                force_audit = (category in [PermissionCategory.WRITE, PermissionCategory.DANGEROUS])
+                asyncio.create_task(audit_tool_call(self, tool_name, tool_args, result_str, force=force_audit))
 
-                # v2: 工具结果截断，防止撑爆上下文（最长 5000 字符）
-                truncated = result_str[:5000] if len(result_str) > 5000 else result_str
+                # v3: 智能结果截断，防止大体积返回撑爆上下文，同时保留关键报错堆栈
+                if len(result_str) > 2000:
+                    _err_indicators = ["Error", "Traceback", "Exception", "failed", "失败", "报错"]
+                    if any(ind in result_str for ind in _err_indicators):
+                        # 如果是报错，保留头500字和尾1500字（报错堆栈信息通常在开头和结尾）
+                        truncated = result_str[:500] + "\n\n...[中间部分已省略]...\n\n" + result_str[-1500:]
+                    else:
+                        # 正常输出则截取前1500字，附带指引
+                        truncated = result_str[:1500] + "\n\n...(内容已截断，如需完整信息请使用 grep 过滤或指定行号读取)"
+                else:
+                    truncated = result_str
+
                 self.messages.append({
                     "role": "tool", "tool_call_id": tc["id"],
                     "name": tool_name, "content": truncated,
@@ -781,10 +822,11 @@ class Agent:
             else:
                 lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
 
-        # v5: 只在长输入时追回笔记知识库（短输入如打招呼不需要）
+        # v6: 正则启发式拦截意图 + 降级外链 RAG（省 token 核心机制）
         try:
             note_results = []
-            if len(user_input) > 20:  # 短输入跳过 RAG，省 token
+            tech_intent_re = re.compile(r'怎么|如何|代码|报错|设计|思路|需求|为什么|帮我|查|分析|解决|实现')
+            if len(user_input) > 10 and tech_intent_re.search(user_input):
                 note_results = self.memory.search_notes(enhanced_query, limit=5)
             if note_results:
                 lines.append("")
@@ -794,16 +836,11 @@ class Agent:
                     cite = nr.get("path", "") or nr.get("title", "?")
                     lines.append(f"- 📖 [{nr.get('title','?')}]({cite}) — {snippet}")
                 
-                # --- Layer 4: 链接摘要注入（每 20 轮刷新一次） ---
+                # 降级：外链仅列出清单引用，不消耗前台大模型去做网页摘要总结
                 note_paths = list(set([nr.get("path") for nr in note_results if nr.get("path")]))
-                if note_paths and self._turn_count % 20 == 0:
-                    from .memory.notes_fts import get_link_summaries
-                    link_summaries = await get_link_summaries(note_paths, self.llm)
-                    if link_summaries:
-                        lines.append("")
-                        lines.append("## 关联外链摘要（来源: 笔记链接）")
-                        lines.append(link_summaries)
-                # -----------------------------
+                if note_paths:
+                    lines.append("")
+                    lines.append(f"包含的笔记路径参考: {', '.join(note_paths)}")
 
             # v7: 跨会话搜索 — 从历史聊天记录中检索相关内容
             if self.session and len(user_input) > 20:
