@@ -162,6 +162,7 @@ class Agent:
         self._task_write_approved = False
         self._task_start_time = 0.0
         self.error_tracker = ErrorTracker()
+        self.is_maintenance = False  # Gateway 维护模式标记，放行 merge_to_core
 
     # ── public API ─────────────────────────────────────────────
 
@@ -640,6 +641,11 @@ class Agent:
         tool = self.registry.get(tool_name)
         if tool is None:
             return PermissionCategory.SAFE
+        # 分权审批：merge_to_core 仅在维护模式免签，日常聊天需亮哥审批
+        if tool_name == "save_memory" and (tool_args or {}).get("action") == "merge_to_core":
+            if self.is_maintenance:
+                return PermissionCategory.SAFE
+            return PermissionCategory.WRITE
         if not tool.needs_permissions(tool_args):
             return PermissionCategory.SAFE
         if tool_name == "bash":
