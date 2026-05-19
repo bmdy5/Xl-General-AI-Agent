@@ -33,12 +33,12 @@ AUDIT_PROMPT = """检查这个工具调用结果，判断是否有学习价值�
 如果 worth_remembering=false，insight 为空字符串。不要输出其他内容。"""
 
 
-async def audit_tool_call(agent, tool_name: str, args: dict, result: str):
+async def audit_tool_call(agent, tool_name: str, args: dict, result: str, force: bool = False):
     """工具执行后审计，发现有价值的信息自动存记忆."""
-    # 只在工具调用失败/异常时审计，成功直接跳过（省 LLM 审计费用 70-90%）
+    # 只在工具调用失败/异常时审计，成功直接跳过。若 force 为 True，则必定强行审计
     triggers = ["error", "Error", "failed", "not found", "permission denied",
                 "Error:", "失败", "异常", "Traceback"]
-    if not any(t in str(result)[:500] for t in triggers):
+    if not force and not any(t in str(result)[:500] for t in triggers):
         return
 
     try:
