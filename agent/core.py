@@ -772,8 +772,8 @@ class Agent:
         # v6: 上下文增强 query
         enhanced_query = f"{context_keywords} {user_input}".strip() if context_keywords else user_input
 
-        # v6: 扩大召回 → Top-20
-        search_results = self.memory.search_memories(enhanced_query, limit=20)
+        # v8: 扩大召回 + 类型覆盖 (Type Coverage)
+        search_results = self.memory.search_memories(enhanced_query, limit=50)
         if search_results:
             relevant = []
             seen_fnames = set()
@@ -782,16 +782,29 @@ class Agent:
                 if fname and fname not in seen_fnames:
                     seen_fnames.add(fname)
                     relevant.append(r)
-                if len(relevant) >= 20:
+                if len(relevant) >= 40:
                     break
 
-            # v6: 规则重排 — type 优先级 + 时间降序
-            # 先按时间倒序排（稳定排序），再按 type 优先级排（同 type 内保持时间序）
+            # 时间降序排序
             relevant.sort(key=lambda r: r.get("timestamp", ""), reverse=True)
-            relevant.sort(key=lambda r: _TYPE_PRIORITY.get(
-                str(r.get("memory_type", "")).split("/")[0].strip().lower(), 4
-            ))
-            relevant = relevant[:5]  # 重排后取 Top-5 注入
+
+            # Type Coverage: 保证每种类型至少1条，其余按时间填充
+            type_map = {"feedback": [], "user": [], "learn": [], "project": [], "other": []}
+            for r in relevant:
+                mt = str(r.get("memory_type", "")).split("/")[0].strip().lower()
+                bucket = mt if mt in type_map else "other"
+                type_map[bucket].append(r)
+
+            selected = []
+            # 先取每类第1条
+            for bucket in ["feedback", "user", "learn", "project"]:
+                if type_map[bucket]:
+                    selected.append(type_map[bucket].pop(0))
+            # 再从 latest 里补到 8 条
+            for bucket in ["feedback", "user", "learn", "project", "other"]:
+                while type_map[bucket] and len(selected) < 8:
+                    selected.append(type_map[bucket].pop(0))
+            relevant = selected
         else:
             # Fallback: FTS5 无结果时，解析 index 按时间倒序取 5 条
             entries = self.memory._parse_index()
@@ -869,7 +882,7 @@ class Agent:
         lines.append("[/MEMORY BLOCK]")
         block = "\n".join(lines)
 
-        max_chars = 1200  # 省 token: 2000→1200
+        max_chars = 2000  # v8: 1200→2000，Type Coverage需要更多空间
         if len(block) > max_chars:
             block = block[:max_chars] + "\n... (truncated)\n[/MEMORY BLOCK]"
 
