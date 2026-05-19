@@ -112,18 +112,9 @@ class QQGateway:
         backup_base = _Path.home() / ".my-agent" / "memory_backup"
         backup_base.mkdir(parents=True, exist_ok=True)
 
-        # 维护状态持久化
+        # 防重入由 daemon loop 的 maintenance.json 状态管理保证，此处直接执行
         maint_file = _Path.home() / ".my-agent" / "maintenance.json"
-        maint_state = {}
-        if maint_file.exists():
-            try:
-                maint_state = json.loads(maint_file.read_text())
-            except Exception:
-                pass
-
         today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-        if maint_state.get("last_date") == today and maint_state.get("status") == "ok":
-            return  # 今天已跑过
 
         # ── 1. Python: 备份 .md 文件 ──
         backup_dir = backup_base / f"auto_{today}"
@@ -136,31 +127,31 @@ class QQGateway:
                 count += 1
         logger.info(f"Maintenance backup: {count} files → {backup_dir}")
 
-        # ── 2. Python: 列出未合并的 reflect ──
+        # ── 2. Python: 列出未合并的 reflect（按文件名判断，未加 merged_ 前缀=未处理）──
         reflect_files = sorted(mem_dir.glob("reflect_*.md"))
         unmerged = []
         for rf in reflect_files:
             try:
                 content = rf.read_text(encoding="utf-8")
-                if "merged:" not in content[:100]:
-                    unmerged.append((rf.name, content[:600]))
+                unmerged.append((rf, content[:600]))  # 保存 Path 对象，后续直接 rename
             except Exception:
                 pass
 
         merged_count = 0
         if not unmerged:
-            logger.info("No unmerged reflect files")
+            logger.info("No reflect files to merge")
         else:
             # ── 3. Python: 构建 prompt → LLM: merge_to_core ──
+            batch = unmerged[:10]
             reflect_list = "\n\n".join(
-                f"### {name}\n```\n{content}\n```"
-                for name, content in unmerged[:10]
+                f"### {rf.name}\n```\n{content}\n```"
+                for rf, content in batch
             )
             prompt = MAINTENANCE_MERGE_PROMPT.format(reflect_list=reflect_list)
 
             agent = self._factory(session_key)
-            agent.max_turns = 10       # 熔断：最多10轮
-            agent.is_maintenance = True  # 分权：merge_to_core 免签
+            agent.max_turns = 10
+            agent.is_maintenance = True
             try:
                 async for evt in agent.run(prompt, stream=True):
                     if evt["type"] == "permission_request":
@@ -175,13 +166,12 @@ class QQGateway:
                 except Exception:
                     pass
 
-            # ── 4. Python: mv 已合并的 reflect 到 backup ──
-            for rf in reflect_files:
+            # ── 4. Python: rename 已发给LLM的reflect → merged_ 前缀，移到backup ──
+            for rf, _ in batch:
                 try:
-                    content = rf.read_text(encoding="utf-8")
-                    if "merged:" in content[:100]:
-                        shutil.move(str(rf), str(backup_dir / rf.name))
-                        merged_count += 1
+                    new_name = f"merged_{rf.name}"
+                    shutil.move(str(rf), str(backup_dir / new_name))
+                    merged_count += 1
                 except Exception:
                     pass
 
@@ -259,23 +249,25 @@ class QQGateway:
             except Exception as check_err:
                 logger.warning(f"Failed to check QQ login status: {check_err}")
 
-            # ── 1.5. 硬编码每日维护（每天跑一次，不绑定时钟） ─────────────────────
+            # ── 1.5. 硬编码每日维护（每天跑一次，背景执行不阻塞守护循环）─────
             try:
                 import json
                 from pathlib import Path as _Path
                 maint_file = _Path.home() / ".my-agent" / "maintenance.json"
+                today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                 need_maint = True
                 if maint_file.exists():
                     try:
                         st = json.loads(maint_file.read_text())
-                        today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
-                        if st.get("last_date") == today_str and st.get("status") == "ok":
+                        if st.get("last_date") == today_str:
                             need_maint = False
                     except Exception:
                         pass
                 if need_maint:
                     logger.info("Daily maintenance triggered")
-                    await self._run_daily_maintenance(session_key)
+                    maint_file.write_text(json.dumps(
+                        {"last_date": today_str, "status": "running"}, ensure_ascii=False))
+                    asyncio.create_task(self._run_daily_maintenance(session_key))
             except Exception as maint_err:
                 logger.error(f"Daily maintenance error: {maint_err}")
 
