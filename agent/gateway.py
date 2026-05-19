@@ -403,16 +403,50 @@ class QQGateway:
         else:
             session_key = f"user_{user_id}"
 
-        # 检查是否在等权限确认
+        # 检查是否在等权限确认 — 仅短文本(<5字)视为纯确认，长文本传给agent
         perm = self._pending_perms.get(session_key)
         if perm is not None:
             lower = raw.lower().strip()
-            if lower in ("允许", "y", "yes", "ok", "好", "可以", "行"):
+            if len(lower) <= 4 and lower in ("允许", "y", "yes", "ok", "好", "可以", "行", "可", "对的", "是的"):
                 perm.result = True
-            else:
+                perm.set()
+                return
+            elif len(lower) <= 4:
                 perm.result = False
+                perm.set()
+                return
+            # 长文本 → 既确认又继续对话
+            perm.result = True
             perm.set()
-            return
+            # 不return，继续走下面的对话流程
+
+        # 下载QQ图片到本地（bot可通过read_image查看）
+        import re as _re
+        def _download_cq_images(text: str) -> str:
+            def _dl(match):
+                cq = match.group(0)
+                url_m = _re.search(r'url=([^,\]]+)', cq)
+                file_m = _re.search(r'file=([^,\]]+)', cq)
+                if not url_m:
+                    return cq
+                img_url = url_m.group(1)
+                fname = file_m.group(1) if file_m else "qq_image"
+                local_path = f"/tmp/qq_{fname}"
+                try:
+                    import urllib.request as _ur
+                    headers = {"User-Agent": "Mozilla/5.0"}
+                    if NC_TOKEN:
+                        headers["Authorization"] = f"Bearer {NC_TOKEN}"
+                    req = _ur.Request(img_url, headers=headers)
+                    with _ur.urlopen(req, timeout=15) as resp:
+                        with open(local_path, "wb") as f:
+                            f.write(resp.read())
+                    return f"[图片已下载到: {local_path}]"
+                except Exception:
+                    return f"[图片: {fname}] (下载失败，请用文字描述图片内容)"
+            return _re.sub(r'\[CQ:image,[^\]]+\]', _dl, text)
+
+        raw = _download_cq_images(raw)
 
         logger.info(f"QQ [{session_key}]: {raw[:80]}")
 
