@@ -525,7 +525,15 @@ class QQGateway:
                 )
                 raw = interruption_note
             else:
-                # CC 模式：不排队、不分类、不安抚。消息直接追加到 agent 对话
+                # CC 模式注入。但如果上一个 assistant 有未完成的 tool_calls，
+                # 暂存排队（DeepSeek 要求 tool_calls 后紧跟 tool_result）
+                last_msg = agent.messages[-1] if agent.messages else {}
+                has_pending = (last_msg.get("role") == "assistant" and last_msg.get("tool_calls"))
+                if has_pending:
+                    self._message_queues.setdefault(session_key, []).append((event, raw))
+                    self._log_activity("系统调度", f"工具执行中，消息暂存: {raw[:40]}...")
+                    return
+
                 agent.messages.append({"role": "user", "content": raw})
                 if agent.session:
                     asyncio.create_task(agent.session.append_message(
@@ -695,6 +703,15 @@ class QQGateway:
             asyncio.create_task(async_consolidate_persona())
             
             self._current_tasks.pop(session_key, None)
+
+            # 处理工具执行期间暂存的消息
+            queue = self._message_queues.get(session_key, [])
+            if queue:
+                next_event, next_raw = queue.pop(0)
+                self._log_activity("系统调度", f"暂存消息出队: {next_raw[:40]}...")
+                task = asyncio.create_task(self._execute_task(session_key, next_event, next_raw))
+                task.raw_prompt = next_raw
+                self._current_tasks[session_key] = task
 
     def _tool_detail(self, name: str, args: dict) -> str:
         """解包常用开发工具的核心参数，用于高度可视化的微广播."""
