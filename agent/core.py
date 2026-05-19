@@ -278,6 +278,65 @@ class Agent:
         if (orphan_tools or missing) and self.session:
             await self.session.replace_all(self.messages)
 
+    async def _apply_sliding_window_and_scratchpad(self) -> None:
+        """滑动窗口截断 + 首发意图锁定 + 工具摘要防蒸发（方案 B 融合顶端流）。"""
+        if len(self.messages) <= 22:
+            return
+
+        # 找安全切分点（不在 tool_calls/tool 链中间切断）
+        split_idx = len(self.messages) - 20
+        safe_split = -1
+        while split_idx < len(self.messages):
+            msg = self.messages[split_idx]
+            if msg.get("role") == "user":
+                prev_is_incomplete = False
+                if split_idx > 0:
+                    prev_msg = self.messages[split_idx - 1]
+                    if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
+                        prev_is_incomplete = True
+                if not prev_is_incomplete:
+                    safe_split = split_idx
+                    break
+            split_idx += 1
+
+        if safe_split == -1:
+            return
+
+        # 从被丢弃的消息中提取工具结果摘要
+        tool_snippets = []
+        for m in self.messages[:safe_split]:
+            if m.get("role") == "tool" and m.get("content"):
+                name = m.get("name", "?")
+                text = str(m.get("content", ""))
+                if len(text) > 20 and "Error" not in text[:30]:
+                    tool_snippets.append(f"[{name}] {text[:120].strip()}")
+
+        # 首个 system 消息去旧留新（消除 Scratchpad 肿瘤）
+        sys_msgs = [m for m in self.messages if m.get("role") == "system"]
+        primary = sys_msgs[0] if sys_msgs else {"role": "system", "content": ""}
+        base = primary["content"]
+        for marker in ("\n\n## 原始目标\n", "\n\n## 工具速查\n"):
+            idx = base.find(marker)
+            if idx >= 0:
+                base = base[:idx]
+
+        # 拼入 goal + scratchpad 到 system 正文
+        additions = []
+        if self._original_goal:
+            additions.append(f"## 原始目标\n{self._original_goal['content'][:300]}")
+        if tool_snippets:
+            additions.append("## 工具速查\n" + "\n".join(tool_snippets[-8:]))
+        if additions:
+            base = base.rstrip() + "\n\n" + "\n\n".join(additions)
+
+        merged_sys = {"role": "system", "content": base}
+        recent_msgs = [m for m in self.messages[safe_split:]
+                       if m.get("role") != "system"]
+        self.messages = [merged_sys] + recent_msgs
+
+        if self.session:
+            await self.session.replace_all(self.messages)
+
     async def _run_loop(self, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
         """统一核心循环。stream=False → chat(), stream=True → chat_stream()."""
         cached_prompt = await self._build_system_prompt()
@@ -301,63 +360,8 @@ class Agent:
             # 在每轮 LLM 调用前，确保对话历史符合规范（解决 DeepSeek 孤儿 tool_call 报错）
             await self._repair_history()
             
-            # ── 滑动窗口截断 + 首发意图锁定 + 工具摘要防蒸发 ──
-            # 方案 B (融合顶端流): goal + scratchpad 全部拼入首个 system 消息正文，
-            # 保证 [system] 永远是绝对数组顶部 → 角色顺序合规 + 命中 DeepSeek 前缀缓存
-            if len(self.messages) > 22:
-                split_idx = len(self.messages) - 20
-                safe_split = -1
-                while split_idx < len(self.messages):
-                    msg = self.messages[split_idx]
-                    if msg.get("role") == "user":
-                        prev_is_incomplete = False
-                        if split_idx > 0:
-                            prev_msg = self.messages[split_idx - 1]
-                            if prev_msg.get("role") == "assistant" and prev_msg.get("tool_calls"):
-                                prev_is_incomplete = True
-                        if not prev_is_incomplete:
-                            safe_split = split_idx
-                            break
-                    split_idx += 1
-
-                if safe_split != -1:
-                    # ── 提取被丢弃的工具结果摘要 ──
-                    discarded = self.messages[:safe_split]
-                    tool_snippets = []
-                    for m in discarded:
-                        if m.get("role") == "tool" and m.get("content"):
-                            name = m.get("name", "?")
-                            text = str(m.get("content", ""))
-                            if len(text) > 20 and "Error" not in text[:30]:
-                                tool_snippets.append(f"[{name}] {text[:120].strip()}")
-
-                    # ── 首个 system 消息去旧留新（消除 Scratchpad 肿瘤）──
-                    sys_msgs = [m for m in self.messages if m.get("role") == "system"]
-                    primary = sys_msgs[0] if sys_msgs else {"role": "system", "content": ""}
-                    base = primary["content"]
-                    for marker in ("\n\n## 原始目标\n", "\n\n## 工具速查\n"):
-                        idx = base.find(marker)
-                        if idx >= 0:
-                            base = base[:idx]
-
-                    # ── 拼入 goal + scratchpad 到 system 正文 ──
-                    additions = []
-                    if self._original_goal:
-                        goal_text = self._original_goal["content"][:300]
-                        additions.append(f"## 原始目标\n{goal_text}")
-                    if tool_snippets:
-                        additions.append("## 工具速查\n" + "\n".join(tool_snippets[-8:]))
-                    if additions:
-                        base = base.rstrip() + "\n\n" + "\n\n".join(additions)
-
-                    merged_sys = {"role": "system", "content": base}
-                    recent_msgs = [m for m in self.messages[safe_split:]
-                                   if m.get("role") != "system"]
-
-                    self.messages = [merged_sys] + recent_msgs
-
-                    if self.session:
-                        await self.session.replace_all(self.messages)
+            # ── 滑动窗口 + Scratchpad + Pin Goal ──
+            await self._apply_sliding_window_and_scratchpad()
 
             if self._abort.is_set():
                 yield {"type": "aborted"}
