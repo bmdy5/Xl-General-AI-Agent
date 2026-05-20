@@ -161,7 +161,7 @@ class Agent:
             try:
                 history = await self.session.initialize()
                 system_msgs = [m for m in history if m.get("role") == "system"]
-                recent = [m for m in history if m.get("role") != "system"][-2:]
+                recent = [m for m in history if m.get("role") != "system"][-15:]
                 self.messages = system_msgs + recent
                 
                 # ── 物理召回：从历史记录中找回并恢复 _original_goal ──
