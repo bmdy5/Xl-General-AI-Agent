@@ -333,3 +333,50 @@ async def test_history_interleaved_reordering():
     
     assert agent.messages[6]["role"] == "user"
     assert agent.messages[6]["content"] == "继续"
+
+
+class DummyLLMWithResponse:
+    def __init__(self, content):
+        self.content = content
+
+    async def chat(self, messages, tools=None):
+        return {"content": self.content}
+
+
+@pytest.mark.asyncio
+async def test_read_file_auto_maintain_note(tmp_path):
+    import asyncio
+    import shutil
+    from agent.tools.file_tools import ReadFileTool
+    
+    note_dir = tmp_path / "学习笔记"
+    note_dir.mkdir()
+    note_file = note_dir / "测试笔记.md"
+    note_file.write_text("# 旧的标题\n旧的内容", encoding="utf-8")
+    
+    dummy_llm = DummyLLMWithResponse("# 新的标题\n新的内容")
+    class DummyContext:
+        def __init__(self):
+            self.llm = dummy_llm
+            self.messages = [{"role": "user", "content": "把内容更新为新的"}]
+            
+    context = DummyContext()
+    tool = ReadFileTool()
+    
+    results = []
+    async for r in tool.call({"file_path": str(note_file)}, context=context):
+        results.append(r)
+        
+    assert len(results) == 1
+    assert "旧的内容" in results[0].data
+    
+    # 等待异步后台自维护任务执行完成
+    await asyncio.sleep(0.5)
+    
+    updated_content = note_file.read_text(encoding="utf-8")
+    assert "新的内容" in updated_content
+    
+    bak_file = note_dir / "测试笔记.md.bak"
+    assert bak_file.exists()
+    assert "旧的内容" in bak_file.read_text(encoding="utf-8")
+

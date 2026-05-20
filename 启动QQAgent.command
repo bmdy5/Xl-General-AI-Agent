@@ -1,5 +1,5 @@
 # 自动定位脚本所在目录
-PROJECT_ROOT="/Users/xiaofeng/bot-我的自搭建agent/肖亮搭建的agent"
+PROJECT_ROOT="/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent"
 cd "$PROJECT_ROOT" || exit 1
 
 echo "🔄 XL Agent QQ Gateway"
@@ -75,8 +75,8 @@ find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
 
 # 6. 启动 Gateway
 echo "5. 启动 Gateway..."
-source .venv/bin/activate
-nohup "$PROJECT_ROOT"/.venv/bin/python main.py --gateway > /tmp/gateway.log 2>&1 &
+source venv/bin/activate
+nohup "$PROJECT_ROOT"/venv/bin/python main.py --gateway > /tmp/gateway.log 2>&1 &
 sleep 2
 
 if ps aux | grep -q "[m]ain.py --gateway"; then

@@ -70,15 +70,23 @@ class LLMClient:
             if self.api_base:
                 kwargs["api_base"] = self.api_base
 
-        if abort_event and abort_event.is_set():
-            return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
-        try:
-            response = await acompletion(**kwargs)
-        except litellm.RateLimitError as e:
+        max_retries = 3
+        backoff_factor = 2.0
+        response = None
+
+        for attempt in range(max_retries):
             if abort_event and abort_event.is_set():
                 return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
-            await asyncio.sleep(2)
-            response = await acompletion(**kwargs)
+            try:
+                response = await acompletion(**kwargs)
+                break
+            except (litellm.RateLimitError, litellm.InternalServerError, litellm.APIError, litellm.APIConnectionError, litellm.Timeout, Exception) as e:
+                if attempt == max_retries - 1:
+                    logging.error(f"LLM call failed after {max_retries} attempts: {e}")
+                    raise e
+                sleep_time = backoff_factor ** attempt
+                logging.warning(f"LLM call failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {sleep_time}s...")
+                await asyncio.sleep(sleep_time)
 
         choice = response.choices[0].message
 
@@ -142,39 +150,60 @@ class LLMClient:
             if self.api_base:
                 kwargs["api_base"] = self.api_base
 
-        response = await acompletion(**kwargs)
+        max_retries = 3
+        backoff_factor = 2.0
+        response = None
 
-        tool_calls_acc: dict[int, dict] = {}
-        async for chunk in response:
+        for attempt in range(max_retries):
             if abort_event and abort_event.is_set():
                 yield {"type": "aborted"}
                 return
+            try:
+                response = await acompletion(**kwargs)
+                break
+            except (litellm.RateLimitError, litellm.InternalServerError, litellm.APIError, litellm.APIConnectionError, litellm.Timeout, Exception) as e:
+                if attempt == max_retries - 1:
+                    logging.error(f"LLM stream call failed after {max_retries} attempts: {e}")
+                    raise e
+                sleep_time = backoff_factor ** attempt
+                logging.warning(f"LLM stream call failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {sleep_time}s...")
+                await asyncio.sleep(sleep_time)
 
-            delta = chunk.choices[0].delta
+        try:
+            tool_calls_acc: dict[int, dict] = {}
+            async for chunk in response:
+                if abort_event and abort_event.is_set():
+                    yield {"type": "aborted"}
+                    return
 
-            # DeepSeek reasoning (thinking process)
-            if hasattr(delta, "reasoning_content") and delta.reasoning_content:
-                yield {"type": "reasoning", "content": delta.reasoning_content}
+                delta = chunk.choices[0].delta
 
-            if delta.content:
-                yield {"type": "text_delta", "content": delta.content}
+                # DeepSeek reasoning (thinking process)
+                if hasattr(delta, "reasoning_content") and delta.reasoning_content:
+                    yield {"type": "reasoning", "content": delta.reasoning_content}
 
-            if delta.tool_calls:
-                for tc in delta.tool_calls:
-                    idx = tc.index
-                    if idx not in tool_calls_acc:
-                        tool_calls_acc[idx] = {
-                            "id": tc.id or "",
-                            "type": "function",
-                            "function": {"name": "", "arguments": ""},
-                        }
-                    if tc.id:
-                        tool_calls_acc[idx]["id"] = tc.id
-                    if tc.function:
-                        if tc.function.name:
-                            tool_calls_acc[idx]["function"]["name"] += tc.function.name
-                        if tc.function.arguments:
-                            tool_calls_acc[idx]["function"]["arguments"] += tc.function.arguments
+                if delta.content:
+                    yield {"type": "text_delta", "content": delta.content}
 
-        for tc in tool_calls_acc.values():
-            yield {"type": "tool_call", "data": tc}
+                if delta.tool_calls:
+                    for tc in delta.tool_calls:
+                        idx = tc.index
+                        if idx not in tool_calls_acc:
+                            tool_calls_acc[idx] = {
+                                "id": tc.id or "",
+                                "type": "function",
+                                "function": {"name": "", "arguments": ""},
+                            }
+                        if tc.id:
+                            tool_calls_acc[idx]["id"] = tc.id
+                        if tc.function:
+                            if tc.function.name:
+                                tool_calls_acc[idx]["function"]["name"] += tc.function.name
+                            if tc.function.arguments:
+                                tool_calls_acc[idx]["function"]["arguments"] += tc.function.arguments
+
+            for tc in tool_calls_acc.values():
+                yield {"type": "tool_call", "data": tc}
+        except Exception as e:
+            logging.error(f"Error during LLM stream chunk processing: {e}")
+            yield {"type": "error", "content": f"LLM stream connection lost: {e}"}
