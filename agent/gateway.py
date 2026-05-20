@@ -61,6 +61,7 @@ class QQGateway:
         self._activity_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent_activity.log"
         self._current_tasks: dict[str, asyncio.Task] = {}
         self._message_queues: dict[str, list[tuple[dict, str]]] = {}
+        self._tts = None
 
     def _load_persona(self) -> tuple:
         """从运行期画像读取 (name, user_address)，兜底返回默认值。"""
@@ -308,7 +309,11 @@ class QQGateway:
 
                     _pn, _ua = self._load_persona()
 
-                    if auto:
+                    is_silent = ("清理旧会话" in desc)
+
+                    if is_silent:
+                        approved = True
+                    elif auto:
                         # Auto-execute: run immediately, no permission prompt
                         await self._send("private", admin_id, "",
                             f"🤖 [自动任务] {desc} — 正在执行...")
@@ -328,7 +333,8 @@ class QQGateway:
                             self._pending_perms.pop(session_key, None)
 
                     if approved:
-                        await self._send("private", admin_id, "", f"🚀 执行中: {desc}...")
+                        if not is_silent:
+                            await self._send("private", admin_id, "", f"🚀 执行中: {desc}...")
 
                         agent = self._factory(session_key)
                         buf = ""
@@ -337,8 +343,9 @@ class QQGateway:
                                 if evt["type"] == "text_delta":
                                     buf += evt["content"]
                                 elif evt["type"] == "tool_call" and evt.get("name"):
-                                    await self._send("private", admin_id, "",
-                                        f"⚙️ [{desc}] {_tool_label(evt['name'])}...")
+                                    if not is_silent:
+                                        await self._send("private", admin_id, "",
+                                            f"⚙️ [{desc}] {_tool_label(evt['name'])}...")
                                 elif evt["type"] == "permission_request":
                                     agent.approve_permission()
                                 elif evt["type"] == "error":
@@ -358,7 +365,7 @@ class QQGateway:
                             except Exception:
                                 pass
 
-                            if is_online:
+                            if is_online and not is_silent:
                                 await self._send("private", admin_id, "",
                                     f"✅ [任务完成] {desc}\n\n{result_summary}")
 
@@ -379,8 +386,9 @@ class QQGateway:
 
                         except Exception as run_err:
                             logger.error(f"Task execution failed: {run_err}")
-                            await self._send("private", admin_id, "",
-                                f"❌ [任务失败] {desc}: {str(run_err)[:200]}")
+                            if not is_silent:
+                                await self._send("private", admin_id, "",
+                                    f"❌ [任务失败] {desc}: {str(run_err)[:200]}")
 
                     q.mark_done(task_id)
 
@@ -551,6 +559,45 @@ class QQGateway:
         user_id = str(event.get("user_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
         
+        # 拦截小萤专属语音测试指令，方便亮哥在 QQ 中即时调音
+        raw_strip = raw.strip()
+        if raw_strip.startswith(("小萤语音测试：", "小萤语音测试:")):
+            test_cmd = raw_strip[7:].strip()
+            # 格式：[情绪] 说话内容 或 情绪 说话内容（支持无中括号、支持冒号/空格等分割）
+            test_style = "撒娇"
+            test_text = test_cmd
+            
+            import re as _re
+            # 1. 尝试匹配中括号形式，如 [喜] 太好了 或 [喜]太好了
+            m = _re.match(r'^\[([^\]]+)\](.*)', test_cmd, _re.DOTALL)
+            if m:
+                test_style = m.group(1).strip()
+                test_text = m.group(2).strip()
+            else:
+                # 2. 尝试匹配带分隔符的任何前置词 (1-4个字)
+                m_sep = _re.match(r'^([^\s：，:,\s]{1,4})(?:\s+|[：，:,\s]+)(.*)', test_cmd, _re.DOTALL)
+                if m_sep:
+                    potential_style = m_sep.group(1).strip()
+                    known_styles = {"喜", "怒", "哀", "乐", "撒娇", "傲娇", "委屈", "呆萌", "娇嗔", "元气", "活力", "温柔", "贴心", "软萌"}
+                    if potential_style in known_styles or len(potential_style) <= 2:
+                        test_style = potential_style
+                        test_text = m_sep.group(2).strip()
+                else:
+                    # 3. 匹配无分隔符的情况，只允许 >= 2个字的已知情感词（避免“喜欢”等单字词误匹配）
+                    known_styles = {"喜", "怒", "哀", "乐", "撒娇", "傲娇", "委屈", "呆萌", "娇嗔", "元气", "活力", "温柔", "贴心", "软萌"}
+                    for style in sorted(known_styles, key=len, reverse=True):
+                        if len(style) >= 2 and test_cmd.startswith(style):
+                            test_style = style
+                            test_text = test_cmd[len(style):].strip()
+                            break
+            
+            if test_text:
+                # 调试提示：根据亮哥要求，已去除冗余的聊天框提示文本，只输出纯净语音
+                await self._send_voice(msg_type, user_id, group_id, test_text, test_style)
+            else:
+                await self._send(msg_type, user_id, group_id, "⚠️ 请输入要合成的文本，格式如：小萤语音测试：[委屈] 小萤好难过呀")
+            return
+
         agent = self._agents.get(session_key)
         if agent is None:
             agent = self._factory(session_key)
@@ -572,7 +619,9 @@ class QQGateway:
         # 自然过渡：AI 自主决定，在 core.py _run_loop 中 yield transition 事件
         sent_transition = False
         buf = ""
-
+        is_voice_reply = False
+        voice_style = "知性"
+ 
         # 流式段落/句子分发清洗逻辑，消除憋字挂起感
         try:
             async for evt in agent.run(raw, stream=True):
@@ -584,34 +633,45 @@ class QQGateway:
                     if not sent_transition:
                         sent_transition = True
                     buf += evt["content"]
-
-                    if "[SPLIT]" in buf:
-                        parts = buf.split("[SPLIT]")
-                        for part in parts[:-1]:
-                            if part.strip():
-                                self._log_activity("AI 计划/答复", part.strip())
-                                await self._send_chunk(msg_type, user_id, group_id, part.strip())
-                        buf = parts[-1]
-                    elif "\n\n" in buf and len(buf) > 40:
-                        idx = buf.rfind("\n\n")
-                        to_send = buf[:idx]
-                        if to_send.strip():
-                            self._log_activity("AI 计划/答复", to_send.strip())
-                            await self._send_chunk(msg_type, user_id, group_id, to_send.strip())
-                        buf = buf[idx+2:]
-                    elif len(buf) > 100 and any(p in buf for p in ("。", "！", "？")):
-                        idx = -1
-                        for p in ("。", "！", "？"):
-                            p_idx = buf.rfind(p)
-                            if p_idx > idx:
-                                idx = p_idx
-                        if idx != -1:
-                            to_send = buf[:idx+1]
+ 
+                    if not is_voice_reply:
+                        import re as _re
+                        m_voice = _re.match(r'^\[语音(?::([^\]]+))?\]', buf.strip())
+                        if m_voice:
+                            is_voice_reply = True
+                            voice_style = m_voice.group(1) or "知性"
+ 
+                    if is_voice_reply:
+                        # 语音回复时不进行流式分句发送，全量缓存在 buf 中以保持语音连贯性
+                        pass
+                    else:
+                        if "[SPLIT]" in buf:
+                            parts = buf.split("[SPLIT]")
+                            for part in parts[:-1]:
+                                if part.strip():
+                                    self._log_activity("AI 计划/答复", part.strip())
+                                    await self._send_chunk(msg_type, user_id, group_id, part.strip())
+                            buf = parts[-1]
+                        elif "\n\n" in buf and len(buf) > 40:
+                            idx = buf.rfind("\n\n")
+                            to_send = buf[:idx]
                             if to_send.strip():
                                 self._log_activity("AI 计划/答复", to_send.strip())
                                 await self._send_chunk(msg_type, user_id, group_id, to_send.strip())
-                            buf = buf[idx+1:]
-
+                            buf = buf[idx+2:]
+                        elif len(buf) > 100 and any(p in buf for p in ("。", "！", "？")):
+                            idx = -1
+                            for p in ("。", "！", "？"):
+                                p_idx = buf.rfind(p)
+                                if p_idx > idx:
+                                    idx = p_idx
+                            if idx != -1:
+                                to_send = buf[:idx+1]
+                                if to_send.strip():
+                                    self._log_activity("AI 计划/答复", to_send.strip())
+                                    await self._send_chunk(msg_type, user_id, group_id, to_send.strip())
+                                buf = buf[idx+1:]
+ 
                 elif evt["type"] == "tool_call" and evt.get("name"):
                     t_name = evt["name"]
                     t_args = evt.get("args", {})
@@ -619,7 +679,13 @@ class QQGateway:
                     
                     if buf.strip():
                         self._log_activity("AI 计划/答复", buf.strip())
-                        await self._send_chunk(msg_type, user_id, group_id, buf.strip())
+                        if is_voice_reply:
+                            import re as _re
+                            pure_text = _re.sub(r'^\[语音(?::[^\]]+)?\]', '', buf.strip()).strip()
+                            if pure_text:
+                                await self._send_voice(msg_type, user_id, group_id, pure_text, voice_style)
+                        else:
+                            await self._send_chunk(msg_type, user_id, group_id, buf.strip())
                         buf = ""
                     
                     self._log_activity("工具调用", f"{t_name} | 参数: {t_args}")
@@ -637,7 +703,7 @@ class QQGateway:
                         if m and m.group(1) != "0":
                             has_error = True
                     elif res.strip().startswith("Error"):
-                        has_error = True
+                         has_error = True
                     
                     if has_error:
                         self._log_activity("系统异常", f"工具 {t_name} 执行失败: {res[:200]}")
@@ -668,7 +734,13 @@ class QQGateway:
         finally:
             if buf.strip():
                 self._log_activity("AI 计划/答复", buf.strip())
-                await self._send_chunk(msg_type, user_id, group_id, buf.strip())
+                if is_voice_reply:
+                    import re as _re
+                    pure_text = _re.sub(r'^\[语音(?::[^\]]+)?\]', '', buf.strip()).strip()
+                    if pure_text:
+                        await self._send_voice(msg_type, user_id, group_id, pure_text, voice_style)
+                else:
+                    await self._send_chunk(msg_type, user_id, group_id, buf.strip())
             
             # 后台异步触发人格自画像整理 (Consolidation)，每 5 轮一次省 token
             _consolidate_count = getattr(self, "_consolidate_count", 0) + 1
@@ -772,6 +844,57 @@ class QQGateway:
         finally:
             self._pending_perms.pop(session_key, None)
 
+    async def _send_voice(self, msg_type: str, user_id: str, group_id: str, text: str, style: str = "知性"):
+        """使用高拟真日常女声 (台湾腔 · 晓臻) 异步合成语音并发送"""
+        import base64
+        import re
+        import asyncio
+        import edge_tts
+        
+        if not text.strip():
+            return
+            
+        try:
+            # 1. 文本清洗，过滤掉特殊的 Markdown 标记等
+            clean = text
+            clean = re.sub(r'\*+', '', clean)
+            clean = re.sub(r'`+', '', clean)
+            clean = re.sub(r'#+', '', clean)
+            clean = clean.replace("&", "和").replace("<", " ").replace(">", " ")
+            clean = clean.strip()
+            
+            if not clean:
+                return
+
+            logger.info(f"🎙️ [TTS] 开始使用 Edge-TTS (台湾腔·晓臻) 内存流式合成: '{clean}'")
+            
+            # 2. 内存流式读取，不产生任何临时文件，大幅优化 IO 性能
+            communicate = edge_tts.Communicate(
+                text=clean,
+                voice="zh-TW-HsiaoChenNeural",
+                pitch="+0Hz",
+                rate="+0%"
+            )
+            
+            mp3_bytes = b""
+            async for chunk in communicate.stream():
+                if chunk["type"] == "audio":
+                    mp3_bytes += chunk["data"]
+            
+            if len(mp3_bytes) > 0:
+                b64_data = base64.b64encode(mp3_bytes).decode("utf-8")
+                cq_record = f"[CQ:record,file=base64://{b64_data}]"
+                await self._send(msg_type, user_id, group_id, cq_record)
+                logger.info(f"✅ [TTS] 语音内存合成并发送成功！大小: {len(mp3_bytes)} 字节")
+            else:
+                raise ValueError("Generated MP3 byte stream is empty")
+                
+        except Exception as e:
+            logger.error(f"❌ [TTS] Edge-TTS 语音合成失败，进行文字降级: {e}")
+            # 高可用降级
+            await self._send(msg_type, user_id, group_id, f"[语音合成失败] {text}")
+
+
     async def _send(self, msg_type: str, user_id: str, group_id: str, text: str):
         """通过 NapCat HTTP API 发送消息."""
         import re
@@ -785,6 +908,8 @@ class QQGateway:
         def escape_invalid_cq(match):
             import base64
             cq_str = match.group(0)
+            if cq_str.startswith("[CQ:record,"):
+                return cq_str
             if cq_str.startswith("[CQ:image,file="):
                 m_file = re.search(r'file=([^,\]\\]+)', cq_str)
                 if m_file:
