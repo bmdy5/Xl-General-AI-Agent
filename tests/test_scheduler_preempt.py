@@ -27,9 +27,11 @@ class MockMemory:
         return [{"content": "语气要温柔俏皮"}]
 
 class MockAgent:
-    def __init__(self):
+    def __init__(self, session_key=None, *args, **kwargs):
         self.llm = MockLLM()
         self.memory = MockMemory()
+        self.messages = []
+        self.session = None
     async def run(self, prompt, stream=True):
         if "long" in prompt:
             yield {"type": "text_delta", "content": "长任务第一阶段"}
@@ -50,27 +52,34 @@ async def test_ai_driven_scheduler():
         sent_messages.append(text)
     gw._send = mock_send
 
-    # 模拟长任务
+    # 1. 模拟启动长任务
     task1_event = {"message_type": "private", "user_id": "123", "raw_message": "跑一个 long 任务"}
     asyncio.create_task(gw._handle(task1_event))
     await asyncio.sleep(0.5)
 
-    # 模拟排队任务
+    # 2. 模拟排队任务 (在当前 CC 模式下会作为普通消息直接注入当前正在运行的会话 messages 中)
     task2_event = {"message_type": "private", "user_id": "123", "raw_message": "顺便备份"}
     await gw._handle(task2_event)
     await asyncio.sleep(0.5)
+    
+    # 校验：消息已被成功追加到 agent 对话记录中
+    agent = gw._agents.get("user_123")
+    assert agent is not None
+    assert any(m.get("content") == "顺便备份" for m in agent.messages), "CC模式下消息应被成功追加"
+    print("✅ CC mode inject verification: '顺便备份' injected successfully")
 
-    # 模拟抢占任务
-    task3_event = {"message_type": "private", "user_id": "123", "raw_message": "先帮我看一下 README"}
+    # 3. 模拟强行抢占任务 (发送包含抢占关键词 '停下' 的指令)
+    task3_event = {"message_type": "private", "user_id": "123", "raw_message": "停下，先帮我看一下 README"}
     await gw._handle(task3_event)
 
     await asyncio.sleep(2.0)
     
     # 验证点：
-    # 1. 成功拦截并发出由 MockLLM 动态生成的女性极客小肖安抚句
-    # 2. 成功发送抢占刹车提示
-    has_ai_queue_reply = any("小肖" in m and "备忘录" in m for m in sent_messages)
-    has_preempt = any("手忙脚乱" in m or "备忘录" in m for m in sent_messages)
+    # 1. 长任务 task1 被强行 Cancel，因此不应输出 '长任务第二阶段'
+    # 2. 抢占指令触发了拦截，生成系统调度通知并启动了抢占命令的执行
+    has_preempt_triggered = any("停下上一个任务" in m for m in sent_messages)
+    task1_cancelled_successfully = not any("长任务第二阶段" in m for m in sent_messages)
 
-    assert has_ai_queue_reply, "应该成功调起大模型生成动态安抚"
-    print("Dynamic AI-driven scheduler preemption test successfully passed!")
+    assert has_preempt_triggered, "应当成功触发强占中断并启动新命令"
+    assert task1_cancelled_successfully, "长任务应当被中止，不生成第二阶段的输出"
+    print("🎉 Dynamic keyword-driven scheduler preemption test successfully passed!")
