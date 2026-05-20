@@ -131,3 +131,62 @@ async def test_rag_thresholds():
     assert "## 相关历史对话" in res
     assert "## 相关知识（来源: 学习笔记）" in res
 
+
+@pytest.mark.asyncio
+async def test_history_repair_ordering():
+    # 模拟 Agent
+    dummy_llm = DummyLLM("openai/gpt-4o")
+    dummy_reg = ToolRegistry()
+    agent = Agent(dummy_llm, dummy_reg)
+    
+    # 构造测试消息：assistant (带两个 tool_calls，一个已有 tool 回包，一个缺失) -> user (新消息)
+    agent.messages = [
+        {
+            "role": "assistant",
+            "content": "我先查一下",
+            "tool_calls": [
+                {
+                    "id": "call_existing",
+                    "type": "function",
+                    "function": {"name": "read_file", "arguments": "{}"}
+                },
+                {
+                    "id": "call_missing",
+                    "type": "function",
+                    "function": {"name": "save_memory", "arguments": "{}"}
+                }
+            ]
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "call_existing",
+            "name": "read_file",
+            "content": "file contents"
+        },
+        {
+            "role": "user",
+            "content": "怎么报错了"
+        }
+    ]
+    
+    # 触发 _repair_history()
+    await agent._repair_history()
+    
+    # 校验：_repair_history 之后，messages 长度应该变为 4
+    # 且两个 tool 消息都应该紧紧跟随在 assistant 后面，并且新 user 消息应在最后
+    assert len(agent.messages) == 4
+    assert agent.messages[0]["role"] == "assistant"
+    
+    # 紧随其后的应该是两个 tool 角色消息
+    assert agent.messages[1]["role"] == "tool"
+    assert agent.messages[1]["tool_call_id"] == "call_existing"
+    
+    assert agent.messages[2]["role"] == "tool"
+    assert agent.messages[2]["tool_call_id"] == "call_missing"
+    assert agent.messages[2]["name"] == "save_memory"  # 应当能智能从 tool_calls 中提取出 name
+    
+    # 最末尾的依然是 user 消息
+    assert agent.messages[3]["role"] == "user"
+    assert agent.messages[3]["content"] == "怎么报错了"
+
+

@@ -268,13 +268,40 @@ class Agent:
         if missing:
             repair_logger.warning(f"检测到 {len(missing)} 个孤儿工具调用，正在自动补全占位符...")
             for tc_id in missing:
-                placeholder = {
-                    "role": "tool",
-                    "tool_call_id": tc_id,
-                    "name": "unknown",
-                    "content": "已恢复执行"
-                }
-                self.messages.append(placeholder)
+                # 寻找这个 tc_id 属于哪个 assistant 消息，并智能提取 tool_name
+                assistant_idx = -1
+                tool_name = "unknown"
+                for i, m in enumerate(self.messages):
+                    if m.get("role") == "assistant" and m.get("tool_calls"):
+                        for tc in m["tool_calls"]:
+                            if tc.get("id") == tc_id:
+                                assistant_idx = i
+                                tool_name = tc.get("function", {}).get("name", "unknown")
+                                break
+                        if assistant_idx != -1:
+                            break
+
+                if assistant_idx != -1:
+                    # 确定插入位置：紧跟在 assistant 消息以及其后的所有 tool 消息之后
+                    insert_idx = assistant_idx + 1
+                    while insert_idx < len(self.messages) and self.messages[insert_idx].get("role") == "tool":
+                        insert_idx += 1
+                    
+                    placeholder = {
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "name": tool_name,
+                        "content": "已恢复执行"
+                    }
+                    self.messages.insert(insert_idx, placeholder)
+                else:
+                    placeholder = {
+                        "role": "tool",
+                        "tool_call_id": tc_id,
+                        "name": "unknown",
+                        "content": "已恢复执行"
+                    }
+                    self.messages.append(placeholder)
 
         if (orphan_tools or missing) and self.session:
             await self.session.replace_all(self.messages)
