@@ -206,10 +206,76 @@ class SessionHandler:
 
     # ── cross-session search (FTS5) ──────────────────────────
 
+    async def _pronoun_fallback_search(self, max_results: int = 5) -> str:
+        """智能指代词兜底检索：提取当前会话前部（被窗口截断部分）或其他最新会话的最新聊天片段."""
+        matches = []
+        
+        # 1. 优先尝试从当前会话的完整历史中，提取内存中最近15条之前的更早历史消息
+        try:
+            current_history = await self.load_messages()
+            if len(current_history) > 15:
+                earlier_msgs = current_history[:-15][-6:]
+                for m in earlier_msgs:
+                    role = m.get("role", "")
+                    content = str(m.get("content", ""))
+                    if content.strip() and len(content) > 1:
+                        matches.append(f"[当前会话更早前] {role}: {content[:120]}")
+                if matches:
+                    return "\n".join(matches)
+        except Exception as e:
+            logger.warning(f"Error in load_messages for pronoun fallback: {e}")
+
+        # 2. 如果当前会话没有更早的消息（例如刚刚新启动），则尝试从其他最新被修改的会话中读取
+        if not self.storage_dir.exists():
+            return ""
+            
+        try:
+            # 找出最近修改的 5 个 jsonl 会话文件
+            latest_files = sorted(
+                [f for f in self.storage_dir.glob("*.jsonl") if f.name != self.session_file.name],
+                key=lambda f: f.stat().st_mtime,
+                reverse=True
+            )[:5]
+            
+            for f in latest_files:
+                earlier = []
+                async with aiofiles.open(f, mode="r", encoding="utf-8") as fh:
+                    async for line in fh:
+                        line = line.strip()
+                        if line:
+                            try:
+                                earlier.append(json.loads(line))
+                            except json.JSONDecodeError:
+                                continue
+                
+                # 过滤出非 system 且有内容的最后 4 条消息
+                valid_msgs = [m for m in earlier if m.get("role") != "system" and str(m.get("content", "")).strip()][-4:]
+                for m in valid_msgs:
+                    role = m.get("role", "")
+                    content = str(m.get("content", ""))
+                    matches.append(f"[历史会话 {f.stem}] {role}: {content[:120]}")
+                if len(matches) >= max_results:
+                    break
+        except Exception as e:
+            logger.warning(f"Error in external session fallback: {e}")
+                
+        if not matches:
+            return ""
+        return "\n".join(matches[:max_results])
+
     async def search_all_sessions(
         self, query: str, llm, max_results: int = 5
     ) -> str:
-        """FTS5 全文搜索历史会话，支持 snippet 上下文."""
+        """FTS5 全文搜索历史会话，且对“刚才/之前/历史会话”等指代代词智能进行最新聊天片段拉取兜底."""
+        PRONOUNS = ["刚才", "之前", "上一次", "历史会话", "之前聊的", "历史记录", "刚才说的", "刚才聊的", "讨论过的", "聊了什么"]
+        is_pronoun_query = any(p in query for p in PRONOUNS)
+
+        # 如果是强代词意图查询，我们主动拉取最新历史聊天记录作为高优先级的 RAG 背景注入
+        if is_pronoun_query:
+            fallback_res = await self._pronoun_fallback_search(max_results)
+            if fallback_res:
+                return fallback_res
+
         db = sqlite3.connect(str(self.db_path))
 
         # FTS5 MATCH 查询，排除当前会话
@@ -242,7 +308,10 @@ class SessionHandler:
 
         if not rows:
             # 降级：如果 FTS 里没数据，回退到 JSONL grep
-            return await self._grep_fallback(query, llm, max_results)
+            grep_res = await self._grep_fallback(query, llm, max_results)
+            if not grep_res and is_pronoun_query:
+                return await self._pronoun_fallback_search(max_results)
+            return grep_res
 
         matches = []
         for row in rows:
