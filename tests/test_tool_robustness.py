@@ -253,3 +253,83 @@ async def test_cross_session_pronoun_fallback():
     finally:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
+
+
+@pytest.mark.asyncio
+async def test_history_interleaved_reordering():
+    # 模拟 Agent
+    dummy_llm = DummyLLM("openai/gpt-4o")
+    dummy_reg = ToolRegistry()
+    agent = Agent(dummy_llm, dummy_reg)
+    
+    # 构造带交错 user 消息的复杂历史记录
+    agent.messages = [
+        {
+            "role": "system",
+            "content": "system prompt"
+        },
+        {
+            "role": "user",
+            "content": "发这几张图给我看看"
+        },
+        {
+            "role": "assistant",
+            "content": "好嘞！",
+            "tool_calls": [
+                {
+                    "id": "tc_01",
+                    "type": "function",
+                    "function": {"name": "read_image", "arguments": "{}"}
+                },
+                {
+                    "id": "tc_02",
+                    "type": "function",
+                    "function": {"name": "read_image", "arguments": "{}"}
+                }
+            ]
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "tc_01",
+            "name": "read_image",
+            "content": "image 1 result"
+        },
+        {
+            "role": "user",
+            "content": "别发第三张了"
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "tc_02",
+            "name": "read_image",
+            "content": "image 2 result"
+        },
+        {
+            "role": "user",
+            "content": "继续"
+        }
+    ]
+    
+    # 触发 _repair_history()
+    await agent._repair_history()
+    
+    # 校验：智能重排之后，所有的 tool 消息都应当紧随 assistant 后面，其它 user 消息在后
+    assert len(agent.messages) == 7
+    assert agent.messages[0]["role"] == "system"
+    assert agent.messages[1]["role"] == "user"
+    assert agent.messages[1]["content"] == "发这几张图给我看看"
+    
+    assert agent.messages[2]["role"] == "assistant"
+    
+    # 后面应该是紧接着的两个 tool 消息
+    assert agent.messages[3]["role"] == "tool"
+    assert agent.messages[3]["tool_call_id"] == "tc_01"
+    assert agent.messages[4]["role"] == "tool"
+    assert agent.messages[4]["tool_call_id"] == "tc_02"
+    
+    # 后面才是那两个被抽离出去的 user 消息
+    assert agent.messages[5]["role"] == "user"
+    assert agent.messages[5]["content"] == "别发第三张了"
+    
+    assert agent.messages[6]["role"] == "user"
+    assert agent.messages[6]["content"] == "继续"
