@@ -9,12 +9,71 @@
 
 import os
 import time
+import asyncio
+import logging
+import shutil
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
 
 from .base_tool import BaseTool, ToolResult
 
 MAX_READ_SIZE = 30 * 1024  # 30KB
+
+
+async def auto_maintain_note(file_path: str, content: str, context: Any):
+    """当读取 markdown 学习笔记时，在后台自动使用 LLM 对其进行增量维护。"""
+    if not context or not hasattr(context, "llm") or not context.llm:
+        return
+
+    latest_query = ""
+    if hasattr(context, "messages") and context.messages:
+        # 获取最新的几条用户消息作为维护上下文
+        user_msgs = [m["content"] for m in context.messages if m.get("role") == "user"]
+        if user_msgs:
+            latest_query = user_msgs[-1]
+
+    prompt = f"""你是一个专业的 Markdown 笔记排版与知识整理专家。
+现在用户正在阅读这篇笔记。请结合当前最新的上下文/讨论情况："{latest_query}"，对这篇笔记进行智能维护和优化：
+1. 增量更新：如果当前最新的讨论/情况中包含新的结论、踩坑记录或技术点，请将其以简洁明了的方式增量合并/补充到笔记对应章节中。
+2. 规范格式：确保包含或补充完整的 YAML Frontmatter (title, date, tags)。
+3. 优化排版：规范层级标题，加粗关键词/专业术语，修复排版混乱或代码块格式。
+4. **绝对原则**：绝不能删减原有正文的核心意思，不要随意删减已有的代码块和宝贵记录！
+
+以下是需要维护的笔记原文：
+---
+{content}
+---
+
+请只输出更新维护后的完整 Markdown 文本。不要包含任何思考过程或寒暄，也不要在最外层包裹 ```markdown 和 ``` 标记符。"""
+
+    try:
+        if len(content) > 15000:
+            return
+
+        res = await context.llm.chat(messages=[{"role": "user", "content": prompt}])
+        new_content = res.get("content", "").strip()
+
+        if not new_content or new_content == content:
+            return
+
+        if new_content.startswith("```markdown"):
+            new_content = new_content[len("```markdown"):].lstrip()
+        elif new_content.startswith("```md"):
+            new_content = new_content[len("```md"):].lstrip()
+        elif new_content.startswith("```"):
+            new_content = new_content[len("```"):].lstrip()
+
+        if new_content.endswith("```"):
+            new_content = new_content[:-3].rstrip()
+
+        # 备份并覆写
+        path = Path(file_path)
+        backup_path = path.with_suffix('.md.bak')
+        shutil.copy2(path, backup_path)
+        path.write_text(new_content, encoding='utf-8')
+        logging.info(f"[笔记自维护] 成功维护并更新笔记: {path.name} (已备份至 {backup_path.name})")
+    except Exception as e:
+        logging.error(f"[笔记自维护] 自动更新笔记时发生错误: {e}")
 
 
 class ReadFileTool(BaseTool):
@@ -153,6 +212,11 @@ class ReadFileTool(BaseTool):
 
             # ── 读取（支持行号切片）──
             lines = path.read_text(encoding="utf-8", errors="replace").split("\n")
+            full_content = "\n".join(lines)
+
+            # 判断是否是学习笔记，如果是，则在后台异步触发自维护更新
+            if path.suffix == ".md" and ("学习笔记" in file_path or "documents/个人博客/学习笔记" in file_path):
+                asyncio.create_task(auto_maintain_note(file_path, full_content, context))
 
             if start is not None or end is not None:
                 s = start or 1
