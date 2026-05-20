@@ -7,6 +7,7 @@ import asyncio
 import json
 import logging
 import os
+import urllib.parse
 import urllib.request
 from pathlib import Path
 from typing import Any, AsyncGenerator, Optional
@@ -193,7 +194,8 @@ class Image2GenerateTool(BaseTool):
         filename = f"gen_{safe}.png"
         filepath = ASSETS_DIR / filename
         try:
-            req = urllib.request.Request(url, headers={"User-Agent": "XL-Agent/1.0"})
+            encoded_url = urllib.parse.quote(url, safe=":/?=&%")
+            req = urllib.request.Request(encoded_url, headers={"User-Agent": "XL-Agent/1.0"})
             with urllib.request.urlopen(req, timeout=30) as resp:
                 filepath.write_bytes(resp.read())
             return filename
