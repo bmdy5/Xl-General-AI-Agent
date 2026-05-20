@@ -783,13 +783,35 @@ class QQGateway:
         text = re.sub(r'__(.+?)__', r'\1', text)      # __粗体2__
 
         def escape_invalid_cq(match):
+            import base64
             cq_str = match.group(0)
             if cq_str.startswith("[CQ:image,file="):
-                m_file = re.search(r'file=([^,\\]]+)', cq_str)
+                m_file = re.search(r'file=([^,\]\\]+)', cq_str)
                 if m_file:
                     file_path = m_file.group(1)
-                    if os.path.exists(file_path) or file_path.startswith("http://") or file_path.startswith("https://"):
+                    if file_path.startswith("http://") or file_path.startswith("https://") or file_path.startswith("base64://"):
                         return cq_str
+                    
+                    # 路径双向纠偏（适配容器与宿主机环境）
+                    resolved_path = file_path
+                    if not os.path.exists(resolved_path):
+                        host_prefix = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent"
+                        current_file_dir = os.path.dirname(os.path.abspath(__file__))
+                        container_root = os.path.dirname(current_file_dir)
+                        if resolved_path.startswith(host_prefix):
+                            relative_part = resolved_path[len(host_prefix):].lstrip("/")
+                            alt_path = os.path.join(container_root, relative_part)
+                            if os.path.exists(alt_path):
+                                resolved_path = alt_path
+                    
+                    # 如果本地文件存在，转为 base64 发送以突破 Docker 隔离限制
+                    if os.path.exists(resolved_path):
+                        try:
+                            with open(resolved_path, "rb") as f:
+                                b64_data = base64.b64encode(f.read()).decode("utf-8")
+                            return f"[CQ:image,file=base64://{b64_data}]"
+                        except Exception as err:
+                            logger.error(f"Failed to encode local image {resolved_path} to base64: {err}")
             return cq_str.replace("[CQ:", "[ CQ:")
         
         text = re.sub(r'\[CQ:[^\]]+\]', escape_invalid_cq, text)
