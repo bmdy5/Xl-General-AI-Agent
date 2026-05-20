@@ -203,13 +203,13 @@ class ContextCompressor:
             role = m.get("role", "unknown")
             content = str(m.get("content", ""))
 
-            # 截断过长内容
-            if len(content) > 500:
-                content = content[:500] + "..."
-
             if role == "user":
+                if len(content) > 2000:
+                    content = content[:2000] + "..."
                 lines.append(f"用户: {content}")
             elif role == "assistant":
+                if len(content) > 2000:
+                    content = content[:2000] + "..."
                 prefix = ""
                 if m.get("tool_calls"):
                     tool_names = [
@@ -220,11 +220,12 @@ class ContextCompressor:
                 lines.append(f"AI: {prefix}{content}")
             elif role == "tool":
                 tool_name = m.get("name", "tool")
-                short = content[:200] + "..." if len(content) > 200 else content
+                short = content[:1500] + "..." if len(content) > 1500 else content
                 lines.append(f"工具结果({tool_name}): {short}")
             elif role == "system":
                 if "[历史对话摘要]" not in content:
-                    lines.append(f"系统: {content[:200]}")
+                    # 系统提示保留 1000 字
+                    lines.append(f"系统: {content[:1000]}")
 
         return "\n".join(lines)
 

@@ -85,10 +85,58 @@ class MemoryManager:
         self._db: sqlite3.Connection | None = None
 
     def _get_db(self) -> sqlite3.Connection:
-        """惰性初始化 SQLite + FTS5 索引."""
+        """惰性初始化 SQLite + FTS5 索引，自动无损升级老数据为 CJK 高精度索引."""
         if self._db is None:
-            self._db = sqlite3.connect(self.base_dir / "memories.db")
+            db_path = self.base_dir / "memories.db"
+            is_new = not db_path.exists()
+            self._db = sqlite3.connect(str(db_path))
             create_table(self._db)
+            
+            # 自动升级老 memories.db：若已有无空格的旧中文索引，自动从物理 md 重新构建
+            if not is_new:
+                try:
+                    # 在 Python 内存中进行正则验证，这是 100% 绝对兼容和安全的
+                    cur = self._db.execute("SELECT content FROM memories_fts LIMIT 50")
+                    has_legacy = False
+                    for row in cur:
+                        content = row[0]
+                        if content and re.search(r'[\u4e00-\u9fff]{2,}', content):
+                            has_legacy = True
+                            break
+                    if has_legacy:
+                        logger.info("Upgrading legacy memories_fts database for CJK space indexing...")
+                        self._db.execute("DELETE FROM memories_fts")
+                        self._db.commit()
+                        
+                        entries = self._parse_index()
+                        rows_to_populate = []
+                        for e in entries:
+                            fname = e.get("filename", "")
+                            filepath = self.base_dir / fname
+                            if filepath.exists():
+                                try:
+                                    content = filepath.read_text(encoding="utf-8")
+                                    mtype = "merged"
+                                    if "user" in e["description"].lower() or "亮哥" in e["description"]:
+                                        mtype = "user"
+                                    elif "feedback" in e["description"].lower():
+                                        mtype = "feedback"
+                                    rows_to_populate.append({
+                                        "content": content[:5000],
+                                        "description": e["description"][:200],
+                                        "memory_type": mtype,
+                                        "filename": fname,
+                                        "timestamp": e.get("timestamp", ""),
+                                    })
+                                except Exception:
+                                    continue
+                        if rows_to_populate:
+                            from .fts_index import populate as fts_populate
+                            fts_populate(self._db, rows_to_populate)
+                            self._db.commit()
+                            logger.info(f"Successfully upgraded {len(rows_to_populate)} memory files to CJK indexes!")
+                except Exception as e:
+                    logger.warning(f"Error upgrading memories_fts: {e}")
         return self._db
 
     @staticmethod
@@ -374,16 +422,14 @@ class MemoryManager:
         try:
             notes_db = Path.home() / ".my-agent" / "notes.db"
             db = sqlite3.connect(str(notes_db))
-            from .notes_fts import create_table as nt_create, index_all
+            from .notes_fts import create_table as nt_create, sync_incremental
             nt_create(db)
-            # 首次搜索自动索引（仅限 Agent开发/ 和 后端开发/ 目录）
-            count = db.execute("SELECT COUNT(*) FROM notes_fts").fetchone()[0]
-            if count == 0:
-                count = index_all(db, Path("/Users/xiaofeng/Desktop/学习笔记/Agent开发"))
-                count += index_all(db, Path("/Users/xiaofeng/Desktop/学习笔记/后端开发"))
-                db.commit()
+            # 每次搜索前自动快速增量同步
+            sync_incremental(db, Path("/Users/xiaofeng/Desktop/学习笔记/Agent开发"))
+            sync_incremental(db, Path("/Users/xiaofeng/Desktop/学习笔记/后端开发"))
             return notes_search(db, query, limit)
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Error during incremental search_notes: {e}")
             return []
 
     def search_memories(self, query: str, limit: int = 5) -> list[dict]:

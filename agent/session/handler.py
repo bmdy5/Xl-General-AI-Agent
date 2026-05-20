@@ -257,7 +257,7 @@ class SessionHandler:
             return ""
 
         matches = []
-        for f in sorted(self.storage_dir.glob("*.jsonl"), reverse=True)[:20]:
+        for f in sorted(self.storage_dir.glob("*.jsonl"), reverse=True)[:100]:
             if f.name == self.session_file.name:
                 continue
             try:

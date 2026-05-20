@@ -131,7 +131,7 @@ class Agent:
             self._persona_cache = {"name": "小萤", "gender": "女", "user_address": "亮哥",
                                    "tone_style": "", "preferences": [], "avoid_list": []}
 
-        self.compressor = ContextCompressor(llm=llm, max_tokens=40_000)  # 省token: 30K触发压缩
+        self.compressor = ContextCompressor(llm=llm, max_tokens=80_000)  # 适配Flash大上下文：60K触发压缩
 
         self.messages: list[dict] = []
         self._history_loaded = False
@@ -552,13 +552,13 @@ class Agent:
                 asyncio.create_task(audit_tool_call(self, tool_name, tool_args, result_str, force=force_audit))
 
                 # v3: 智能结果截断，防止大体积返回撑爆上下文，同时保留关键报错堆栈
-                if len(result_str) > 2000:
+                if len(result_str) > 10000:
                     if any(ind in result_str for ind in ERROR_INDICATORS):
-                        # 如果是报错，保留头500字和尾1500字（报错堆栈信息通常在开头和结尾）
-                        truncated = result_str[:500] + "\n\n...[中间部分已省略]...\n\n" + result_str[-1500:]
+                        # 如果是报错，保留头2000字和尾4000字（报错堆栈信息通常在开头和结尾）
+                        truncated = result_str[:2000] + "\n\n...[中间部分已省略]...\n\n" + result_str[-4000:]
                     else:
-                        # 正常输出则截取前1500字，附带指引
-                        truncated = result_str[:1500] + "\n\n...(内容已截断，如需完整信息请使用 grep 过滤或指定行号读取)"
+                        # 正常输出则截取前8000字，附带指引
+                        truncated = result_str[:8000] + "\n\n...(内容已截断，如需完整信息请使用 grep 过滤或指定行号读取)"
                 else:
                     truncated = result_str
 
@@ -843,23 +843,36 @@ class Agent:
                              "timestamp": e.get("timestamp", ""), "content": ""} for e in entries[:5]]
 
         lines = ["[MEMORY BLOCK]"]
+        
+        # ── 载入并高优先注入亮哥的深层画像 (User Profile) ──
+        profile_file = self.memory.base_dir / "USER_PROFILE.md"
+        if profile_file.exists():
+            try:
+                profile_content = profile_file.read_text(encoding="utf-8").strip()
+                if profile_content:
+                    lines.append("## Who You Are (User Profile)")
+                    lines.append(profile_content)
+                    lines.append("")
+            except Exception:
+                pass
+
         lines.append("以下是你此前保存的长期记忆（来源: 个人记忆）。")
         lines.append("")
 
         for i, e in enumerate(relevant):
             ts = e.get("timestamp", "")[:19]
-            if i < 1:  # v5: 优先用 FTS5 缓存的 content，省磁盘 IO
+            if i < 3:  # v8: 扩大内容装载深度至 Top-3
                 cached = e.get("content", "")
                 if cached:
                     clean = cached.split("<!-- previous version -->")[0]
-                    clean = clean.split("<!-- updated:")[0].strip()[:400]
+                    clean = clean.split("<!-- updated:")[0].strip()[:1000]
                     lines.append(f"### {e['description']} ({ts})\n{clean}\n")
                 else:
                     # Fallback: 读文件
                     content = await self.memory.get_entry(e["filename"])
                     if content:
                         clean = content.split("<!-- previous version -->")[0]
-                        clean = clean.split("<!-- updated:")[0].strip()[:400]
+                        clean = clean.split("<!-- updated:")[0].strip()[:1000]
                         lines.append(f"### {e['description']} ({ts})\n{clean}\n")
                     else:
                         lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
@@ -876,7 +889,7 @@ class Agent:
                 lines.append("")
                 lines.append("## 相关知识（来源: 学习笔记）")
                 for nr in note_results:
-                    snippet = nr.get("content", "")[:120].replace("\n", " ")
+                    snippet = nr.get("content", "")[:400].replace("\n", " ")
                     cite = nr.get("path", "") or nr.get("title", "?")
                     lines.append(f"- 📖 [{nr.get('title','?')}]({cite}) — {snippet}")
                 
@@ -896,7 +909,7 @@ class Agent:
                     if past and "No past conversations" not in past:
                         lines.append("")
                         lines.append("## 相关历史对话（仅供参考，当前对话优先）")
-                        lines.append(past[:200])  # 收紧到200字，防噪声污染
+                        lines.append(past[:1000])  # 扩大至 1000 字以提供完整线索
                 except Exception:
                     pass
         except Exception as e:
@@ -909,7 +922,7 @@ class Agent:
         lines.append("[/MEMORY BLOCK]")
         block = "\n".join(lines)
 
-        max_chars = 2000  # v8: 1200→2000，Type Coverage需要更多空间
+        max_chars = 8000  # v8: 2000→8000，Type Coverage及多记忆装载需要更多物理安全空间
         if len(block) > max_chars:
             block = block[:max_chars] + "\n... (truncated)\n[/MEMORY BLOCK]"
 
