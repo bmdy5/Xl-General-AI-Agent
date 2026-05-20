@@ -15,3 +15,9 @@ gateway.err
 startup.log
 napcat_data/
 qrcode_login.png
+cookies.json
+bin/
+records/
+EVOLVED_RULES.md
+agent/core.py.bak
+agent/dashboard_v2/assets/gen_*.png
