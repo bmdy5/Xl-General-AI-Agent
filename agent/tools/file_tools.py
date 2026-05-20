@@ -216,6 +216,18 @@ class WriteFileTool(BaseTool):
             return {"result": False, "message": "file_path must be absolute"}
         if content is None:
             return {"result": False, "message": "content is required"}
+        # 保护核心人设/系统文件不被 write_file 直接覆盖
+        from ..memory.manager import PROTECTED_FILES
+        _filename = Path(file_path).name
+        if _filename in PROTECTED_FILES:
+            return {
+                "result": False,
+                "message": (
+                    f"{_filename} 是保护文件，禁止直接写入。"
+                    f"如需修改人设，请用 save_memory action='merge_to_core' target_file='xl_identity.md'。"
+                    f"tone_style/性格相关修改请走 persona_profile.json 的手动 review 流程。"
+                ),
+            }
         return {"result": True, "message": ""}
 
     async def call(

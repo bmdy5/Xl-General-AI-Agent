@@ -13,6 +13,11 @@ from .notes_fts import search as notes_search, index_all, scan_files
 
 logger = logging.getLogger(__name__)
 
+# save()/append_to_core() 绝对不能写入的文件（保护人设/系统配置不被覆盖）
+PROTECTED_FILES: set[str] = {
+    "persona_profile.json",
+}
+
 # 9 个核心记忆文件 — save() 时自动匹配追加，不再新建碎片文件
 CORE_FILES: dict[str, list[str]] = {
     "user_profile.md":           ["用户", "偏好", "亮哥", "称呼", "模型配置", "情绪", "表达偏好", "个人", "profile"],
@@ -98,6 +103,9 @@ class MemoryManager:
 
     async def append_to_core(self, target_file: str, description: str, content: str) -> str:
         """追加到核心文件。去重，加时间戳分隔线，更新索引和 FTS5."""
+        if target_file in PROTECTED_FILES:
+            logger.warning(f"append_to_core blocked: {target_file} is protected")
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         from datetime import datetime, timezone as _tz
         timestamp = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         filepath = self.base_dir / target_file
@@ -190,6 +198,9 @@ class MemoryManager:
     async def save(self, filename: str, description: str, content: str,
                    note_path: Optional[str] = None) -> str:
         """Save memory. If note_path given, stores pointer instead of full content."""
+        if filename in PROTECTED_FILES or Path(filename).name in PROTECTED_FILES:
+            logger.warning(f"save blocked: {filename} is protected")
+            return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
         # 先匹配核心文件 → 追加而非新建碎片
