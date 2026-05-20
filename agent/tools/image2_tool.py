@@ -124,15 +124,15 @@ class Image2GenerateTool(BaseTool):
             filename = await loop.run_in_executor(None, self._download, image_url, prompt)
             filepath = str(ASSETS_DIR / filename) if filename else ""
             if filename and filepath:
-                cq_code = f"[CQ:image,file={filepath}]"
+                cq_code = f"[CQ:image,file={image_url}]"
                 yield ToolResult(
                     type="result",
                     data=f"✅ 生成完成: {filename}\n{cq_code}",
                     result_for_assistant=(
                         f"图片生成成功！\n"
-                        f"文件路径: {filepath}\n"
+                        f"本地备份文件路径: {filepath}\n"
                         f"要在 QQ 发送图片，在回复中直接输出: {cq_code}\n"
-                        f"（Gateway 验证文件存在后自动放行此 CQ 码）"
+                        f"（已配置使用 COS 公网直链秒发，本地文件已保存以供 Dashboard 显示）"
                     ),
                 )
             else:
