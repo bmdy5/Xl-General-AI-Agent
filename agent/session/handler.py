@@ -266,21 +266,17 @@ class SessionHandler:
     async def search_all_sessions(
         self, query: str, llm, max_results: int = 5
     ) -> str:
-        """FTS5 全文搜索历史会话，且对“刚才/之前/历史会话”等指代代词智能进行最新聊天片段拉取兜底."""
+        """FTS5 全文搜索历史会话，且对“刚才/之前/历史会话”等指代代词智能进行最新聊天片段拉取兜底 (双路融合去重)."""
         PRONOUNS = ["刚才", "之前", "上一次", "历史会话", "之前聊的", "历史记录", "刚才说的", "刚才聊的", "讨论过的", "聊了什么"]
         is_pronoun_query = any(p in query for p in PRONOUNS)
 
-        # 如果是强代词意图查询，我们主动拉取最新历史聊天记录作为高优先级的 RAG 背景注入
+        fallback_res = ""
         if is_pronoun_query:
             fallback_res = await self._pronoun_fallback_search(max_results)
-            if fallback_res:
-                return fallback_res
 
         db = sqlite3.connect(str(self.db_path))
-
-        # FTS5 MATCH 查询，排除当前会话
-        # CJK 字符需要分字处理以匹配 unicode61 索引
         fts_query = _cjk_space(query)
+        rows = []
         try:
             cur = db.execute(
                 "SELECT session_id, role, snippet(sessions_fts, 2, '<b>', '</b>', '...', 40) "
@@ -292,8 +288,7 @@ class SessionHandler:
             )
             rows = cur.fetchall()
         except sqlite3.OperationalError:
-            # FTS5 语法错误时（特殊字符），降级为 LIKE
-            # LIKE 查询 content 已分字，query 也需同样分字
+            # FTS5 语法错误时降级为 LIKE
             like_q = f"%{_cjk_space(query)}%"
             cur = db.execute(
                 "SELECT session_id, role, content "
@@ -306,19 +301,31 @@ class SessionHandler:
         finally:
             db.close()
 
-        if not rows:
-            # 降级：如果 FTS 里没数据，回退到 JSONL grep
-            grep_res = await self._grep_fallback(query, llm, max_results)
-            if not grep_res and is_pronoun_query:
-                return await self._pronoun_fallback_search(max_results)
-            return grep_res
+        fts_res = ""
+        if rows:
+            matches = []
+            for row in rows:
+                sid, role, snippet = row
+                matches.append(f"[{sid}] {role}: {snippet}")
+            fts_res = "\n".join(matches[:max_results])
+        else:
+            fts_res = await self._grep_fallback(query, llm, max_results)
 
-        matches = []
-        for row in rows:
-            sid, role, snippet = row
-            matches.append(f"[{sid}] {role}: {snippet}")
+        # 融合双路并精细去重
+        combined = []
+        seen = set()
+        for res_str in [fallback_res, fts_res]:
+            if res_str:
+                for line in res_str.split("\n"):
+                    line_clean = line.strip()
+                    if line_clean and line_clean not in seen:
+                        seen.add(line_clean)
+                        combined.append(line)
 
-        return "\n".join(matches[:max_results])
+        if not combined:
+            return ""
+        return "\n".join(combined[:max_results * 2])
+
 
     async def _grep_fallback(self, query: str, llm, max_results: int = 5) -> str:
         """原有 grep 逻辑作为降级方案（不调 LLM，省 token + 延迟）."""

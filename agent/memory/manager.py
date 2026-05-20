@@ -253,6 +253,21 @@ class MemoryManager:
 
         # 先匹配核心文件 → 追加而非新建碎片
         core_file = self._match_core_file(description, content)
+        
+        # 针对反思与审计碎片记忆的强制核心分流路由（防新建零碎物理文件）
+        if not core_file and not note_path:
+            name_lower = filename.lower()
+            desc_lower = description.lower()
+            if name_lower.startswith("reflect_") or name_lower.startswith("audit_"):
+                if "user" in name_lower or "feedback" in name_lower or "user" in desc_lower or "feedback" in desc_lower:
+                    core_file = "user_profile.md"
+                elif "tool" in name_lower or "audit" in name_lower or "tool" in desc_lower or "audit" in desc_lower:
+                    core_file = "xl_tool_guide.md"
+                elif "project" in name_lower or "project" in desc_lower:
+                    core_file = "xl_code_review.md"
+                else:
+                    core_file = "xl_debugging.md"
+
         if core_file and not note_path:
             return await self.append_to_core(core_file, description, content)
 
@@ -412,6 +427,94 @@ class MemoryManager:
                 if not full_path.exists():
                     broken.append({**e, "expected_path": str(full_path)})
         return broken
+
+    async def gc_and_merge_fragmented_memories(self) -> int:
+        """一键垃圾回收与去冗余归档器：扫描 reflect_ 和 audit_ 的碎片小 md，
+        将其去重合并至核心 md 文件，然后物理删除碎片并清理 SQLite 索引与 MEMORY.md 索引。
+        返回清理合并的碎片文件数量。
+        """
+        if not self.base_dir.exists():
+            return 0
+
+        # 扫描符合条件的所有碎片文件
+        fragments = []
+        for p in self.base_dir.glob("*.md"):
+            name = p.name.lower()
+            if name.startswith("reflect_") or name.startswith("audit_"):
+                fragments.append(p)
+
+        if not fragments:
+            return 0
+
+        merged_count = 0
+        db = self._get_db()
+
+        for path in fragments:
+            filename = path.name
+            try:
+                content = path.read_text(encoding="utf-8")
+            except Exception:
+                continue
+
+            # 寻找该碎片文件在 MEMORY.md 中的描述
+            description = ""
+            entries = self._parse_index()
+            for e in entries:
+                if e.get("filename") == filename:
+                    description = e.get("description", "")
+                    break
+
+            if not description:
+                # 兜底描述
+                description = filename.replace(".md", "").replace("_", " ")
+
+            # 进行路由分发
+            name_lower = filename.lower()
+            desc_lower = description.lower()
+            core_file = None
+            if "user" in name_lower or "feedback" in name_lower or "user" in desc_lower or "feedback" in desc_lower:
+                core_file = "user_profile.md"
+            elif "tool" in name_lower or "audit" in name_lower or "tool" in desc_lower or "audit" in desc_lower:
+                core_file = "xl_tool_guide.md"
+            elif "project" in name_lower or "project" in desc_lower:
+                core_file = "xl_code_review.md"
+            else:
+                core_file = "xl_debugging.md"
+
+            try:
+                # 精准去重合并到核心主文件
+                await self.append_to_core(core_file, description, content)
+
+                # 物理安全删除碎片文件
+                path.unlink()
+
+                # 从 MEMORY.md 中剔除对应的索引描述
+                if self.index_file.exists():
+                    idx_lines = self.index_file.read_text(encoding="utf-8").split("\n")
+                    new_idx_lines = [l for l in idx_lines if filename not in l]
+                    self.index_file.write_text("\n".join(new_idx_lines), encoding="utf-8")
+
+                # 从 SQLite db 索引表中清除
+                try:
+                    db.execute("DELETE FROM memories_fts WHERE filename=?", (filename,))
+                    db.commit()
+                except Exception:
+                    pass
+
+                merged_count += 1
+                logger.info(f"Memory GC: Merged and removed fragment '{filename}' -> '{core_file}'")
+            except Exception as e:
+                logger.warning(f"Memory GC: Failed to merge '{filename}': {e}")
+
+        # 重建索引以保证数据纯净
+        if merged_count > 0:
+            try:
+                from .fts_index import rebuild
+                rebuild(db)
+            except Exception:
+                pass
+
+        return merged_count
 
     def search_notes(self, query: str, limit: int = 5) -> list[dict]:
         """搜索笔记知识库（学习笔记目录）。返回 BM25 排序的分块结果。"""
