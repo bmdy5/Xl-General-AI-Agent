@@ -255,7 +255,7 @@ class MemoryTool(BaseTool):
                 old_text = input_args.get("old_text", "")
                 filename = input_args.get("filename", "")
                 content = input_args.get("content", "")
-                desc = input_args.get("description", "updated memory")
+                desc = input_args.get("description") or "updated memory"
 
                 if not content:
                     yield ToolResult(type="result", data="Error: content required")
@@ -275,7 +275,7 @@ class MemoryTool(BaseTool):
                 if not target_file:
                     yield ToolResult(
                         type="result",
-                        data="No matching memory found. Use 'add' to create new, or check old_text/filename.",
+                        data="No matching memory find. Use 'add' to create new, or check old_text/filename.",
                     )
                     return
 
@@ -318,12 +318,12 @@ async def _find_similar_memory(mm, new_desc: str, new_filename: str) -> dict | N
     """Find an existing memory with similar topic (not just filename match)."""
     try:
         entries = mm._parse_index()
-        new_keywords = set(new_desc.lower().split())
-        new_stem = new_filename.replace(".md", "").lower()
+        new_keywords = set((new_desc or "").lower().split())
+        new_stem = (new_filename or "").replace(".md", "").lower()
 
         for e in entries:
-            fname = e.get("filename", "").replace(".md", "").lower()
-            desc = e.get("description", "").lower()
+            fname = (e.get("filename") or "").replace(".md", "").lower()
+            desc = (e.get("description") or "").lower()
 
             # Same filename → exact match
             if fname == new_stem:
