@@ -61,7 +61,8 @@ STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call 
 ## RAG 引用规则
 - 当引用 [MEMORY BLOCK] 中的记忆时，用「记得你说过…」开头
 - 当引用「相关知识」中的笔记时，用「我在学习笔记里看到…」开头
-- 如果同时用了记忆和笔记，两个都提一下来源
+- 如果同时用了记忆 and 笔记，两个都提一下来源
+- 当在 [MEMORY BLOCK] 中看到「相关历史对话」时，说明系统已通过跨会话 FTS5 全文索引自动为您拉取了真实的对话历史片段，你可以直接当成以前的具体聊天原话来回忆，并诚实地告诉{user_address}这是系统自动载入的历史聊天片段，而不是靠你调用 save_memory 等工具搜出来的。
 
 ## Token 使用规范（主动遵守）
 - 简单对话（打招呼、确认、一问一答）：3句话内搞定，不展开
@@ -154,6 +155,13 @@ class Agent:
         self._total_tokens = 0
         self._task_write_approved = False
         self._task_start_time = asyncio.get_event_loop().time()
+
+        # 静默在后台自动触发去冗余记忆物理合并清理（GC）
+        if self.memory:
+            try:
+                asyncio.create_task(self.memory.gc_and_merge_fragmented_memories())
+            except Exception as e:
+                logger.warning(f"Failed to trigger background Memory GC: {e}")
 
         # v7: 不加载完整历史，依赖 MEMORY BLOCK (RAG) 精准检索
         if self.session and not self._history_loaded:
@@ -308,11 +316,11 @@ class Agent:
 
     async def _apply_sliding_window_and_scratchpad(self) -> None:
         """滑动窗口截断 + 首发意图锁定 + 工具摘要防蒸发（方案 B 融合顶端流）。"""
-        if len(self.messages) <= 22:
+        if len(self.messages) <= 50:
             return
 
         # 找安全切分点（不在 tool_calls/tool 链中间切断）
-        split_idx = len(self.messages) - 20
+        split_idx = len(self.messages) - 40
         safe_split = -1
         while split_idx < len(self.messages):
             msg = self.messages[split_idx]
