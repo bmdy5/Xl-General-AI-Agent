@@ -163,6 +163,23 @@ class Agent:
                 system_msgs = [m for m in history if m.get("role") == "system"]
                 recent = [m for m in history if m.get("role") != "system"][-2:]
                 self.messages = system_msgs + recent
+                
+                # ── 物理召回：从历史记录中找回并恢复 _original_goal ──
+                for msg in system_msgs:
+                    content = msg.get("content", "")
+                    if "## 原始目标" in content:
+                        goal_part = content.split("## 原始目标\n")[-1].split("##")[0].strip()
+                        if goal_part:
+                            self._original_goal = {"role": "user", "content": goal_part}
+                            break
+                if not self._original_goal:
+                    for msg in history:
+                        if msg.get("role") == "user":
+                            c = msg.get("content", "")
+                            if len(c) > 10 and not any(kw in c for kw in DEBUG_KEYWORDS):
+                                self._original_goal = {"role": "user", "content": c}
+                                break
+                                
                 if self.messages:
                     logger.info(f"Session restored: {len(self.messages)} msgs (RAG handles full context)")
             except Exception as e:
@@ -175,9 +192,19 @@ class Agent:
         if self.session:
             await self.session.append_message({"role": "user", "content": user_input})
 
-        # 智能首发意图锁定：新任务覆盖旧goal，故障排查不覆盖
-        if len(user_input) > 30 and not any(kw in user_input for kw in DEBUG_KEYWORDS):
-            self._original_goal = {"role": "user", "content": user_input}
+        # 智能意图防覆盖锁定：仅在无 goal 或显式输入“新任务/新需求/重新开始”前缀时允许锁定或覆盖
+        is_explicit_new_task = any(user_input.startswith(prefix) for prefix in ["新任务：", "新任务:", "重新开始：", "重新开始:", "新需求：", "新需求:"])
+        if self._original_goal is None or is_explicit_new_task:
+            clean_input = user_input
+            if is_explicit_new_task:
+                for prefix in ["新任务：", "新任务:", "重新开始：", "重新开始:", "新需求：", "新需求:"]:
+                    if clean_input.startswith(prefix):
+                        clean_input = clean_input[len(prefix):].strip()
+            
+            # 显式新任务要求剥除前缀后长于5字，常规自动锁定要求长于15字（防止琐碎闲聊被锁定）
+            min_len = 5 if is_explicit_new_task else 15
+            if len(clean_input) > min_len and not any(kw in clean_input for kw in DEBUG_KEYWORDS):
+                self._original_goal = {"role": "user", "content": clean_input}
 
         turn = 0
         try:
