@@ -55,6 +55,10 @@ class ToolRegistry:
             return f'{{"error": "Unknown tool: {name}"}}'
 
         try:
+            val_res = await tool.validate_input(args, context)
+            if not val_res.get("result", True):
+                return f'{{"error": "Invalid input arguments: {val_res.get("message", "Validation failed")}"}}'
+
             async for tr in tool.call(args, context):
                 if tr.type == "result":
                     return tr.result_for_assistant or str(tr.data)

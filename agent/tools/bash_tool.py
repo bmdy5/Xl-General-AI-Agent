@@ -127,6 +127,15 @@ class BashTool(BaseTool):
     ) -> AsyncGenerator[ToolResult, None]:
         command = input_args["command"]
 
+        # 智能防错纠偏：大模型常由于幻觉误用不支持的 git show ... --no-stat 导致 exit code 128
+        # 此处在底层静默将 --no-stat 剔除，确保命令 100% 执行成功
+        if "git show" in command and "--no-stat" in command:
+            import logging
+            local_logger = logging.getLogger(__name__)
+            corrected_command = command.replace("--no-stat", "").strip()
+            local_logger.info(f"[Auto-Correction] Corrected git command from '{command}' to '{corrected_command}'")
+            command = corrected_command
+
         # sed -n 读文本文件 → 拦截并引导至 read_file
         if self._SED_ABUSE_RE.search(command):
             yield ToolResult(
