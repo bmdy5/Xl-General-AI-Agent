@@ -398,7 +398,7 @@ class Agent:
                 copy = dict(m)
                 # DeepSeek Pro thinking 模式要求 reasoning_content 必须回传
                 # 只有非 DeepSeek 模型才 pop 掉这个非标准字段
-                if not self.llm.model.startswith("deepseek/"):
+                if "deepseek" not in self.llm.model.lower():
                     copy.pop("reasoning_content", None)
                 # 不 pop tool_calls — DeepSeek 需要它匹配后续 tool 消息
                 llm_messages.append(copy)
@@ -882,8 +882,8 @@ class Agent:
         # v6: 正则启发式拦截意图 + 降级外链 RAG（省 token 核心机制）
         try:
             note_results = []
-            tech_intent_re = re.compile(r'怎么|如何|代码|报错|设计|思路|需求|为什么|帮我|查|分析|解决|实现')
-            if len(user_input) > 10 and tech_intent_re.search(user_input):
+            # 放宽门槛：只要输入有实质物理长度（>= 3 字符），就进行笔记 FTS 检索，保障检索的灵敏度
+            if len(user_input.strip()) >= 3:
                 note_results = self.memory.search_notes(enhanced_query, limit=5)
             if note_results:
                 lines.append("")
@@ -900,7 +900,8 @@ class Agent:
                     lines.append(f"包含的笔记路径参考: {', '.join(note_paths)}")
 
             # v7: 跨会话搜索 — 从历史聊天记录中检索相关内容
-            if self.session and len(user_input) > 20:
+            # 放宽门槛：长度限制由 20 降至 3 字符，让短提问（如指代不明的短句）也能秒级唤醒历史会话关联
+            if self.session and len(user_input.strip()) >= 3:
                 try:
                     from agent.session.handler import SessionHandler
                     past = await self.session.search_all_sessions(

@@ -108,7 +108,21 @@ class ReadFileTool(BaseTool):
             return
 
         if path.is_dir():
-            yield ToolResult(type="result", data=f"Error: path is a directory: {file_path}")
+            try:
+                items = sorted(path.iterdir(), key=lambda p: (not p.is_dir(), p.name))
+                lines = [
+                    f"[系统自愈引导]: 目标路径 {file_path} 是一个目录，不能直接用 read_file 读取。已自动为你列出该目录下的第一层结构：\n"
+                ]
+                for item in items[:50]:
+                    suffix = "/" if item.is_dir() else ""
+                    size_str = f" ({item.stat().st_size} bytes)" if item.is_file() else ""
+                    lines.append(f"- {item.name}{suffix}{size_str}")
+                if len(items) > 50:
+                    lines.append(f"... (共 {len(items)} 个项目，已截断显示)")
+                lines.append("\n[建议]: 请根据以上目录结构，选择正确的具体文件路径，再重新调用 read_file 读取其内容。")
+                yield ToolResult(type="result", data="\n".join(lines))
+            except Exception as e:
+                yield ToolResult(type="result", data=f"Error: path is a directory: {file_path}. 列出目录结构失败: {e}")
             return
 
         try:
