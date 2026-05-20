@@ -190,3 +190,66 @@ async def test_history_repair_ordering():
     assert agent.messages[3]["content"] == "怎么报错了"
 
 
+class DummySessionWithHistory:
+    def __init__(self):
+        self.session_id = "dummy_session"
+        self.db_path = "/tmp/dummy.db"
+        
+    async def initialize(self) -> list[dict]:
+        history = [{"role": "system", "content": "system prompt"}]
+        for i in range(20):
+            history.append({"role": "user", "content": f"msg {i}"})
+            history.append({"role": "assistant", "content": f"reply {i}"})
+        return history
+
+
+@pytest.mark.asyncio
+async def test_history_load_window():
+    dummy_llm = DummyLLM("openai/gpt-4o")
+    dummy_reg = ToolRegistry()
+    agent = Agent(dummy_llm, dummy_reg)
+    agent.session = DummySessionWithHistory()
+    
+    # 模拟 run 初始化的历史加载
+    history = await agent.session.initialize()
+    system_msgs = [m for m in history if m.get("role") == "system"]
+    recent = [m for m in history if m.get("role") != "system"][-15:]
+    agent.messages = system_msgs + recent
+    
+    # 验证最终加载的消息里，含有 1 条 system，和 15 条 recent 消息
+    assert len(agent.messages) == 16
+    assert agent.messages[0]["role"] == "system"
+    assert all(m["role"] != "system" for m in agent.messages[1:])
+
+
+@pytest.mark.asyncio
+async def test_cross_session_pronoun_fallback():
+    from agent.session.handler import SessionHandler
+    import shutil
+    import os
+    import json
+    
+    temp_dir = "/tmp/test_pronouns"
+    if os.path.exists(temp_dir):
+        shutil.rmtree(temp_dir)
+    os.makedirs(temp_dir)
+    
+    try:
+        # 创建一个外部的历史 Session 文件，写入几条聊天记录
+        external_file = os.path.join(temp_dir, "old_session.jsonl")
+        with open(external_file, "w", encoding="utf-8") as f:
+            f.write(json.dumps({"role": "user", "content": "刚才我写的代码运行良好"}) + "\n")
+            f.write(json.dumps({"role": "assistant", "content": "是的，恭喜！"}) + "\n")
+            
+        handler = SessionHandler(session_id="current_session", storage_dir=temp_dir)
+        
+        # 验证用代词 "刚才我们聊了什么" 查询
+        res = await handler.search_all_sessions("刚才我们聊了什么", llm=None, max_results=3)
+        
+        # 断言应当能智能兜底命中 old_session 的内容
+        assert "[历史会话 old_session] assistant: 是的，恭喜！" in res
+        assert "[历史会话 old_session] user: 刚才我写的代码运行良好" in res
+        
+    finally:
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
