@@ -16,19 +16,51 @@ from urllib.parse import urlparse
 
 NOTES_DIR = Path("/Users/xiaofeng/Desktop/学习笔记")
 
+# 使用 100% 绝对无乱码的显式 Unicode 转义码点范围
+_CJK_RE = re.compile(r'([\u4e00-\u9fff\u3400-\u4dbf\u3000-\u303f\uff00-\uffef])')
+
+def _cjk_space(text: str) -> str:
+    """Insert spaces around CJK characters so unicode61 tokenizer splits each char."""
+    if not text:
+        return ""
+    return _CJK_RE.sub(r' \1 ', text)
+
+def _restore_cjk(text: str) -> str:
+    """Restore text by removing injected spaces around CJK characters."""
+    if not text:
+        return ""
+    text = re.sub(r'\s*([一-鿿㐀-䶿〿-㿿＀-￯])\s*', r'\1', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
 
 def create_table(conn: sqlite3.Connection):
-    """创建 PageIndex FTS5 表。"""
+    """创建 PageIndex FTS5 表和 metadata 伴随表。"""
     conn.execute("""
         CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts
         USING fts5(content, title, path, directory,
                    tokenize="porter unicode61")
     """)
+    conn.execute("""
+        CREATE TABLE IF NOT EXISTS notes_meta (
+            path TEXT PRIMARY KEY,
+            mtime REAL
+        )
+    """)
+    # 自动平滑过渡：若新 meta 表为空但 fts 里有老无空格 data，清空 fts 表以触发全新增量索引
+    try:
+        meta_count = conn.execute("SELECT COUNT(*) FROM notes_meta").fetchone()[0]
+        if meta_count == 0:
+            conn.execute("DELETE FROM notes_fts")
+            conn.commit()
+    except Exception:
+        pass
 
 
 def scan_files(base: Path = NOTES_DIR) -> list[dict]:
     """扫描目录下所有 .md 文件，返回 [{path, title, directory}]."""
     results = []
+    if not base.exists():
+        return results
     for f in sorted(base.rglob("*.md")):
         if ".obsidian" in str(f) or ".DS_Store" in str(f):
             continue
@@ -43,10 +75,93 @@ def scan_files(base: Path = NOTES_DIR) -> list[dict]:
     return results
 
 
+def sync_incremental(conn: sqlite3.Connection, base: Path = NOTES_DIR) -> int:
+    """增量同步：比对 mtime，新增/更新/删除 FTS5 索引."""
+    create_table(conn)
+    if not base.exists():
+        return 0
+
+    disk_files = scan_files(base)
+    disk_map = {f["path"]: f for f in disk_files}
+
+    db_meta = {}
+    try:
+        cur = conn.execute("SELECT path, mtime FROM notes_meta")
+        for row in cur:
+            db_meta[row[0]] = row[1]
+    except Exception:
+        pass
+
+    changes_count = 0
+
+    # 1. 扫描磁盘，处理新增和修改的文件
+    for path, df in disk_map.items():
+        mtime = df["mtime"]
+        full_path = df["full_path"]
+
+        title_cjk = _cjk_space(df["title"])
+        path_cjk = _cjk_space(df["path"])
+        dir_cjk = _cjk_space(df["directory"])
+
+        if path not in db_meta:
+            # 新增文件
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+                    raw = fh.read()
+                content_cjk = _cjk_space(raw[:10000])
+                conn.execute(
+                    "INSERT INTO notes_fts(content, title, path, directory) VALUES (?, ?, ?, ?)",
+                    (content_cjk, title_cjk, path_cjk, dir_cjk)
+                )
+                conn.execute(
+                    "INSERT INTO notes_meta(path, mtime) VALUES (?, ?)",
+                    (path, mtime)
+                )
+                changes_count += 1
+            except Exception:
+                continue
+        elif mtime > db_meta[path]:
+            # 修改文件：先删除 fts（基于 CJK 化的 path 匹配），再插入
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
+                    raw = fh.read()
+                content_cjk = _cjk_space(raw[:10000])
+                conn.execute("DELETE FROM notes_fts WHERE path = ?", (path_cjk,))
+                conn.execute(
+                    "INSERT INTO notes_fts(content, title, path, directory) VALUES (?, ?, ?, ?)",
+                    (content_cjk, title_cjk, path_cjk, dir_cjk)
+                )
+                conn.execute(
+                    "UPDATE notes_meta SET mtime = ? WHERE path = ?",
+                    (mtime, path)
+                )
+                changes_count += 1
+            except Exception:
+                continue
+
+    # 2. 扫描数据库，处理已在磁盘被删除的文件
+    deleted_paths = [p for p in db_meta if p not in disk_map]
+    for p in deleted_paths:
+        p_cjk = _cjk_space(p)
+        conn.execute("DELETE FROM notes_fts WHERE path = ?", (p_cjk,))
+        conn.execute("DELETE FROM notes_meta WHERE path = ?", (p,))
+        changes_count += 1
+
+    if changes_count > 0:
+        conn.commit()
+
+    return changes_count
+
+
 def index_all(conn: sqlite3.Connection, base: Path = NOTES_DIR) -> int:
     """PageIndex 全量重建：每文件一行，不切块。返回总文件数。"""
+    create_table(conn)
     files = scan_files(base)
     conn.execute("DELETE FROM notes_fts")
+    try:
+        conn.execute("DELETE FROM notes_meta")
+    except Exception:
+        pass
     count = 0
     for f in files:
         try:
@@ -54,10 +169,23 @@ def index_all(conn: sqlite3.Connection, base: Path = NOTES_DIR) -> int:
                 raw = fh.read()
         except Exception:
             continue
+
+        content_cjk = _cjk_space(raw[:10000])
+        title_cjk = _cjk_space(f["title"][:200])
+        path_cjk = _cjk_space(f["path"][:500])
+        dir_cjk = _cjk_space(f["directory"][:500])
+
         conn.execute(
             "INSERT INTO notes_fts(content, title, path, directory) VALUES (?, ?, ?, ?)",
-            (raw[:10000], f["title"][:200], f["path"][:500], f["directory"][:500]),
+            (content_cjk, title_cjk, path_cjk, dir_cjk),
         )
+        try:
+            conn.execute(
+                "INSERT INTO notes_meta(path, mtime) VALUES (?, ?)",
+                (f["path"], f["mtime"])
+            )
+        except Exception:
+            pass
         count += 1
     conn.commit()
     return count
@@ -68,7 +196,7 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[dict]:
     clean = re.sub(r'[^\w一-鿿\s]', " ", query).strip()
     if not clean or len(clean) < 2:
         return []
-    fts_query = " OR ".join(clean.split())
+    fts_query = " OR ".join(_cjk_space(clean).split())
     rows = conn.execute(
         """SELECT rowid, content, title, path, directory, rank
            FROM notes_fts WHERE notes_fts MATCH ?
@@ -76,8 +204,8 @@ def search(conn: sqlite3.Connection, query: str, limit: int = 5) -> list[dict]:
         (fts_query, limit),
     ).fetchall()
     return [
-        {"id": r[0], "content": r[1][:200], "title": r[2],
-         "path": r[3], "directory": r[4], "rank": r[5]}
+        {"id": r[0], "content": _restore_cjk(r[1][:200]), "title": _restore_cjk(r[2]),
+         "path": _restore_cjk(r[3]), "directory": _restore_cjk(r[4]), "rank": r[5]}
         for r in rows
     ]
 
