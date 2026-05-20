@@ -68,9 +68,30 @@ async def run_tests():
             print("\n[详情结果]:")
             print(detail_data[:1500])  # 展示部分内容
 
-    print("\n=== Step 4: 写入测试准备 ===")
-    print("只读功能 (Search, Detail) 自检完全通过！")
-    print("小红书图文发布(Publish)已被安全截断，等待用户最终授权同意后方可进行写入测试。")
+    print("\n=== Step 4: 测试发布图文笔记 (Publish) ===")
+    test_image_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "dashboard_v2/assets/gen_Square_avatar_of_an_adorable_y.png"))
+    print(f"待上传的测试图片路径: '{test_image_path}'")
+    if not os.path.exists(test_image_path):
+        print(f"警告: 测试图片 {test_image_path} 不存在，尝试使用项目根目录下的备用图片。")
+        test_image_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../qrcode_login.png"))
+    
+    publish_args = {
+        "action": "publish",
+        "title": "小萤 Agent 连通性测试",
+        "content": "这是一条由我的自搭建 AI Agent「小萤」自动调起后台 Go MCP 服务所发布的图文测试。全流程握手和读写均已完美通畅！",
+        "image_paths": [test_image_path],
+        "tags": ["AI", "Agent", "测试"]
+    }
+    
+    print("开始调用发布接口...")
+    async for progress in tool.call(publish_args):
+        if progress.type == "progress":
+            print(f"[进度] {progress.data}")
+        elif progress.type == "result":
+            print("\n[发布结果]:")
+            print(progress.data)
+
+    print("\n=== 测试流程全部结束 ===")
 
 
 if __name__ == "__main__":
