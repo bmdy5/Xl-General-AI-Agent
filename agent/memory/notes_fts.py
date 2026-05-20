@@ -120,7 +120,7 @@ def sync_incremental(conn: sqlite3.Connection, base: Path = NOTES_DIR) -> int:
                 changes_count += 1
             except Exception:
                 continue
-        elif mtime > db_meta[path]:
+        elif mtime - db_meta[path] > 1e-3:
             # 修改文件：先删除 fts（基于 CJK 化的 path 匹配），再插入
             try:
                 with open(full_path, "r", encoding="utf-8", errors="replace") as fh:
