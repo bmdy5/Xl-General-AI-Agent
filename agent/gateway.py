@@ -380,6 +380,32 @@ class QQGateway:
                                 except Exception as coach_err:
                                     logger.error(f"Coach task failed: {coach_err}")
                                     buf = f"❌ 自我审计任务执行失败: {coach_err}"
+                            elif "学习早报" in desc or "播客" in desc:
+                                try:
+                                    if not is_silent:
+                                        await self._send("private", admin_id, "", "🌅 正在扫描过去 48h 变动的 Obsidian 笔记并呼叫 NotebookLM 自动合成高保真中文播客...")
+                                    
+                                    from agent.auto_podcast import generate_podcast_workflow
+                                    import os
+                                    import base64
+                                    
+                                    local_path = await generate_podcast_workflow()
+                                    if local_path and os.path.exists(local_path):
+                                        with open(local_path, "rb") as vf:
+                                            voice_bytes = vf.read()
+                                        
+                                        # 高保真静音填充，确保音频在 1.8 秒以上以支持 QQ 完美转码和播放
+                                        voice_bytes = self._pad_wav(voice_bytes)
+                                        b64_data = base64.b64encode(voice_bytes).decode("utf-8")
+                                        cq_record = f"[CQ:record,file=base64://{b64_data}]"
+                                        
+                                        await self._send("private", admin_id, "", cq_record, skip_delay=True)
+                                        buf = f"🎉 亮哥专属每日学习早报播客合成成功！音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
+                                    else:
+                                        buf = "🌅 过去 48 小时内没有检测到任何学习笔记变动，今日学习早报自动跳过。"
+                                except Exception as pod_err:
+                                    logger.error(f"Podcast task failed: {pod_err}", exc_info=True)
+                                    buf = f"❌ 学习早报播客生成失败: {pod_err}"
                             else:
                                 async for evt in agent.run(action, stream=True):
                                     if evt["type"] == "text_delta":
