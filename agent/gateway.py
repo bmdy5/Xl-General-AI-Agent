@@ -884,6 +884,45 @@ class QQGateway:
         finally:
             self._pending_perms.pop(session_key, None)
 
+    def _pad_wav(self, wav_bytes: bytes, start_silence_sec: float = 0.3, min_duration_sec: float = 1.8) -> bytes:
+        """为 WAV 音频首尾填充静音缓冲，确保总时长在 min_duration_sec 以上，防止 QQ 编码丢失和播放无声"""
+        import wave
+        import io
+        try:
+            with wave.open(io.BytesIO(wav_bytes), 'rb') as w_in:
+                params = w_in.getparams()
+                nchannels, sampwidth, framerate, nframes = params[:4]
+                data = w_in.readframes(nframes)
+                
+                frame_bytes_size = nchannels * sampwidth
+                
+                # 头部静音
+                start_silence_frames = int(framerate * start_silence_sec)
+                start_silence_data = b'\x00' * (start_silence_frames * frame_bytes_size)
+                
+                # 原始音频时长
+                orig_duration = nframes / framerate
+                
+                # 尾部静音，确保总时长不低于 min_duration_sec
+                current_total_duration = orig_duration + start_silence_sec
+                if current_total_duration < min_duration_sec:
+                    end_silence_sec = min_duration_sec - current_total_duration
+                else:
+                    end_silence_sec = 0.2  # 默认尾部补 0.2 秒以防播放提前截断
+                    
+                end_silence_frames = int(framerate * end_silence_sec)
+                end_silence_data = b'\x00' * (end_silence_frames * frame_bytes_size)
+                
+                # 重新打包
+                out_buf = io.BytesIO()
+                with wave.open(out_buf, 'wb') as w_out:
+                    w_out.setparams(params)
+                    w_out.writeframes(start_silence_data + data + end_silence_data)
+                return out_buf.getvalue()
+        except Exception as e:
+            logger.warning(f"Failed to pad WAV: {e}")
+            return wav_bytes
+
     async def _send_voice(self, msg_type: str, user_id: str, group_id: str, text: str, style: str = "知性", is_test: bool = False):
         """使用 GPT-SoVITS 专属二次元原声 (和泉纱雾) 异步合成语音并发送"""
         import base64
