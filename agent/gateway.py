@@ -918,7 +918,9 @@ class QQGateway:
                 continue
             if len(part) > MAX_REPLY_CHARS:
                 part = part[:MAX_REPLY_CHARS - 20] + "\n...(truncated)"
-            await self._send(msg_type, user_id, group_id, part)
+            # 第一段保留拟真打字延迟，其余后续段通过 skip_delay=True 瞬间发送，消除 Double Delay 叠加
+            should_skip_delay = (i > 0)
+            await self._send(msg_type, user_id, group_id, part, skip_delay=should_skip_delay)
             if i < len(parts) - 1:
                 delay = max(0.5, wait) if wait > 0 else _natural_delay(part)
                 await asyncio.sleep(delay)
@@ -1197,14 +1199,16 @@ class QQGateway:
         import random as _rand
         import asyncio
 
-        # 检查是否为多媒体消息（语音/图片等）
+        # 检查是否为多媒体消息（语音/图片等）或系统/自动化状态通知
         is_media = text.strip().startswith("[CQ:") or text.strip().startswith("[ CQ:")
-        if not skip_delay and not is_media:
-            # 拟真打字延迟算法：模拟思考 + 打字速度
+        is_system_msg = any(text.strip().startswith(prefix) for prefix in ["🤖", "⏰", "⚙️", "✅", "❌", "🔍", "🌅", "🚀", "💡"])
+        
+        if not skip_delay and not is_media and not is_system_msg:
+            # 拟真打字延迟算法：模拟思考 + 打字速度 (精简提速配置)
             n_chars = len(text)
-            base_delay = _rand.uniform(0.3, 0.8)
-            char_delay = n_chars * 0.05
-            total_delay = min(base_delay + char_delay, 3.5)
+            base_delay = _rand.uniform(0.2, 0.5)  # 压缩基准思考延迟 (原 0.3~0.8)
+            char_delay = n_chars * 0.03            # 压缩单字延迟 (原 0.05)
+            total_delay = min(base_delay + char_delay, 2.5)  # 最大延迟上限设为 2.5 秒 (原 3.5)
             self._log_activity("打字延迟", f"纯文本打字延迟：计算延迟 {total_delay:.2f}秒 (字数: {n_chars})，开始等待...")
             await asyncio.sleep(total_delay)
 
