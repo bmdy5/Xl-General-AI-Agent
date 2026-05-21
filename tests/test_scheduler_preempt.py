@@ -48,7 +48,7 @@ class MockAgent:
 async def test_ai_driven_scheduler():
     gw = QQGateway(agent_factory=MockAgent)
     sent_messages = []
-    async def mock_send(msg_type, user_id, group_id, text):
+    async def mock_send(msg_type, user_id, group_id, text, *args, **kwargs):
         sent_messages.append(text)
     gw._send = mock_send
 
@@ -57,16 +57,16 @@ async def test_ai_driven_scheduler():
     asyncio.create_task(gw._handle(task1_event))
     await asyncio.sleep(0.5)
 
-    # 2. 模拟排队任务 (在当前 CC 模式下会作为普通消息直接注入当前正在运行的会话 messages 中)
+    # 2. 模拟排队任务 (在当前排队机制下，新来的并发消息会暂存入队列排队，防止吞消息)
     task2_event = {"message_type": "private", "user_id": "123", "raw_message": "顺便备份"}
     await gw._handle(task2_event)
     await asyncio.sleep(0.5)
     
-    # 校验：消息已被成功追加到 agent 对话记录中
-    agent = gw._agents.get("user_123")
-    assert agent is not None
-    assert any(m.get("content") == "顺便备份" for m in agent.messages), "CC模式下消息应被成功追加"
-    print("✅ CC mode inject verification: '顺便备份' injected successfully")
+    # 校验：消息已被成功排队
+    queue = gw._message_queues.get("user_123")
+    assert queue is not None
+    assert any(raw == "顺便备份" for event, raw in queue), "排队模式下消息应被成功加入暂存队列"
+    print("✅ Queue mode verification: '顺便备份' queued successfully")
 
     # 3. 模拟强行抢占任务 (发送包含抢占关键词 '停下' 的指令)
     task3_event = {"message_type": "private", "user_id": "123", "raw_message": "停下，先帮我看一下 README"}
