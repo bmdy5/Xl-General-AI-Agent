@@ -604,20 +604,9 @@ class QQGateway:
                 )
                 raw = interruption_note
             else:
-                # CC 模式注入。但如果上一个 assistant 有未完成的 tool_calls，
-                # 暂存排队（DeepSeek 要求 tool_calls 后紧跟 tool_result）
-                last_msg = agent.messages[-1] if agent.messages else {}
-                has_pending = (last_msg.get("role") == "assistant" and last_msg.get("tool_calls"))
-                if has_pending:
-                    self._message_queues.setdefault(session_key, []).append((event, raw))
-                    self._log_activity("系统调度", f"工具执行中，消息暂存: {raw[:40]}...")
-                    return
-
-                agent.messages.append({"role": "user", "content": raw})
-                if agent.session:
-                    asyncio.create_task(agent.session.append_message(
-                        {"role": "user", "content": raw}))
-                self._log_activity("系统调度", f"消息注入当前任务: {raw[:60]}...")
+                # 只要当前有任务运行，除抢占外统一排队暂存，彻底防止吞消息Bug
+                self._message_queues.setdefault(session_key, []).append((event, raw))
+                self._log_activity("系统调度", f"当前任务运行中，新消息加入暂存队列: {raw[:40]}...")
                 return
 
         # 启动任务执行
