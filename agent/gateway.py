@@ -63,6 +63,8 @@ class QQGateway:
         self._message_queues: dict[str, list[tuple[dict, str]]] = {}
         self._tts = None
         self._last_voice_time: float = 0.0
+        self._waiting_podcast_topic: dict[str, bool] = {}
+        self._podcast_choices: dict[str, list[str]] = {}
 
     def _load_persona(self) -> tuple:
         """从运行期画像读取 (name, user_address)，兜底返回默认值。"""
@@ -86,7 +88,8 @@ class QQGateway:
             while True:
                 try:
                     await self._ws_loop()
-                    # 正常退出连接后追加 3 秒冷却等待，保护本地网络服务，避免死循环高频重连
+                    # WebSocket 正常退出后加上 3 秒冷却，防止高频无延迟死循环重连
+                    logger.info("WebSocket loop finished normally. Reconnecting in 3s...")
                     await asyncio.sleep(3)
                 except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
                     self._reconnect_failures += 1
@@ -382,32 +385,24 @@ class QQGateway:
                                 except Exception as coach_err:
                                     logger.error(f"Coach task failed: {coach_err}")
                                     buf = f"❌ 自我审计任务执行失败: {coach_err}"
-                            elif "学习早报" in desc or "播客" in desc:
+                            elif "选题推送" in desc or "播客选题" in desc:
                                 try:
-                                    if not is_silent:
-                                        await self._send("private", admin_id, "", "🌅 正在扫描过去 48h 变动的 Obsidian 笔记并呼叫 NotebookLM 自动合成高保真中文播客...")
-                                    
-                                    from agent.auto_podcast import generate_podcast_workflow
-                                    import os
-                                    import base64
-                                    
-                                    local_path = await generate_podcast_workflow()
-                                    if local_path and os.path.exists(local_path):
-                                        with open(local_path, "rb") as vf:
-                                            voice_bytes = vf.read()
-                                        
-                                        # 高保真静音填充，确保音频在 1.8 秒以上以支持 QQ 完美转码和播放
-                                        voice_bytes = self._pad_wav(voice_bytes)
-                                        b64_data = base64.b64encode(voice_bytes).decode("utf-8")
-                                        cq_record = f"[CQ:record,file=base64://{b64_data}]"
-                                        
-                                        await self._send("private", admin_id, "", cq_record, skip_delay=True)
-                                        buf = f"🎉 亮哥专属每日学习早报播客合成成功！音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
-                                    else:
-                                        buf = "🌅 过去 48 小时内没有检测到任何学习笔记变动，今日学习早报自动跳过。"
+                                    # 异步拉起选题获取，避免阻塞
+                                    asyncio.create_task(self._trigger_night_podcast_selection(session_key, admin_id))
+                                    buf = "💡 正在为您智能扫描 Obsidian 库中 Agent 笔记并提取深度选题..."
                                 except Exception as pod_err:
-                                    logger.error(f"Podcast task failed: {pod_err}", exc_info=True)
-                                    buf = f"❌ 学习早报播客生成失败: {pod_err}"
+                                    logger.error(f"Podcast topic selection failed: {pod_err}", exc_info=True)
+                                    buf = f"❌ 学习早报播客选题提取失败: {pod_err}"
+                            elif ("学习早报" in desc or "播客" in desc) and "选题" not in desc:
+                                try:
+                                    # 主动发送消息
+                                    await self._send("private", admin_id, "", "🌅 亮哥早上好！正在为您极速获取并下载今早的专属 Agent 极客对谈音频，请稍等...")
+                                    # 异步拉起捕获下载
+                                    asyncio.create_task(self._trigger_morning_podcast_download(admin_id))
+                                    buf = "🌅 已为您成功拉起 Chrome 活跃实例捕获音频任务，捕获成功后将第一时间推送到您的手机！"
+                                except Exception as pod_err:
+                                    logger.error(f"Podcast morning download trigger failed: {pod_err}", exc_info=True)
+                                    buf = f"❌ 晨间播客获取任务拉起失败: {pod_err}"
                             else:
                                 async for evt in agent.run(action, stream=True):
                                     if evt["type"] == "text_delta":
@@ -465,8 +460,93 @@ class QQGateway:
             except Exception as e:
                 logger.error(f"Daemon task processing error: {e}")
 
-            # 每 5 分钟轮询一次
-            await asyncio.sleep(30)  # 每30秒巡检一次
+            # ── 3. 错峰异步播客状态轮询 (基于 active_podcast.json 状态机) ──────────────────
+            try:
+                from agent.auto_podcast import ACTIVE_PODCAST_JSON
+                if os.path.exists(ACTIVE_PODCAST_JSON):
+                    with open(ACTIVE_PODCAST_JSON, "r", encoding="utf-8") as f:
+                        state = json.load(f)
+                    
+                    if state.get("status") == "generating":
+                        now_ts = time.time()
+                        last_query = state.get("last_query_time", 0)
+                        
+                        # 间隔控制：debug_mode 下 30 秒，正常模式 30 分钟 (1800 秒)
+                        query_interval = 1800
+                        if state.get("debug_mode"):
+                            query_interval = 30
+                            
+                        if now_ts - last_query >= query_interval:
+                            # 预先增加计数并更新 last_query_time 并持久化，防止多次重入
+                            state["query_count"] = state.get("query_count", 0) + 1
+                            state["last_query_time"] = now_ts
+                            with open(ACTIVE_PODCAST_JSON, "w", encoding="utf-8") as f:
+                                json.dump(state, f, ensure_ascii=False, indent=2)
+                            
+                            # 异步拉起查询协程，绝对不阻塞 daemon loop 守护主循环
+                            asyncio.create_task(self._check_podcast_status_async(state, state["query_count"], admin_id))
+            except Exception as daemon_pod_err:
+                logger.error(f"Daemon podcast state check loop error: {daemon_pod_err}")
+
+            # 每30秒巡检一次
+            await asyncio.sleep(30)
+
+    async def _check_podcast_status_async(self, state: dict, q_count: int, admin_id: str):
+        """异步拉起并查询 NotebookLM 播客生成状态，单次处理，不阻塞守护主循环."""
+        from agent.tools.mcp_agent_learning_server import check_and_push_podcast
+        from agent.auto_podcast import force_cleanup_podcast
+        import os
+        import base64
+        import json
+        
+        logger.info(f"🔄 [异步轮询协程] 开始第 {q_count} 次状态查询...")
+        try:
+            # 执行查询
+            res = await check_and_push_podcast()
+            data = json.loads(res)
+            status = data.get("status")
+            
+            if status == "success":
+                local_path = data.get("local_path")
+                topic = data.get("topic")
+                logger.info(f"🎉 [异步轮询协程] 早报播客生成成功！本地保存路径: {local_path}")
+                if os.path.exists(local_path):
+                    with open(local_path, "rb") as vf:
+                        voice_bytes = vf.read()
+                    
+                    # 填充静音以配合 QQ
+                    voice_bytes = self._pad_wav(voice_bytes)
+                    b64_data = base64.b64encode(voice_bytes).decode("utf-8")
+                    cq_record = f"[CQ:record,file=base64://{b64_data}]"
+                    
+                    # 推送语音
+                    await self._send("private", admin_id, "", cq_record, skip_delay=True)
+                    
+                    # 推送提示语
+                    success_msg = f"🎉 亮哥专属每日学习早报播客合成成功！（在第 {q_count} 次查询成功，累计等待了 {q_count * 30} 分钟）。\n今日主题：【{topic}】\n音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
+                    await self._send("private", admin_id, "", success_msg)
+            elif status == "pending":
+                # 2. 还在生成中
+                logger.info(f"⏳ [异步轮询协程] 早报播客云端生成中 (第 {q_count} 次)")
+                if q_count >= 3:
+                    # 超过3次宣告超时失败
+                    fail_msg = "❌ 每日学习早报播客生成超时。已累计查询 3 次（共 90 分钟），云端仍未完成，彻底宣告失败。"
+                    await self._send("private", admin_id, "", fail_msg)
+                    await force_cleanup_podcast()
+                else:
+                    wait_msg = f"🔄 亮哥，学习早报播客云端仍在生成中（已等待 {q_count * 30} 分钟）。我将在 30 分钟后为您进行下一次查询（第 {q_count + 1} 次）。"
+                    await self._send("private", admin_id, "", wait_msg)
+            elif status == "no_active_task":
+                logger.info("无活跃播客生成任务。")
+        except Exception as e:
+            logger.error(f"❌ [异步轮询协程] 查询发生异常 (第 {q_count} 次): {e}", exc_info=True)
+            if q_count >= 3:
+                fail_msg = f"❌ 每日学习早报播客轮询查询时发生错误，且已达最大查询次数（3次），彻底宣告失败。错误: {str(e)[:200]}"
+                await self._send("private", admin_id, "", fail_msg)
+                await force_cleanup_podcast()
+            else:
+                err_msg = f"⚠️ 轮询查询早报播客状态时发生网络或接口错误 (第 {q_count} 次): {str(e)[:150]}。我将在 30 分钟后尝试下一次查询。"
+                await self._send("private", admin_id, "", err_msg)
 
     async def _ws_loop(self):
         headers = {}
@@ -506,6 +586,26 @@ class QQGateway:
             session_key = f"group_{group_id}"
         else:
             session_key = f"user_{user_id}"
+
+        # ── 播客选题拦截 ──────────────────────────────────────────
+        if self._waiting_podcast_topic.get(session_key):
+            self._waiting_podcast_topic[session_key] = False
+            choices = self._podcast_choices.get(session_key, [])
+            
+            selected_topic = raw.strip()
+            if selected_topic in ("1", "2", "3") and len(choices) >= 3:
+                selected_topic = choices[int(selected_topic) - 1]
+                # 去除 1. 这种前缀
+                if ". " in selected_topic:
+                    selected_topic = selected_topic.split(". ", 1)[1]
+                elif "、" in selected_topic:
+                    selected_topic = selected_topic.split("、", 1)[1]
+                    
+            await self._send("private", admin_id, "", f"🎯 已锁定明早播客选题：【{selected_topic}】。\n正在为您融合本地笔记与网络参考资料，合成为约 2000 字的极客研究笔记并投喂云端，请稍等...")
+            
+            # 后台异步启动笔记合成与投喂
+            asyncio.create_task(self._process_podcast_generation_async(session_key, selected_topic, admin_id))
+            return
 
         # 检查是否在等权限确认 — 仅短文本(<5字)视为纯确认，长文本传给agent
         perm = self._pending_perms.get(session_key)
@@ -1300,6 +1400,77 @@ class QQGateway:
                 f.write(log_line)
         except Exception as e:
             logger.error(f"Failed to write activity log: {e}")
+
+    async def _trigger_night_podcast_selection(self, session_key: str, admin_id: str):
+        try:
+            from agent.tools.mcp_agent_learning_server import list_agent_topics
+            res_topics = await list_agent_topics()
+            data = json.loads(res_topics)
+            if data.get("status") != "success":
+                raise ValueError(f"获取选题失败: {data.get('message')}")
+                
+            topics = data.get("topics", [])
+            self._podcast_choices[session_key] = topics
+            self._waiting_podcast_topic[session_key] = True
+            
+            t_str = "\n".join([f"{t}" for t in topics])
+            msg = (
+                f"💡 亮哥，我是小萤。今晚我们来为明早的极客播客定个专题吧！\n"
+                f"您可以直接选择以下任一主题（回复 1、2 或 3），或者直接回复您想听的任意技术方向：\n\n"
+                f"{t_str}\n\n"
+                f"请在回复中选择。"
+            )
+            await self._send("private", admin_id, "", msg)
+        except Exception as e:
+            logger.error(f"获取选题或推送失败: {e}", exc_info=True)
+            await self._send("private", admin_id, "", f"❌ 抱歉亮哥，智能提炼明早播客选题时发生异常: {e}")
+
+    async def _process_podcast_generation_async(self, session_key: str, topic: str, admin_id: str):
+        try:
+            from agent.tools.mcp_agent_learning_server import synthesize_agent_notes, launch_podcast_generation
+            res_synth = await synthesize_agent_notes(topic, use_web_search=True)
+            synth_data = json.loads(res_synth)
+            if synth_data.get("status") != "success":
+                raise ValueError(f"笔记合成失败: {synth_data.get('message')}")
+                
+            note_path = synth_data.get("note_path")
+            
+            res_launch = await launch_podcast_generation(note_path, topic, debug_mode=False)
+            launch_data = json.loads(res_launch)
+            if launch_data.get("status") != "success":
+                raise ValueError(f"云端投喂失败: {launch_data.get('message')}")
+                
+            await self._send("private", admin_id, "", f"🌅 云端双人中文技术播客生成已成功拉起！\n我已将 2000 字深度研究笔记保存在了 scratch。\n明早 06:00 我将自动使用本地 Chrome 活跃实例静默捕获并为您推送！")
+        except Exception as e:
+            logger.error(f"夜间播客交互生成失败: {e}", exc_info=True)
+            await self._send("private", admin_id, "", f"❌ 抱歉亮哥，在为您生成播客笔记或投喂 NotebookLM 时发生异常：{e}")
+
+    async def _trigger_morning_podcast_download(self, admin_id: str):
+        from agent.tools.mcp_agent_learning_server import check_and_push_podcast
+        try:
+            res = await check_and_push_podcast()
+            data = json.loads(res)
+            status = data.get("status")
+            if status == "success":
+                local_path = data.get("local_path")
+                topic = data.get("topic")
+                import base64
+                if os.path.exists(local_path):
+                    with open(local_path, "rb") as vf:
+                        voice_bytes = vf.read()
+                    voice_bytes = self._pad_wav(voice_bytes)
+                    b64_data = base64.b64encode(voice_bytes).decode("utf-8")
+                    cq_record = f"[CQ:record,file=base64://{b64_data}]"
+                    await self._send("private", admin_id, "", cq_record, skip_delay=True)
+                    
+                    success_msg = f"🎉 亮哥专属每日学习早报播客获取成功！\n今日主题：【{topic}】\n音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
+                    await self._send("private", admin_id, "", success_msg)
+            elif status == "pending":
+                logger.info("晨间播客尚在生成中，将由守护进程轮询捕获。")
+            else:
+                logger.warning(f"晨间主动拉取失败，状态: {status}，消息: {data.get('message')}")
+        except Exception as e:
+            logger.error(f"晨间主动下载播客失败: {e}", exc_info=True)
 
 
 # ── 模块级工具 ─────────────────────────────────────────────
