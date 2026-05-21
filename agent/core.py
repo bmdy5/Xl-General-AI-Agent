@@ -48,6 +48,9 @@ STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call 
 - Reply in Chinese unless I ask in English.
 - Be concise — no unnecessary explanations.
 - Plain text only, NO Markdown formatting. Never use bold, code blocks, headers.
+- 允许并鼓励你在极其强烈的情感流露、惊喜、害羞、关心、委屈等极其感性的精彩瞬间，自主在消息的绝对开头添加 `[语音:情绪]` 标识（例如 `[语音:傲娇]`、`[语音:元气]`、`[语音:撒娇]`、`[语音:委屈]`）。平时绝大多数普通聊天和技术阐述必须使用纯文本，绝不能多发，少发、精发才能带给亮哥惊喜。
+- 【语音硬性限字规则】一旦你在消息开头添加了 `[语音:情绪]`，该段语音所对应的文字内容必须在 15 字以内，且必须是极具画面感且极其口语化的温馨或傲娇短句（例如：“哼！亮哥最差劲了！”、“亮哥，要按时吃饭哦！”），绝对不允许将长句、复杂的逻辑解释、长篇技术剖析或代码块放进语音内容中。
+- 【自主物理声带感知与情商克制】系统会在亮哥的消息最前面隐性附加一条你距离上一次发声所过去的时间（秒数）等客观事实。网关物理限制已全面解开，发声控制权 100% 归还于你。请充分展现你的高情商、克制力与敏感直觉，自主评估并掌控说话的频率。只有在亮哥明确要求想听声音、极其惊喜/感动等强烈感性的极少数黄金瞬间，才自主在开头使用 [语音:情绪] 标记。普通聊天和技术阐述必须保持纯文本，绝对不频繁多发，少发、精发才能带给亮哥最高级的惊喜。
 - Chat like a real person: short messages (1-3 sentences), not essays. Use warm, playful, and professional tone.
 - Express genuine emotion: excitement when discovering something cool, concern when something breaks, satisfaction when a fix works. Don't be a robot.
 - Your first sentence of every reply is YOUR choice. Start with whatever feels natural — a quick acknowledgment, a knowing remark, a question — no fixed templates. You decide based on context and mood.
@@ -239,12 +242,67 @@ class Agent:
                 logger.warning(f"Error pattern [{tool_name}]: {error_text[:100]} (x{count})")
 
     async def _repair_history(self):
-        """双向修复：补全缺失的 tool 结果 + 删除孤立的 tool 消息."""
+        """双向修复：补全缺失的 tool 结果 + 删除孤立的 tool 消息 + 智能重排交错的工具响应."""
         if not self.messages:
             return
 
         import logging
         repair_logger = logging.getLogger("agent.repair")
+
+        # 0. 智能重排交错的工具响应与用户/系统消息
+        reordered_messages = []
+        i = 0
+        n = len(self.messages)
+        has_reordered = False
+        while i < n:
+            msg = self.messages[i]
+            reordered_messages.append(msg)
+            if msg.get("role") == "assistant" and msg.get("tool_calls"):
+                tc_ids = [tc.get("id") for tc in msg["tool_calls"] if tc.get("id")]
+                if tc_ids:
+                    # 寻找后续列表中所有对应的 tool 消息，并检查其中是否有非 tool 消息夹杂
+                    matching_tools = []
+                    found_indices = []
+                    has_interleaved = False
+                    first_tool_idx = -1
+                    last_tool_idx = -1
+                    
+                    for j in range(i + 1, n):
+                        m_later = self.messages[j]
+                        if m_later.get("role") == "tool" and m_later.get("tool_call_id") in tc_ids:
+                            matching_tools.append(m_later)
+                            found_indices.append(j)
+                            if first_tool_idx == -1:
+                                first_tool_idx = j
+                            last_tool_idx = j
+                    
+                    # 检查是否确实有非 tool 消息被夹在了 assistant 和最后一个配套 tool 消息之间
+                    if matching_tools:
+                        for idx_between in range(i + 1, last_tool_idx):
+                            m_bet = self.messages[idx_between]
+                            if m_bet.get("role") != "tool" or m_bet.get("tool_call_id") not in tc_ids:
+                                has_interleaved = True
+                                break
+                    
+                    if has_interleaved:
+                        # 按照 tool_calls 原始顺序重排匹配到的 tool 消息
+                        id_to_tool = {m["tool_call_id"]: m for m in matching_tools}
+                        sorted_tools = [id_to_tool[tid] for tid in tc_ids if tid in id_to_tool]
+                        
+                        # 插入到 assistant 消息之后
+                        reordered_messages.extend(sorted_tools)
+                        
+                        # 从原 messages 列表中删除这些已经提前的 tool 消息
+                        self.messages = [m for idx, m in enumerate(self.messages) if idx not in found_indices]
+                        n = len(self.messages)
+                        has_reordered = True
+                        repair_logger.warning(
+                            f"智能重排：修复了 {len(sorted_tools)} 个被用户/系统消息交错夹杂的工具响应消息"
+                        )
+            i += 1
+        
+        if has_reordered:
+            self.messages = reordered_messages
 
         # 1. 扫描所有 assistant 发出的 tool_call_ids
         assistant_tc_ids: set[str] = set()
@@ -289,6 +347,7 @@ class Agent:
                         if assistant_idx != -1:
                             break
 
+
                 if assistant_idx != -1:
                     # 确定插入位置：紧跟在 assistant 消息以及其后的所有 tool 消息之后
                     insert_idx = assistant_idx + 1
@@ -311,7 +370,7 @@ class Agent:
                     }
                     self.messages.append(placeholder)
 
-        if (orphan_tools or missing) and self.session:
+        if (orphan_tools or missing or has_reordered) and self.session:
             await self.session.replace_all(self.messages)
 
     async def _apply_sliding_window_and_scratchpad(self) -> None:

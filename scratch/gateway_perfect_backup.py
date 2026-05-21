@@ -943,38 +943,35 @@ class QQGateway:
                     "temperature": 0.65,
                     "top_k": 10,
                     "top_p": 0.90,
-                    "speed_factor": 1.03,
-                    "text_split_method": "cut2",
+                    "speed_factor": 0.95,
                     "repetition_penalty": 1.35
                 }
             },
-            # ⚡ 元气：黄金 07 参考 (11:28 终极特调参数)
+            # ⚡ 元气：黄金 07 参考 (特调 0.65 消除句尾沙沙感)
             "元气": {
                 "subdir": "happy",
                 "wav_file": "slice_07.wav",
                 "prompt_text": "お兄ちゃん、朝だよ！起きて！",
                 "prompt_lang": "ja",
                 "params": {
-                    "temperature": 0.70,
+                    "temperature": 0.65,
                     "top_k": 12,
                     "top_p": 0.85,
                     "speed_factor": 1.05,
-                    "text_split_method": "cut3",
                     "repetition_penalty": 1.35
                 }
             },
-            # 💢 傲娇：采用 11:28 终极满意的 slice_15 傲娇灵魂特调！
+            # 💢 傲娇：经典3秒去噪裁剪版，完美锁定 slice_20.wav 傲娇音轨
             "傲娇": {
-                "subdir": "aggrieved",
-                "wav_file": "slice_15.wav",
-                "prompt_text": "お兄ちゃんが意地悪するから...",
+                "subdir": "tsundere",
+                "wav_file": "slice_20.wav",
+                "prompt_text": "ふんっ、バカ！",
                 "prompt_lang": "ja",
                 "params": {
                     "temperature": 0.75,
                     "top_k": 10,
                     "top_p": 0.90,
-                    "speed_factor": 1.03,
-                    "text_split_method": "cut2",
+                    "speed_factor": 1.00,
                     "repetition_penalty": 1.35
                 }
             },
@@ -989,7 +986,6 @@ class QQGateway:
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 0.95,
-                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             },
@@ -1004,7 +1000,6 @@ class QQGateway:
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 1.00,
-                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             },
@@ -1018,7 +1013,6 @@ class QQGateway:
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 1.00,
-                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             }
@@ -1031,12 +1025,12 @@ class QQGateway:
         voice_text = text.strip()
         remaining_text = ""
         
-        # 35字宽限策略：如果总字数不超过 35 字，则完全不截断，保留完整高保真情感朗读效果
-        if len(voice_text) > 35:
-            # 智能在 20 到 28 字之间倒序寻找合适的标点切分，避免截断吞字
-            split_idx = 25
+        # 20字宽限策略：如果总字数不超过 20 字，则完全不截断，保留完整朗读效果
+        if len(voice_text) > 20:
+            # 智能在 12 到 18 字之间倒序寻找合适的标点切分，避免切出极短碎句
+            split_idx = 15
             found_split = False
-            for i in range(28, 18, -1):
+            for i in range(18, 11, -1):
                 if i < len(voice_text) and voice_text[i] in ("，", "。", "！", "？", ",", ".", "!", "?", "；", ";"):
                     split_idx = i + 1
                     found_split = True
@@ -1055,7 +1049,6 @@ class QQGateway:
             clean = re.sub(r'`+', '', clean)
             clean = re.sub(r'#+', '', clean)
             clean = clean.replace("&", "和").replace("<", " ").replace(">", " ")
-            clean = clean.replace("……", "").replace("...", "")
             clean = clean.strip()
             
             if not clean:
@@ -1089,13 +1082,13 @@ class QQGateway:
                 "top_p": config["params"]["top_p"],
                 "temperature": config["params"]["temperature"],
                 "speed_factor": config["params"]["speed_factor"],
-                "text_split_method": config["params"].get("text_split_method", "cut2"),  # 动态读取各自锁定特优的切分算法
+                "text_split_method": "cut2",  # 统一使用切分和语流过渡最完美的 cut2 算法
                 "repetition_penalty": config["params"]["repetition_penalty"],
                 "media_type": "wav"
             }
 
-            # 4. 设置 6.0 秒的安全超时，超过 6.0 秒立刻自动秒级无感降级到纯文本，兼顾高可用与冷启动容错
-            timeout = aiohttp.ClientTimeout(total=6.0)
+            # 4. 设置 2.5 秒的极速超时，超过 2.5 秒立刻自动秒级无感降级到纯文本，绝不产生卡顿！
+            timeout = aiohttp.ClientTimeout(total=2.5)
             voice_bytes = b""
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 # 优先采用 POST /tts 发送 JSON，确保语速 (speed_factor) 等特调参数在 SoVITS 引擎中 100% 成功解析生效
