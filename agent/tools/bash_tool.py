@@ -149,11 +149,17 @@ class BashTool(BaseTool):
             return
 
         try:
+            import os
+            # 注入 Homebrew 路径以防找不到 pip/ffmpeg 等命令
+            custom_env = os.environ.copy()
+            custom_env["PATH"] = "/opt/homebrew/bin:" + custom_env.get("PATH", "")
+
             process = await asyncio.create_subprocess_shell(
                 command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT,
                 cwd=self.work_dir,
+                env=custom_env,
             )
 
             try:
