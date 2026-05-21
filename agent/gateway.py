@@ -943,7 +943,7 @@ class QQGateway:
                     "temperature": 0.65,
                     "top_k": 10,
                     "top_p": 0.90,
-                    "speed_factor": 0.95,
+                    "speed_factor": 1.05,
                     "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
@@ -973,7 +973,7 @@ class QQGateway:
                     "temperature": 0.75,
                     "top_k": 10,
                     "top_p": 0.90,
-                    "speed_factor": 1.00,
+                    "speed_factor": 1.05,
                     "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
@@ -1031,12 +1031,12 @@ class QQGateway:
         voice_text = text.strip()
         remaining_text = ""
         
-        # 20字宽限策略：如果总字数不超过 20 字，则完全不截断，保留完整朗读效果
-        if len(voice_text) > 20:
-            # 智能在 12 到 18 字之间倒序寻找合适的标点切分，避免切出极短碎句
-            split_idx = 15
+        # 35字宽限策略：如果总字数不超过 35 字，则完全不截断，保留完整高保真情感朗读效果
+        if len(voice_text) > 35:
+            # 智能在 20 到 28 字之间倒序寻找合适的标点切分，避免截断吞字
+            split_idx = 25
             found_split = False
-            for i in range(18, 11, -1):
+            for i in range(28, 18, -1):
                 if i < len(voice_text) and voice_text[i] in ("，", "。", "！", "？", ",", ".", "!", "?", "；", ";"):
                     split_idx = i + 1
                     found_split = True
