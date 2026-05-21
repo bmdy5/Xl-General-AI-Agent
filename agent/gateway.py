@@ -86,6 +86,8 @@ class QQGateway:
             while True:
                 try:
                     await self._ws_loop()
+                    # 正常退出连接后追加 3 秒冷却等待，保护本地网络服务，避免死循环高频重连
+                    await asyncio.sleep(3)
                 except (aiohttp.ClientError, asyncio.TimeoutError, OSError) as e:
                     self._reconnect_failures += 1
                     logger.warning(f"WebSocket disconnected (Count: {self._reconnect_failures}/10): {e}, retry in 5s...")
@@ -472,7 +474,7 @@ class QQGateway:
             headers["Authorization"] = f"Bearer {NC_TOKEN}"
 
         async with aiohttp.ClientSession() as ws_session:
-            async with ws_session.ws_connect(NC_WS_URL, headers=headers) as ws:
+            async with ws_session.ws_connect(NC_WS_URL, headers=headers, heartbeat=15.0) as ws:
                 logger.info(f"QQ Gateway connected: {NC_WS_URL}")
                 self._reconnect_failures = 0  # 成功握手，计数器归零
                 async for msg in ws:
