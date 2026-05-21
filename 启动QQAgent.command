@@ -7,7 +7,11 @@ echo "================================"
 
 # 1. 杀掉旧 gateway
 echo "1. 清理旧进程..."
-pkill -9 -f "main.py --gateway" 2>/dev/null && echo "   ✓ 旧 gateway 已停止" || echo "   - 无旧进程"
+if launchctl list | grep -q com.myagent.qqgateway; then
+    echo "   - 检测到 launchd 托管服务 com.myagent.qqgateway，由 launchctl 统一生命周期管理，跳过强杀防止自愈自启冲突"
+else
+    pkill -9 -f "main.py --gateway" 2>/dev/null && echo "   ✓ 旧 gateway 已停止" || echo "   - 无旧进程"
+fi
 
 # 2. 确保 NapCat 容器在运行
 echo "2. 检查 NapCat 容器..."
@@ -75,14 +79,25 @@ find . -name "__pycache__" -type d -exec rm -rf {} + 2>/dev/null
 
 # 6. 启动 Gateway
 echo "5. 启动 Gateway..."
-source venv/bin/activate
-nohup "$PROJECT_ROOT"/venv/bin/python main.py --gateway > /tmp/gateway.log 2>&1 &
-sleep 2
-
-if ps aux | grep -q "[m]ain.py --gateway"; then
-    echo "   ✓ Gateway 运行中"
+if launchctl list | grep -q com.myagent.qqgateway; then
+    echo "   ✓ 检测到 launchd 托管服务，正在通过 launchctl 重启以彻底避免双进程冲突..."
+    launchctl unload ~/Library/LaunchAgents/com.myagent.qqgateway.plist 2>/dev/null
+    launchctl load ~/Library/LaunchAgents/com.myagent.qqgateway.plist 2>/dev/null
+    sleep 2
+    if ps aux | grep -q "[m]ain.py --gateway"; then
+        echo "   ✓ Gateway 已由 launchctl 重启并托管运行中"
+    else
+        echo "   ✗ Gateway 启动失败，请检查 launchd 配置"
+    fi
 else
-    echo "   ✗ Gateway 启动失败，查看 /tmp/gateway.log"
+    source venv/bin/activate
+    nohup "$PROJECT_ROOT"/venv/bin/python main.py --gateway > /tmp/gateway.log 2>&1 &
+    sleep 2
+    if ps aux | grep -q "[m]ain.py --gateway"; then
+        echo "   ✓ Gateway (Nohup 模式) 运行中"
+    else
+        echo "   ✗ Gateway 启动失败，查看 /tmp/gateway.log"
+    fi
 fi
 
 # 7. 状态
