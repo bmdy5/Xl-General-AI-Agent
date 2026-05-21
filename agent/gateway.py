@@ -1106,6 +1106,8 @@ class QQGateway:
                                 raise ValueError(f"GPT-SoVITS API both POST/GET /tts failed (status: {resp_get.status})")
 
             if len(voice_bytes) > 0:
+                # 实施首尾高保真静音填充，确保音频在 1.8 秒以上以支持 QQ 完美转码和播放
+                voice_bytes = self._pad_wav(voice_bytes)
                 b64_data = base64.b64encode(voice_bytes).decode("utf-8")
                 cq_record = f"[CQ:record,file=base64://{b64_data}]"
                 await self._send(msg_type, user_id, group_id, cq_record, skip_delay=is_test)
