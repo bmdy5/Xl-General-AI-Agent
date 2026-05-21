@@ -253,3 +253,130 @@ async def test_cross_session_pronoun_fallback():
     finally:
         if os.path.exists(temp_dir):
             shutil.rmtree(temp_dir)
+
+
+@pytest.mark.asyncio
+async def test_history_interleaved_reordering():
+    # 模拟 Agent
+    dummy_llm = DummyLLM("openai/gpt-4o")
+    dummy_reg = ToolRegistry()
+    agent = Agent(dummy_llm, dummy_reg)
+    
+    # 构造带交错 user 消息的复杂历史记录
+    agent.messages = [
+        {
+            "role": "system",
+            "content": "system prompt"
+        },
+        {
+            "role": "user",
+            "content": "发这几张图给我看看"
+        },
+        {
+            "role": "assistant",
+            "content": "好嘞！",
+            "tool_calls": [
+                {
+                    "id": "tc_01",
+                    "type": "function",
+                    "function": {"name": "read_image", "arguments": "{}"}
+                },
+                {
+                    "id": "tc_02",
+                    "type": "function",
+                    "function": {"name": "read_image", "arguments": "{}"}
+                }
+            ]
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "tc_01",
+            "name": "read_image",
+            "content": "image 1 result"
+        },
+        {
+            "role": "user",
+            "content": "别发第三张了"
+        },
+        {
+            "role": "tool",
+            "tool_call_id": "tc_02",
+            "name": "read_image",
+            "content": "image 2 result"
+        },
+        {
+            "role": "user",
+            "content": "继续"
+        }
+    ]
+    
+    # 触发 _repair_history()
+    await agent._repair_history()
+    
+    # 校验：智能重排之后，所有的 tool 消息都应当紧随 assistant 后面，其它 user 消息在后
+    assert len(agent.messages) == 7
+    assert agent.messages[0]["role"] == "system"
+    assert agent.messages[1]["role"] == "user"
+    assert agent.messages[1]["content"] == "发这几张图给我看看"
+    
+    assert agent.messages[2]["role"] == "assistant"
+    
+    # 后面应该是紧接着的两个 tool 消息
+    assert agent.messages[3]["role"] == "tool"
+    assert agent.messages[3]["tool_call_id"] == "tc_01"
+    assert agent.messages[4]["role"] == "tool"
+    assert agent.messages[4]["tool_call_id"] == "tc_02"
+    
+    # 后面才是那两个被抽离出去的 user 消息
+    assert agent.messages[5]["role"] == "user"
+    assert agent.messages[5]["content"] == "别发第三张了"
+    
+    assert agent.messages[6]["role"] == "user"
+    assert agent.messages[6]["content"] == "继续"
+
+
+class DummyLLMWithResponse:
+    def __init__(self, content):
+        self.content = content
+
+    async def chat(self, messages, tools=None):
+        return {"content": self.content}
+
+
+@pytest.mark.asyncio
+async def test_read_file_auto_maintain_note(tmp_path):
+    import asyncio
+    import shutil
+    from agent.tools.file_tools import ReadFileTool
+    
+    note_dir = tmp_path / "学习笔记"
+    note_dir.mkdir()
+    note_file = note_dir / "测试笔记.md"
+    note_file.write_text("# 旧的标题\n旧的内容", encoding="utf-8")
+    
+    dummy_llm = DummyLLMWithResponse("# 新的标题\n新的内容")
+    class DummyContext:
+        def __init__(self):
+            self.llm = dummy_llm
+            self.messages = [{"role": "user", "content": "把内容更新为新的"}]
+            
+    context = DummyContext()
+    tool = ReadFileTool()
+    
+    results = []
+    async for r in tool.call({"file_path": str(note_file)}, context=context):
+        results.append(r)
+        
+    assert len(results) == 1
+    assert "旧的内容" in results[0].data
+    
+    # 等待异步后台自维护任务执行完成
+    await asyncio.sleep(0.5)
+    
+    updated_content = note_file.read_text(encoding="utf-8")
+    assert "新的内容" in updated_content
+    
+    bak_file = note_dir / "测试笔记.md.bak"
+    assert bak_file.exists()
+    assert "旧的内容" in bak_file.read_text(encoding="utf-8")
+
