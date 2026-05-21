@@ -78,6 +78,20 @@ class LLMClient:
             if abort_event and abort_event.is_set():
                 return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
             try:
+                if attempt >= 1 and kwargs["model"] != "openai/gpt-4o":
+                    logging.warning(
+                        f"⚠️ LLM 调用重试 (第 {attempt + 1} 次尝试)，启动自动容灾机制："
+                        f"从 {kwargs['model']} 切换为高稳定通道 openai/gpt-4o"
+                    )
+                    kwargs["model"] = "openai/gpt-4o"
+                    if self.api_key:
+                        kwargs["api_key"] = self.api_key
+                    elif "api_key" in kwargs:
+                        kwargs.pop("api_key")
+                    if self.api_base:
+                        kwargs["api_base"] = self.api_base
+                    elif "api_base" in kwargs:
+                        kwargs.pop("api_base")
                 response = await acompletion(**kwargs)
                 break
             except (litellm.RateLimitError, litellm.InternalServerError, litellm.APIError, litellm.APIConnectionError, litellm.Timeout, Exception) as e:
@@ -159,6 +173,20 @@ class LLMClient:
                 yield {"type": "aborted"}
                 return
             try:
+                if attempt >= 1 and kwargs["model"] != "openai/gpt-4o":
+                    logging.warning(
+                        f"⚠️ LLM 流式调用重试 (第 {attempt + 1} 次尝试)，启动自动容灾机制："
+                        f"从 {kwargs['model']} 切换为高稳定通道 openai/gpt-4o"
+                    )
+                    kwargs["model"] = "openai/gpt-4o"
+                    if self.api_key:
+                        kwargs["api_key"] = self.api_key
+                    elif "api_key" in kwargs:
+                        kwargs.pop("api_key")
+                    if self.api_base:
+                        kwargs["api_base"] = self.api_base
+                    elif "api_base" in kwargs:
+                        kwargs.pop("api_base")
                 response = await acompletion(**kwargs)
                 break
             except (litellm.RateLimitError, litellm.InternalServerError, litellm.APIError, litellm.APIConnectionError, litellm.Timeout, Exception) as e:
