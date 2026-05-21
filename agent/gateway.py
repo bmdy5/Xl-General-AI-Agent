@@ -1021,17 +1021,21 @@ class QQGateway:
         if not text.strip():
             return
             
-        # 1.5. 网关硬性限字智能截断机制：限制语音长度在 15 字内，剩下的文本作为纯文本在语音发出后追加
+        # 1.5. 网关硬性限字智能截断机制：限制语音长度在 15-20 字内，剩下的文本作为纯文本在语音发出后追加
         voice_text = text.strip()
         remaining_text = ""
         
-        if len(voice_text) > 15:
-            # 智能提取 15 字内的第一个完整标点分句
+        # 20字宽限策略：如果总字数不超过 20 字，则完全不截断，保留完整朗读效果
+        if len(voice_text) > 20:
+            # 智能在 12 到 18 字之间倒序寻找合适的标点切分，避免切出极短碎句
             split_idx = 15
-            for i in range(min(len(voice_text), 15) - 1, -1, -1):
-                if voice_text[i] in ("，", "。", "！", "？", ",", ".", "!", "?"):
+            found_split = False
+            for i in range(18, 11, -1):
+                if i < len(voice_text) and voice_text[i] in ("，", "。", "！", "？", ",", ".", "!", "?", "；", ";"):
                     split_idx = i + 1
+                    found_split = True
                     break
+            
             voice_text = text[:split_idx].strip()
             remaining_text = text[split_idx:].strip()
 
