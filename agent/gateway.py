@@ -943,7 +943,7 @@ class QQGateway:
                     "temperature": 0.65,
                     "top_k": 10,
                     "top_p": 0.90,
-                    "speed_factor": 1.05,
+                    "speed_factor": 1.02,
                     "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
@@ -973,7 +973,7 @@ class QQGateway:
                     "temperature": 0.75,
                     "top_k": 10,
                     "top_p": 0.90,
-                    "speed_factor": 1.05,
+                    "speed_factor": 1.02,
                     "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
