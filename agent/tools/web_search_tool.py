@@ -107,7 +107,8 @@ class WebSearchTool(BaseTool):
         from ddgs import DDGS
 
         with DDGS() as ddgs:
-            results = list(ddgs.text(query, max_results=max_results))
+            # 限制搜索后端为极速且国内高可用的 duckduckgo,brave，彻底规避 mojeek, yandex 等慢速引擎导致的超时挂起
+            results = list(ddgs.text(query, backend="duckduckgo,brave", max_results=max_results))
             return [
                 {"title": r["title"], "link": r["href"], "snippet": r["body"]}
                 for r in results
