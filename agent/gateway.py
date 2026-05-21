@@ -944,34 +944,37 @@ class QQGateway:
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 0.95,
+                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             },
-            # ⚡ 元气：黄金 07 参考 (特调 0.65 消除句尾沙沙感)
+            # ⚡ 元气：黄金 07 参考 (11:28 终极特调参数)
             "元气": {
                 "subdir": "happy",
                 "wav_file": "slice_07.wav",
                 "prompt_text": "お兄ちゃん、朝だよ！起きて！",
                 "prompt_lang": "ja",
                 "params": {
-                    "temperature": 0.65,
+                    "temperature": 0.70,
                     "top_k": 12,
                     "top_p": 0.85,
                     "speed_factor": 1.05,
+                    "text_split_method": "cut3",
                     "repetition_penalty": 1.35
                 }
             },
-            # 💢 傲娇：经典3秒去噪裁剪版，完美锁定 slice_20.wav 傲娇音轨
+            # 💢 傲娇：采用 11:28 终极满意的 slice_15 傲娇灵魂特调！
             "傲娇": {
-                "subdir": "tsundere",
-                "wav_file": "slice_20.wav",
-                "prompt_text": "ふんっ、バカ！",
+                "subdir": "aggrieved",
+                "wav_file": "slice_15.wav",
+                "prompt_text": "お兄ちゃんが意地悪するから...",
                 "prompt_lang": "ja",
                 "params": {
                     "temperature": 0.75,
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 1.00,
+                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             },
@@ -986,6 +989,7 @@ class QQGateway:
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 0.95,
+                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             },
@@ -1000,6 +1004,7 @@ class QQGateway:
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 1.00,
+                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             },
@@ -1013,6 +1018,7 @@ class QQGateway:
                     "top_k": 10,
                     "top_p": 0.90,
                     "speed_factor": 1.00,
+                    "text_split_method": "cut2",
                     "repetition_penalty": 1.35
                 }
             }
@@ -1082,7 +1088,7 @@ class QQGateway:
                 "top_p": config["params"]["top_p"],
                 "temperature": config["params"]["temperature"],
                 "speed_factor": config["params"]["speed_factor"],
-                "text_split_method": "cut2",  # 统一使用切分和语流过渡最完美的 cut2 算法
+                "text_split_method": config["params"].get("text_split_method", "cut2"),  # 动态读取各自锁定特优的切分算法
                 "repetition_penalty": config["params"]["repetition_penalty"],
                 "media_type": "wav"
             }
