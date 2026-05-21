@@ -45,7 +45,8 @@ COACH_PROMPT = """你是一个 Agent 进化教练。以下是今天小萤的执�
 
 async def run_coach_analysis(llm, today_str: str = "") -> dict | None:
     """读取今日 traces，LLM 分析，生成改进提案。返回分析结果 dict。"""
-    from .evo_traces import get_today_traces, get_recent_corrections, TRACES_DIR
+    from .evo_traces import get_today_traces, get_recent_corrections, TRACES_DIR, _read_traces
+    from datetime import timedelta
 
     if not today_str:
         today_str = datetime.now(timezone.utc).strftime("%Y-%m-%d")
@@ -54,9 +55,25 @@ async def run_coach_analysis(llm, today_str: str = "") -> dict | None:
     traces = get_today_traces()
     corrections = get_recent_corrections(days=1)
 
+    # 智能 fallback 机制：如果今天是清晨，或者今日 traces 极少（例如小于5条），
+    # 并且昨天有 traces，那么就合并昨天的 traces 一起进行教练审计，以防时差或补发导致空白
+    if len(traces) < 5:
+        yesterday_str = (datetime.now(timezone.utc) - timedelta(days=1)).strftime("%Y-%m-%d")
+        y_file = TRACES_DIR / f"{yesterday_str}.jsonl"
+        if y_file.exists():
+            y_traces = _read_traces(y_file)
+            traces = y_traces + traces
+            logger.info(f"Coach: few traces today, merged {len(y_traces)} traces from yesterday ({yesterday_str})")
+
     if not traces:
-        logger.info("Coach: no traces today, skipping analysis")
-        return None
+        logger.info("Coach: no traces today, returning default empty analysis to avoid blank report")
+        # 兜底返回，防止报告生成空白
+        return {
+            "summary": "最近没有检测到工具调用或失误，系统运行平稳。继续保持！",
+            "patterns": [],
+            "rule_updates": [],
+            "skill_proposals": []
+        }
 
     # 构建分析文本
     lines = []

@@ -340,17 +340,58 @@ class QQGateway:
                         agent = self._factory(session_key)
                         buf = ""
                         try:
-                            async for evt in agent.run(action, stream=True):
-                                if evt["type"] == "text_delta":
-                                    buf += evt["content"]
-                                elif evt["type"] == "tool_call" and evt.get("name"):
+                            # 特殊拦截：如果是自我审计任务，直接强行调用教练核心分析！
+                            if "自我审计" in desc:
+                                try:
+                                    from agent.evo_coach import run_coach_analysis, save_coach_report, auto_apply_rules
+                                    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
                                     if not is_silent:
-                                        await self._send("private", admin_id, "",
-                                            f"⚙️ [{desc}] {_tool_label(evt['name'])}...")
-                                elif evt["type"] == "permission_request":
-                                    agent.approve_permission()
-                                elif evt["type"] == "error":
-                                    buf += f"\n[错误: {evt['content']}]"
+                                        await self._send("private", admin_id, "", "🔍 正在调取教练录像带，深度剖析工具调用 traces...")
+                                    
+                                    agent.max_turns = 5
+                                    analysis = await run_coach_analysis(agent.llm, today)
+                                    if analysis:
+                                        report_path = save_coach_report(analysis)
+                                        applied = await auto_apply_rules(analysis, agent.memory)
+                                        
+                                        # 构造返回摘要
+                                        buf = f"📊 【自我审计报告】\n\n一句话摘要：{analysis.get('summary', '')}\n"
+                                        
+                                        patterns = analysis.get("patterns", [])
+                                        if patterns:
+                                            buf += "\n🚨 发现的问题模式：\n"
+                                            for i, p in enumerate(patterns, 1):
+                                                buf += f"{i}. [{p.get('severity', 'medium')}] {p.get('pattern', '')}\n"
+                                        else:
+                                            buf += "\n✨ 今日一切完美，没有发现失误模式！\n"
+                                            
+                                        rule_updates = analysis.get("rule_updates", [])
+                                        if rule_updates:
+                                            buf += f"\n💡 建议规则更新 ({len(rule_updates)}条)：\n"
+                                            for ru in rule_updates:
+                                                buf += f"- {ru.get('new_rule')}\n"
+                                                
+                                        if report_path:
+                                            buf += f"\n详细报告已生成，等待亮哥审核：\n{report_path}"
+                                        if applied:
+                                            buf += f"\n已自动在 EVOLVED_RULES.md 中应用 {applied} 条轻量规则。"
+                                    else:
+                                        buf = "📊 今日未发现明显的工具调用失误，没有生成新的改进提案。继续保持！"
+                                except Exception as coach_err:
+                                    logger.error(f"Coach task failed: {coach_err}")
+                                    buf = f"❌ 自我审计任务执行失败: {coach_err}"
+                            else:
+                                async for evt in agent.run(action, stream=True):
+                                    if evt["type"] == "text_delta":
+                                        buf += evt["content"]
+                                    elif evt["type"] == "tool_call" and evt.get("name"):
+                                        if not is_silent:
+                                            await self._send("private", admin_id, "",
+                                                f"⚙️ [{desc}] {_tool_label(evt['name'])}...")
+                                    elif evt["type"] == "permission_request":
+                                        agent.approve_permission()
+                                    elif evt["type"] == "error":
+                                        buf += f"\n[错误: {evt['content']}]"
 
                             # Deliver result
                             result_summary = buf[:800] + ("..." if len(buf) > 800 else "")
