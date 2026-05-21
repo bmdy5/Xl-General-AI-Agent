@@ -1087,8 +1087,8 @@ class QQGateway:
                 "media_type": "wav"
             }
 
-            # 4. 设置 2.5 秒的极速超时，超过 2.5 秒立刻自动秒级无感降级到纯文本，绝不产生卡顿！
-            timeout = aiohttp.ClientTimeout(total=2.5)
+            # 4. 设置 6.0 秒的安全超时，超过 6.0 秒立刻自动秒级无感降级到纯文本，兼顾高可用与冷启动容错
+            timeout = aiohttp.ClientTimeout(total=6.0)
             voice_bytes = b""
             async with aiohttp.ClientSession(timeout=timeout) as session:
                 # 优先采用 POST /tts 发送 JSON，确保语速 (speed_factor) 等特调参数在 SoVITS 引擎中 100% 成功解析生效
