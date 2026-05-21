@@ -1055,6 +1055,7 @@ class QQGateway:
             clean = re.sub(r'`+', '', clean)
             clean = re.sub(r'#+', '', clean)
             clean = clean.replace("&", "和").replace("<", " ").replace(">", " ")
+            clean = clean.replace("……", "").replace("...", "")
             clean = clean.strip()
             
             if not clean:
