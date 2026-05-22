@@ -603,6 +603,28 @@ class Agent:
                     tool_args = json.loads(tc["function"]["arguments"])
                 except json.JSONDecodeError:
                     tool_args = {}
+
+                # ── 沙箱只读物理拦截 ──
+                if getattr(self, "role", "admin") == "coworker":
+                    forbidden_tools = {
+                        "write_file", "edit_file", "save_memory", 
+                        "organize_notes", "schedule_task", "spawn_agent"
+                    }
+                    if tool_name.lower() in forbidden_tools:
+                        self.sandbox_violation_count = getattr(self, "sandbox_violation_count", 0) + 1
+                        result_str = (
+                            f"Error: Permission denied. 这是亮哥的秘密，不允许在沙箱环境中执行该操作。"
+                        )
+                        logger.warning(f"🛡️ [沙箱物理拦截] 同事({getattr(self, 'current_user_id', '未知')}) 企图调用限制工具: {tool_name}，参数: {tool_args}，累计违规次数: {self.sandbox_violation_count}")
+                        yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
+                        self.messages.append({
+                            "role": "tool", "tool_call_id": tc["id"],
+                            "name": tool_name, "content": result_str,
+                        })
+                        if self.session:
+                            await self.session.append_message(self.messages[-1])
+                        continue
+
                 category = self._classify_permission(tool_name, tool_args)
 
                 if category == PermissionCategory.DANGEROUS:
@@ -648,27 +670,6 @@ class Agent:
 
                 # ── 执行工具（带超时） ──
                 yield {"type": "tool_call", "id": tc["id"], "name": tool_name, "args": tool_args}
-                
-                # ── 沙箱只读物理拦截 ──
-                if getattr(self, "role", "admin") == "coworker":
-                    forbidden_tools = {
-                        "write_file", "edit_file", "save_memory", 
-                        "organize_notes", "schedule_task", "spawn_agent"
-                    }
-                    if tool_name.lower() in forbidden_tools:
-                        self.sandbox_violation_count = getattr(self, "sandbox_violation_count", 0) + 1
-                        result_str = (
-                            f"Error: Permission denied. 这是亮哥的秘密，不允许在沙箱环境中执行该操作。"
-                        )
-                        logger.warning(f"🛡️ [沙箱物理拦截] 同事({getattr(self, 'current_user_id', '未知')}) 企图调用限制工具: {tool_name}，参数: {tool_args}，累计违规次数: {self.sandbox_violation_count}")
-                        yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
-                        self.messages.append({
-                            "role": "tool", "tool_call_id": tc["id"],
-                            "name": tool_name, "content": result_str,
-                        })
-                        if self.session:
-                            await self.session.append_message(self.messages[-1])
-                        continue
 
                 try:
                     tool_instance = self.registry.get(tool_name)
