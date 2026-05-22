@@ -119,6 +119,7 @@ class MemoryManager:
             db_path = self.base_dir / "memories.db"
             is_new = not db_path.exists()
             self._db = sqlite3.connect(str(db_path))
+            self._db.execute("PRAGMA foreign_keys = ON")
             create_table(self._db)
             
             # 自动创建长期大脑关系表 knowledge_items
@@ -142,6 +143,14 @@ class MemoryManager:
                 CREATE VIRTUAL TABLE IF NOT EXISTS kis_fts
                 USING fts5(ki_id, title, category, keywords, summary, content,
                            tokenize="porter unicode61")
+            """)
+            # 创建 768维中文增强语义向量库表
+            self._db.execute("""
+                CREATE TABLE IF NOT EXISTS ki_embeddings (
+                    ki_id TEXT PRIMARY KEY,
+                    embedding TEXT NOT NULL,  -- 保存 JSON 格式的 768维浮点数列表
+                    FOREIGN KEY(ki_id) REFERENCES knowledge_items(id) ON DELETE CASCADE
+                )
             """)
             self._db.commit()
             
@@ -476,6 +485,46 @@ class MemoryManager:
                 "version": row[10]
             }
         return None
+
+    async def _get_embedding(self, text: str) -> list[float]:
+        """调用 LiteLLM 提取 768 维中文增强语义向量。支持从环境变量配置模型。"""
+        import os
+        import litellm
+        model = os.getenv("MYAGENT_EMBEDDING_MODEL", "text-embedding-3-small")
+        
+        # 优先使用专门的 Embedding 路由配置，兜底使用 OpenAI 默认配置
+        api_key = os.getenv("EMBEDDING_API_KEY") or os.getenv("OPENAI_API_KEY") or ""
+        api_base = os.getenv("EMBEDDING_API_BASE") or os.getenv("OPENAI_API_BASE") or None
+        
+        kwargs = {
+            "model": model,
+            "input": [text],
+            "dimensions": 768,
+        }
+        if api_key:
+            kwargs["api_key"] = api_key
+        if api_base:
+            kwargs["api_base"] = api_base
+            
+        try:
+            response = await litellm.aembedding(**kwargs)
+            return response.data[0].embedding
+        except Exception as e:
+            logger.error(f"Failed to fetch embedding: {e}")
+            # 自动降级兜底：当网络或 API 故障时返回 768 维全零向量，保障小萤长脑的绝对可用性与容灾
+            return [0.0] * 768
+
+    async def save_ki_embedding(self, ki_id: str, text_to_embed: str):
+        """后台异步协程任务：非阻塞为指定 KI 提取 768 维 Embedding 并原子保存至 SQLite。"""
+        embedding = await self._get_embedding(text_to_embed)
+        import json
+        embedding_str = json.dumps(embedding)
+        db = self._get_db()
+        with db:
+            db.execute("""
+                INSERT OR REPLACE INTO ki_embeddings (ki_id, embedding)
+                VALUES (?, ?)
+            """, (ki_id, embedding_str))
 
     def _upsert_index(self, filename: str, new_line: str):
         """Update index: replace existing or append new."""
