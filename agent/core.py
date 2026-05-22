@@ -518,7 +518,11 @@ class Agent:
             # 将动态变化的环境上下文(Time, Cwd)及 memory_block 附着于最近的一条 user 消息头部，避免污染前缀哈希。
             from datetime import datetime, timezone, timedelta
             beijing_tz = timezone(timedelta(hours=8))
-            now = datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S (北京时间)")
+            # 5分钟窗口聚合优化：消除秒级变动，大幅压榨 Prompt 缓存命中率
+            dt = datetime.now(beijing_tz)
+            minute_window = (dt.minute // 5) * 5
+            now_agg = dt.replace(minute=minute_window, second=0, microsecond=0)
+            now = now_agg.strftime("%Y-%m-%d %H:%M (北京时间)")
             cwd = os.getcwd()
             
             is_fatigued = self.compressor.estimate_tokens(self.messages) > 64000
