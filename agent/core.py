@@ -515,7 +515,12 @@ class Agent:
 
             # ── 缓存命中率优化 ──
             # 保持顶层 system_prompt 绝对静态，使 system 和大体积 tools 能够 100% 稳定命中缓存。
-            # 将动态变化的 memory_block 附着于最近的一条 user 消息头部，避免污染前缀哈希。
+            # 将动态变化的环境上下文(Time, Cwd)及 memory_block 附着于最近的一条 user 消息头部，避免污染前缀哈希。
+            from datetime import datetime, timezone, timedelta
+            beijing_tz = timezone(timedelta(hours=8))
+            now = datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S (北京时间)")
+            cwd = os.getcwd()
+
             llm_messages = [{"role": "system", "content": system_prompt}]
             
             last_user_idx = -1
@@ -531,10 +536,14 @@ class Agent:
                 if "deepseek" not in self.llm.model.lower():
                     copy.pop("reasoning_content", None)
                 
-                # 仅将动态召回的记忆注入到最新的 user 消息，不污染原生 self.messages 历史
-                if idx == last_user_idx and memory_block:
+                # 仅将动态变化的环境上下文与召回的记忆注入到最新的 user 消息，不污染原生 self.messages 历史
+                if idx == last_user_idx:
                     original_content = copy.get("content", "")
-                    copy["content"] = f"## 召回的辅助记忆 context\n{memory_block}\n\n## 当前输入\n{original_content}"
+                    context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
+                    if memory_block:
+                        context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
+                    context_parts.append(f"## 当前输入\n{original_content}")
+                    copy["content"] = "\n\n".join(context_parts)
                 
                 # 不 pop tool_calls — DeepSeek 需要它匹配后续 tool 消息
                 llm_messages.append(copy)
@@ -942,11 +951,7 @@ class Agent:
 """
               static_p += sandbox_instruction
 
-          from datetime import timezone, timedelta
-          beijing_tz = timezone(timedelta(hours=8))
-          now = datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S (北京时间)")
-          cwd = os.getcwd()
-          # 自进化规则放在 Current Context 前面 → 形成稳定前缀，命中 DeepSeek 缓存
+          # 自进化规则放在最末尾
           dynamic = ""
           
           # 1. 载入项目根目录下的顶级全局系统铁律 (EVOLVED_RULES.md，含 R1-R7 铁律)
@@ -963,12 +968,6 @@ class Agent:
               if rules:
                   dynamic += f"\n## Dynamic Evolved Preferences (learned from past corrections)\n{rules}\n"
 
-          dynamic += (
-              f"\n\n---\n"
-              f"## Current Context\n"
-              f"Time: {now}\n"
-              f"Working directory: {cwd}\n"
-          )
           return static_p + dynamic
 
     async def _build_memory_block(self, user_input: str, turn: int) -> Optional[str]:
