@@ -639,12 +639,23 @@ class QQGateway:
 
         if msg_type == "group":
             self_id = str(event.get("self_id", ""))
-            if f"[CQ:at,qq={self_id}]" not in raw:
+            is_at_bot = f"[CQ:at,qq={self_id}]" in raw
+            is_called_name = "小萤" in raw
+            
+            # 亮哥拥有直接称呼名字或物理 @ 触发的双重特权；普通群友必须物理 @
+            if user_id == admin_id:
+                is_triggered = is_at_bot or is_called_name
+            else:
+                is_triggered = is_at_bot
+                
+            if not is_triggered:
                 return
+                
             raw = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
             if not raw:
                 return
             session_key = f"group_{group_id}"
+            raw = f"[来自 QQ: {user_id} 的群发言] {raw}"
         else:
             session_key = f"user_{user_id}"
 
@@ -657,7 +668,18 @@ class QQGateway:
         if extra_white:
             WHITE_LIST.update(x.strip() for x in extra_white.split(",") if x.strip())
 
-        if user_id not in WHITE_LIST:
+        # 加载 QQ 群白名单
+        white_groups_env = os.getenv("QQ_WHITE_GROUPS", "693134080")
+        WHITE_GROUPS = {x.strip() for x in white_groups_env.split(",") if x.strip()}
+
+        is_allowed = False
+        if user_id in WHITE_LIST:
+            is_allowed = True
+        elif msg_type == "group" and group_id in WHITE_GROUPS:
+            # 白名单群聊允许任何人 @ 小萤发言，但后台会自动以降级 coworker 安全沙箱处理
+            is_allowed = True
+
+        if not is_allowed:
             if not hasattr(self, "_non_white_cache"):
                 self._non_white_cache = {}  # user_id -> last_reply_time
             
