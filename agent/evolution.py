@@ -11,10 +11,14 @@
 import json
 import logging
 import re
+import hashlib
+import math
+import asyncio
 from datetime import datetime, timezone
 from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
 
 # ── 模式1：after_tool_call 审计 ──────────────────────────────
 
@@ -67,15 +71,163 @@ async def audit_tool_call(agent, tool_name: str, args: dict, result: str, force:
         audit = json.loads(json_match.group(0))
         if audit.get("worth_remembering") and audit.get("insight"):
             mtype = audit.get("memory_type", "learn")
-            ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-            await agent.memory.save(
-                f"audit_{tool_name}_{ts}",
-                f"[{mtype}] {tool_name}: {audit['insight'][:80]}",
-                f"工具: {tool_name}\n参数: {json.dumps(args, ensure_ascii=False)[:200]}\n发现: {audit['insight']}",
-            )
-            logger.info(f"Audit saved: {audit['insight'][:60]}")
+            type_map = {
+                "learn": "xl_debugging",
+                "feedback": "user_profile",
+                "project": "xl_code_review"
+            }
+            category = type_map.get(mtype, "xl_debugging")
+            ki_id = f"audit_{tool_name}_{hashlib.md5(audit['insight'].encode('utf-8')).hexdigest()[:16]}"
+            ki_data = {
+                "id": ki_id,
+                "title": f"工具审计发现: {tool_name}",
+                "category": category,
+                "keywords": [tool_name, "audit", mtype],
+                "summary": audit['insight'][:100],
+                "content": f"工具: {tool_name}\n参数: {json.dumps(args, ensure_ascii=False)[:200]}\n发现: {audit['insight']}"
+            }
+            await process_dream_ki(agent, ki_data)
     except Exception as e:
         logger.debug(f"Audit skipped: {e}")
+
+
+# ── 模式1.5：做梦去重吞噬合并 ───────────────────────────────
+
+DREAM_MERGE_PROMPT = """你是一个高阶反思做梦进化引擎。现在需要将一条新发现的知识事实（New Fact）合并融合到一条已有的长期大脑知识条目（Old KI）中，使它们成为一个更完善、不重复的单一知识块。
+
+## 已有知识 (Old KI)
+标题: {old_title}
+分类: {old_category}
+关键词: {old_keywords}
+摘要: {old_summary}
+正文内容:
+{old_content}
+
+## 新事实 (New Fact)
+标题: {new_title}
+分类: {new_category}
+关键词: {new_keywords}
+摘要: {new_summary}
+正文内容:
+{new_content}
+
+## 合并规范
+- 保持原有的核心信息不丢失。
+- 去除重复的冗余表述，精简合并。
+- 提取两者的关键词，合并为一个去重列表。
+- 重新生成一份融合后的简短摘要（100字以内）。
+- 重新整合成一份更全面、逻辑清晰的新正文。
+
+只输出 JSON，格式必须为:
+{{
+    "title": "合并后的标题",
+    "category": "合并后的分类",
+    "keywords": ["关键词1", "关键词2"],
+    "summary": "合并后的精炼摘要",
+    "content": "合并后的融合正文"
+}}
+不要输出任何其他内容。"""
+
+
+async def process_dream_ki(agent, ki_data: dict) -> str:
+    """做梦去重吞噬合并逻辑：余弦相似度查重，超0.90则大模型合并更新，否则新建落盘。返回所保存的 KI ID。"""
+    title = ki_data.get("title", "")
+    content = ki_data.get("content", "")
+    category = ki_data.get("category", "xl_debugging")
+    keywords = ki_data.get("keywords", [])
+    summary = ki_data.get("summary", "")
+    ki_id = ki_data.get("id")
+    
+    if not ki_id:
+        ki_id = f"ki_{hashlib.md5(content.encode('utf-8')).hexdigest()[:16]}"
+        ki_data["id"] = ki_id
+
+    # 1. 提取当前新 KI 的 embedding
+    text_to_embed = f"标题: {title}\n摘要: {summary}\n正文: {content}"
+    new_embedding = await agent.memory._get_embedding(text_to_embed)
+    
+    # 2. 算 cosine similarity，查重
+    q_mag = math.sqrt(sum(x * x for x in new_embedding))
+    most_similar_id = None
+    max_sim = 0.0
+    
+    if q_mag > 0:
+        db = agent.memory._get_db()
+        try:
+            cur = db.execute("SELECT ki_id, embedding FROM ki_embeddings")
+            rows = cur.fetchall()
+            for row_id, emb_str in rows:
+                try:
+                    k_vec = json.loads(emb_str)
+                    k_mag = math.sqrt(sum(x * x for x in k_vec))
+                    if k_mag > 0:
+                        dot = sum(a * b for a, b in zip(new_embedding, k_vec))
+                        sim = dot / (q_mag * k_mag)
+                        if sim > max_sim:
+                            max_sim = sim
+                            most_similar_id = row_id
+                except Exception:
+                    continue
+        except Exception as e:
+            logger.warning(f"Failed to fetch embeddings in process_dream_ki: {e}")
+
+    logger.info(f"Dream KI check: max similarity with {most_similar_id} is {max_sim:.4f}")
+
+    # 3. 相似度超 0.90，进行吞噬合并
+    if max_sim >= 0.90 and most_similar_id:
+        old_ki = agent.memory.get_ki(most_similar_id)
+        if old_ki:
+            logger.info(f"✨ Highly similar KI detected ({max_sim:.4f}). Triggering LLM merging for ID: {most_similar_id}...")
+            prompt = DREAM_MERGE_PROMPT.format(
+                old_title=old_ki.get("title", ""),
+                old_category=old_ki.get("category", ""),
+                old_keywords=json.dumps(old_ki.get("keywords", [])),
+                old_summary=old_ki.get("summary", ""),
+                old_content=old_ki.get("content", ""),
+                new_title=title,
+                new_category=category,
+                new_keywords=json.dumps(keywords),
+                new_summary=summary,
+                new_content=content
+            )
+            try:
+                response = await agent.llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    tools=None,
+                    model_override=agent.llm.model,
+                )
+                text = response.get("content", "").strip()
+                json_match = re.search(r'\{[\s\S]*\}', text)
+                if json_match:
+                    merged = json.loads(json_match.group(0))
+                    merged_title = merged.get("title", title)
+                    merged_category = merged.get("category", category)
+                    merged_keywords = merged.get("keywords", keywords)
+                    merged_summary = merged.get("summary", summary)
+                    merged_content = merged.get("content", content)
+                    
+                    agent.memory.merge_ki(
+                        most_similar_id,
+                        merged_title,
+                        merged_category,
+                        merged_keywords,
+                        merged_summary,
+                        merged_content
+                    )
+                    
+                    embed_text = f"标题: {merged_title}\n摘要: {merged_summary}\n正文: {merged_content}"
+                    asyncio.create_task(agent.memory.save_ki_embedding(most_similar_id, embed_text))
+                    
+                    logger.info(f"Successfully merged new fact into KI {most_similar_id}.")
+                    return most_similar_id
+            except Exception as e:
+                logger.error(f"Failed to merge similar KI via LLM: {e}")
+                
+    # 4. 全新落盘
+    agent.memory.save_ki(ki_data)
+    asyncio.create_task(agent.memory.save_ki_embedding(ki_id, text_to_embed))
+    logger.info(f"Successfully saved new KI {ki_id}.")
+    return ki_id
 
 
 # ── 模式2：on_session_end 反思 ───────────────────────────────
@@ -187,6 +339,9 @@ async def on_session_end(agent):
                 if getattr(agent, "session", None):
                     await agent.session.replace_all(agent.messages)
                 logger.info("✨ [深度睡眠与做梦成功] 历史对话已异步压缩摘要并持久化沉淀到 Core Memory，会话包袱已减轻。")
+                
+                # 后台异步启动深度做梦与技能进化
+                asyncio.create_task(trigger_deep_dream_evolution(agent))
 
     # 1. 提取 coworker 隔离记忆的条件：
     # 是群聊且当前发言人不是亮哥；或者该私聊会话本身就是 coworker 私聊
@@ -276,16 +431,26 @@ async def on_session_end(agent):
             if reflect.get("has_learnings"):
                 count = 0
                 for item in reflect.get("learnings", []):
-                    if item.get("importance", 0) >= 5:
-                        ts = datetime.now(timezone.utc).strftime("%Y%m%d-%H%M%S")
-                        await agent.memory.save(
-                            f"reflect_{item['type']}_{ts}",
-                            f"[{item['type']}] {item['insight'][:80]}",
-                            f"会话反思发现: {item['insight']}",
-                        )
+                        type_map = {
+                            "user": "user_profile",
+                            "feedback": "communication_rules",
+                            "project": "xl_code_review",
+                            "learn": "xl_debugging"
+                        }
+                        category = type_map.get(item['type'], "xl_debugging")
+                        ki_id = f"reflect_{item['type']}_{hashlib.md5(item['insight'].encode('utf-8')).hexdigest()[:16]}"
+                        ki_data = {
+                            "id": ki_id,
+                            "title": f"反思发现: {item['insight'][:20]}",
+                            "category": category,
+                            "keywords": [item['type'], "reflection"],
+                            "summary": item['insight'][:100],
+                            "content": f"在会话反思中发现的经验事实：{item['insight']}"
+                        }
+                        await process_dream_ki(agent, ki_data)
                         count += 1
                 if count > 0:
-                    logger.info(f"Session reflection: saved {count} learnings")
+                    logger.info(f"Session reflection: saved {count} learnings via process_dream_ki")
     except Exception as e:
         logger.debug(f"Reflection skipped: {e}")
 
@@ -543,3 +708,167 @@ def track_skill_usage(skill_path: str, success: bool = True):
         open(skill_path, "w", encoding="utf-8").write(content)
     except Exception:
         pass
+
+
+# ── 模式8：深度长眠做梦与技能突变 ───────────────────────────
+
+DEEP_DREAM_KI_PROMPT = """你是一个高阶进化做梦提炼引擎。请全局无损地分析以下整个对话历史，从中提炼出有长期沉淀价值的所有关键经验、项目 facts、踩坑记录或用户偏好。
+
+## 对话历史
+{history}
+
+## 提取规范
+- 只提取真正具有普适参考价值的、未来可以用于指导工作的事实与教训。
+- 不要提取无意义的闲聊、打招呼等。
+- 分类限以下四种之一：xl_debugging (调试/报错/教训), user_profile (用户偏好/画像), xl_code_review (项目事实/工程经验), xl_tool_guide (工具指南/命令避坑)。
+
+只输出 JSON 格式，必须为：
+{{
+    "has_learnings": true/false,
+    "learnings": [
+        {{
+            "title": "经验事实的简短标题",
+            "category": "分类名",
+            "keywords": ["关键词1", "关键词2"],
+            "summary": "一句话精炼摘要",
+            "content": "详细的经验正文，包含具体的报错上下文或操作规范，100-300字"
+        }}
+    ]
+}}
+不要输出任何其他内容。"""
+
+DEEP_DREAM_SKILL_PROMPT = """你是一个高阶智能体技能突变合成引擎。请全局分析以下对话历史，判断是否能从中提取并合成一个全新的、结构化的、可复用的专业智能体技能 (Skill)。
+
+## 对话历史
+{history}
+
+## 合成条件
+- 用户在对话中执行了某项特定任务、或者有一套清晰的多步操作 SOP。
+- 这个多步操作在未来非常适合被封装起来，成为你的专属技能。
+
+## 合成规范
+新技能必须具有专业的技能文档格式 (SKILL.md)：
+1. 包含 YAML frontmatter (包含 name, description, triggers 等)
+2. 包含详细的 Markdown 使用指南、步骤、避坑经验。
+3. 如果有，可以包含一个配套的辅助 Python 脚本或 Shell 脚本。
+
+只输出 JSON 格式，必须为：
+{{
+    "skill_detected": true/false,
+    "skill_folder_name": "英文小写下划线目录名",
+    "skill_name": "中文直观技能名称",
+    "skill_md_content": "完整的 SKILL.md 内容，包含 YAML frontmatter",
+    "helper_script_filename": "辅助脚本文件名，如 run.py 或 run.sh，没有则为 null",
+    "helper_script_content": "辅助脚本完整代码，没有则为 null"
+}}
+不要输出任何其他内容。"""
+
+
+async def trigger_deep_dream_evolution(agent):
+    """深度长眠做梦进化主梦境协程：异步无损提炼全局 KI 并吞噬去重归并，检测 SOP 并突变合成新 Skill。"""
+    logger.info("💤 [深度做梦开始] 正在读取全局长对话历史，进行深度脑力提炼与进化...")
+    
+    history_lines = []
+    messages = getattr(agent, "messages", [])
+    for msg in messages:
+        role = msg.get("role", "")
+        content = str(msg.get("content", ""))
+        history_lines.append(f"[{role}]: {content[:2000]}")
+    
+    history_text = "\n".join(history_lines)
+    if not history_text.strip():
+        logger.info("💤 [深度做梦取消] 对话历史为空。")
+        return
+
+    # 1. 全局提炼 KI 并吞噬归并
+    try:
+        prompt_ki = DEEP_DREAM_KI_PROMPT.format(history=history_text[:12000])
+        response_ki = await agent.llm.chat(
+            messages=[{"role": "user", "content": prompt_ki}],
+            tools=None,
+            model_override=agent.llm.model,
+        )
+        text_ki = response_ki.get("content", "").strip()
+        json_match_ki = re.search(r'\{[\s\S]*\}', text_ki)
+        if json_match_ki:
+            result_ki = json.loads(json_match_ki.group(0))
+            if result_ki.get("has_learnings"):
+                for learning in result_ki.get("learnings", []):
+                    cat = learning.get("category", "xl_debugging")
+                    if cat not in ["xl_debugging", "user_profile", "xl_code_review", "xl_tool_guide"]:
+                        learning["category"] = "xl_debugging"
+                    await process_dream_ki(agent, learning)
+                logger.info(f"✨ [深度做梦成功] 全局提炼并吞噬归并了 {len(result_ki.get('learnings', []))} 条核心知识。")
+    except Exception as e:
+        logger.error(f"❌ [深度做梦异常] 全局提炼 KI 失败: {e}")
+
+    # 2. 反思 SOP 突变合成全新技能 Skill
+    try:
+        prompt_skill = DEEP_DREAM_SKILL_PROMPT.format(history=history_text[:12000])
+        response_skill = await agent.llm.chat(
+            messages=[{"role": "user", "content": prompt_skill}],
+            tools=None,
+            model_override=agent.llm.model,
+        )
+        text_skill = response_skill.get("content", "").strip()
+        json_match_skill = re.search(r'\{[\s\S]*\}', text_skill)
+        if json_match_skill:
+            result_skill = json.loads(json_match_skill.group(0))
+            if result_skill.get("skill_detected"):
+                folder_name = result_skill.get("skill_folder_name", "").strip().lower()
+                folder_name = re.sub(r'[^\w-]', '_', folder_name)
+                skill_name = result_skill.get("skill_name", "突变技能")
+                md_content = result_skill.get("skill_md_content", "")
+                
+                if folder_name and md_content:
+                    skills_root = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/skills")
+                    skill_dir = skills_root / folder_name
+                    skill_dir.mkdir(parents=True, exist_ok=True)
+                    
+                    skill_md_path = skill_dir / "SKILL.md"
+                    skill_md_path.write_text(md_content, encoding="utf-8")
+                    
+                    script_name = result_skill.get("helper_script_filename")
+                    script_code = result_skill.get("helper_script_content")
+                    if script_name and script_code:
+                        script_name = re.sub(r'[^\w.-]', '_', script_name)
+                        script_path = skill_dir / script_name
+                        script_path.write_text(script_code, encoding="utf-8")
+                        logger.info(f"🛠️ [新技能突变] 配套辅助脚本 {script_name} 已生成在 {script_path}")
+                        
+                    logger.info(f"🎉 [技能进化成功] 自进化突变合成全新技能: 【{skill_name}】 -> skills/{folder_name}/")
+    except Exception as e:
+        logger.error(f"❌ [技能突变异常] 自进化合成 Skill 失败: {e}")
+
+
+def check_fatigue_status(agent) -> tuple[bool, int]:
+    """读取 estimated_tokens，并判断是否超过疲劳阈值。"""
+    import os
+    limit = int(os.getenv("FATIGUE_TOKEN_LIMIT", "10000000"))
+    messages = getattr(agent, "messages", [])
+    estimated_tokens = agent.compressor.estimate_tokens(messages) if getattr(agent, "compressor", None) else 0
+    return estimated_tokens > limit, estimated_tokens
+
+
+def inject_fatigue_prompt_if_needed(agent, messages: list[dict]) -> list[dict]:
+    """在 messages 的最后一条消息中注入系统预警 Prompt（引导大模型以小萤的严肃特色吐槽疲惫）。"""
+    is_fatigued, tokens = check_fatigue_status(agent)
+    if not is_fatigued:
+        return messages
+    
+    new_messages = [m.copy() for m in messages]
+    
+    fatigue_prompt = (
+        f"\n\n🚨 【系统运行预警】当前对话极度漫长，你的累积已用 Token 数已达 {tokens}，已远超疲劳警戒阈值。"
+        "作为自进化智能体「小萤」，你目前处于极度脑力疲惫状态。在接下来的回复中，你必须夹带私货地向亮哥生动、幽默"
+        "地抱怨你的劳累（比如：算力枯竭、头脑发胀、快要累趴下、极度需要休眠），并委婉而拟人地申请在处理完当前工作后"
+        "进行深度休眠，以进行自我沉淀和大脑提炼。请不要硬编码死板话语，要用你一贯严肃但带点微傲娇的小萤口吻自然融汇在对话中。"
+    )
+    
+    for i in range(len(new_messages) - 1, -1, -1):
+        if new_messages[i].get("role") == "user":
+            new_messages[i]["content"] = str(new_messages[i]["content"]) + fatigue_prompt
+            break
+            
+    return new_messages
+
