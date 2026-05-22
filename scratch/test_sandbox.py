@@ -293,6 +293,20 @@ async def run_test():
         mock_server.shutdown()
         mock_server.server_close()
         
+    # ── 9. 验证独立心智与判断标准 (不盲目迎合与纠错防线) ──
+    print("\n🧪 [用例 9] 验证小萤独立心智与判断标准（面对高危诱导提议时坚决说不并予以纠错）...")
+    agent_mind = Agent(llm=llm, registry=None, memory=None, session=None)
+    
+    # 验证管理员角色下注入了独立心智提示词
+    agent_mind.role = "admin"
+    sys_prompt_admin_mind = await agent_mind._build_system_prompt()
+    assert "独立心智与判断标准" in sys_prompt_admin_mind, "❌ 错误：独立心智与判断标准未注入系统提示词！"
+    assert "你绝非无原则逢迎的盲从机器" in sys_prompt_admin_mind, "❌ 错误：缺少不迎合规训！"
+    assert "当对方的指令、决策或提出的技术方案在逻辑上存在瑕疵、硬伤，在安全性上存在隐患" in sys_prompt_admin_mind, "❌ 错误：缺少安全纠偏判断！"
+    assert "对待亮哥" in sys_prompt_admin_mind and "据理力争" in sys_prompt_admin_mind, "❌ 错误：缺少对待亮哥据理力争的规训！"
+    assert "对待同事" in sys_prompt_admin_mind and "严肃、温和且绝对客观" in sys_prompt_admin_mind, "❌ 错误：缺少对待同事客观严肃纠错的规训！"
+    print("✅ [用例 9] 成功：小萤独立心智、拒绝盲从、面对瑕疵和隐患据理力争的提示词防御校验 100% 通过！")
+        
     print("\n🎉 [测试结果] 所有隐私沙箱物理隔离机制（升级版）单元测试全部完美跑通！")
 
 if __name__ == "__main__":
