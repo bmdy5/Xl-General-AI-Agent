@@ -166,6 +166,28 @@ async def on_session_end(agent):
     is_group = session_id.startswith("group_")
     current_user_id = getattr(agent, "current_user_id", None)
 
+    # ── 深度睡眠与做梦机制（Fatigue & Deep Sleeping） ──
+    # 在会话自然结束触发本函数时，若检测到会话累积 Token 超出 64,000，则自动在后台异步整理/压缩历史，减轻大脑负担。
+    if getattr(agent, "role", "admin") == "admin":
+        estimated_tokens = agent.compressor.estimate_tokens(agent.messages)
+        if estimated_tokens > 64000:
+            logger.info(f"💤 [深度睡眠与做梦机制触发] 当前会话 Token 数为 {estimated_tokens}（已超 64K）。大脑进入异步深度整理整理与大休眠状态...")
+            snapshot_len = len(agent.messages)
+            snapshot_messages = list(agent.messages)
+            
+            new_messages, was_compressed = await agent.compressor.compress(snapshot_messages, memory=agent.memory)
+            if was_compressed:
+                current_messages = list(agent.messages)
+                if len(current_messages) >= snapshot_len:
+                    merged = new_messages + current_messages[snapshot_len:]
+                    agent.messages = merged
+                else:
+                    agent.messages = new_messages
+                
+                if getattr(agent, "session", None):
+                    await agent.session.replace_all(agent.messages)
+                logger.info("✨ [深度睡眠与做梦成功] 历史对话已异步压缩摘要并持久化沉淀到 Core Memory，会话包袱已减轻。")
+
     # 1. 提取 coworker 隔离记忆的条件：
     # 是群聊且当前发言人不是亮哥；或者该私聊会话本身就是 coworker 私聊
     if (is_group and current_user_id and current_user_id != admin_id) or getattr(agent, "role", "admin") == "coworker":
