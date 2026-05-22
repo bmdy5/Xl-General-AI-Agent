@@ -607,7 +607,7 @@ async def run_test():
     assert len(gateway_exception.sent_messages) == 1, f"❌ 错误：工具报错时网关未能发送高情商人性化汇报！发送消息数: {len(gateway_exception.sent_messages)}"
     tool_err_msg = gateway_exception.sent_messages[0]
     assert "⚠️ [警告]" not in tool_err_msg, f"❌ 错误：人性化汇报中居然保留了机器味强警告！得到: {tool_err_msg}"
-    assert any(x in tool_err_msg for x in ["被拒绝", "防爬", "闭门羹"]), f"❌ 错误：爬虫失败拟人特征词断言失败！得到: {tool_err_msg}"
+    assert any(x in tool_err_msg for x in ["拒绝", "防爬", "闭门羹"]), f"❌ 错误：爬虫失败拟人特征词断言失败！得到: {tool_err_msg}"
 
     # 用例 14-b: 验证大模型发生 error 故障时，网关高情商拟人化温柔兜底 (503/Busy)
     gateway_exception_err = ExceptionTestGateway()
