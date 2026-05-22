@@ -35,6 +35,9 @@ AUDIT_PROMPT = """检查这个工具调用结果，判断是否有学习价值�
 
 async def audit_tool_call(agent, tool_name: str, args: dict, result: str, force: bool = False):
     """工具执行后审计，发现有价值的信息自动存记忆."""
+    if getattr(agent, "role", "admin") == "coworker":
+        return
+
     # 数据飞轮：所有工具调用录音，不仅仅错误
     from .evo_traces import record_tool_call
     had_error = any(t in str(result)[:500] for t in
@@ -91,8 +94,71 @@ REFLECT_PROMPT = """你刚完成了一次对话。请反思：
 没有就 has_learnings=false。不要输出其他内容。"""
 
 
+async def extract_coworker_memory(agent):
+    """为同事（coworker）角色提取极简隔离记忆（不超过3条，每条不超过30字）"""
+    user_id = getattr(agent, "current_user_id", None)
+    if not user_id:
+        return
+    if len(agent.messages) < 4:
+        return
+
+    memory_file = Path(__file__).resolve().parent / "memory" / f"coworker_{user_id}.json"
+    
+    existing_memories = []
+    if memory_file.exists():
+        try:
+            data = json.loads(memory_file.read_text(encoding="utf-8"))
+            existing_memories = data.get("memories", [])
+        except Exception:
+            pass
+
+    recent = agent.messages[-10:]
+    conversation = "\n".join(
+        f"[{m.get('role', '?')}]: {str(m.get('content', ''))[:200]}"
+        for m in recent
+    )
+
+    prompt = f"""你刚与亮哥的同事（QQ: {user_id}）完成了一次对话。请为该同事提取极简的记忆（最多3条，每条不超过30字，如对方的偏好、刚才讨论的核心问题、遗留任务等）。
+
+## 现有记忆
+{chr(10).join('- ' + m for m in existing_memories) if existing_memories else '暂无'}
+
+## 最近对话 (最后 10 条消息)
+{conversation}
+
+请结合现有记忆和最近对话，输出更新后的极简记忆列表（不超过3条）。
+只输出 JSON: {{"memories": ["记忆1", "记忆2", "记忆3"]}}
+不要输出任何其他内容。"""
+
+    try:
+        response = await agent.llm.chat(
+            messages=[{"role": "user", "content": prompt}],
+            tools=None,
+            model_override=agent.llm.model,
+        )
+        text = response.get("content", "").strip()
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if json_match:
+            result = json.loads(json_match.group(0))
+            memories = result.get("memories", [])
+            # 强制限制：每条最大 30 字，最大 3 条
+            memories = [m[:30] for m in memories[:3] if m]
+            
+            memory_file.parent.mkdir(parents=True, exist_ok=True)
+            memory_file.write_text(json.dumps({
+                "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "memories": memories
+            }, ensure_ascii=False, indent=2), encoding="utf-8")
+            logger.info(f"Successfully saved coworker {user_id} isolated memory: {memories}")
+    except Exception as e:
+        logger.error(f"Failed to extract coworker memory: {e}")
+
+
 async def on_session_end(agent):
     """会话结束：反思 + 技能检测 + 技能改进."""
+    if getattr(agent, "role", "admin") == "coworker":
+        await extract_coworker_memory(agent)
+        return
     if len(agent.messages) < 4:
         return
 
