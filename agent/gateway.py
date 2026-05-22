@@ -648,7 +648,7 @@ class QQGateway:
             raw = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
             if not raw:
                 return
-            session_key = f"group_{group_id}"
+            session_key = f"group_{group_id}_{user_id}"
             raw = f"[来自 QQ: {user_id} 的群发言] {raw}"
         else:
             session_key = f"user_{user_id}"
