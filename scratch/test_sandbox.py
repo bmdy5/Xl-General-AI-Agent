@@ -428,8 +428,133 @@ async def run_test():
     finally:
         mock_ob_server.shutdown()
         mock_ob_server.server_close()
+
+    # ── 12. 验证群聊静默视网膜感知与潜水背景同步机制 ──
+    print("\n🧪 [用例 12] 验证群聊静默视网膜感知机制与潜水背景同步（非 @ 发言不唤醒但后台记录）...")
+    
+    os.environ["QQ_ADMIN_ID"] = "1705919142"
+    os.environ["QQ_WHITE_GROUPS"] = "693134080"
+    
+    class SilentTestGateway(QQGateway):
+        def __init__(self):
+            super().__init__(lambda key: Agent(llm=MockLLM(), registry=None, memory=None, session=None))
+            self.task_executed = False
+            self.sent_messages = []
+            
+        async def _execute_task(self, session_key, event, raw):
+            self.task_executed = True
+            await super()._execute_task(session_key, event, raw)
+            
+        async def _send(self, msg_type, user_id, group_id, message, skip_delay=False):
+            self.sent_messages.append(message)
+            
+    gateway_silent = SilentTestGateway()
+    
+    # 模拟群聊中， coworker 小宇 (QQ 1911828529) 发送了一条没有 @ 小萤的消息
+    event_silent_msg = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 1911828529,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "今天天气真不错呀，适合写代码"
+    }
+    
+    await gateway_silent._handle(event_silent_msg)
+    await asyncio.sleep(0.05)
+    
+    # 断言：没有执行大模型任务，没有向群里回复任何消息（静默沉默）
+    assert gateway_silent.task_executed is False, "❌ 错误：不带 @ 的群发言居然触发了大模型调用！"
+    assert len(gateway_silent.sent_messages) == 0, "❌ 错误：不带 @ 的群发言居然产生了消息回复！"
+    
+    # 断言：管理员亮哥的群聊 Agent (group_693134080_1705919142) 已被成功创建，且其 messages 中已追加此条静默发言背景
+    admin_agent = gateway_silent._agents.get("group_693134080_1705919142")
+    assert admin_agent is not None, "❌ 错误：群聊静默消息未能强制触发亮哥 Agent 的实例化！"
+    
+    # 查找追加的静默背景发言
+    silent_msg_found = False
+    for m in admin_agent.messages:
+        if "[来自 QQ: 1911828529 的群发言] 今天天气真不错呀，适合写代码" in m.get("content", ""):
+            silent_msg_found = True
+            break
+            
+    assert silent_msg_found is True, "❌ 错误：亮哥 Agent 内存消息队列中未寻获静默感知背景数据！"
+    print("✅ [用例 12] 成功：群聊静默感知不唤醒、亮哥专属实例强制在线及历史追加同步验证完美通过！")
         
-    print("\n🎉 [测试结果] 所有隐私沙箱物理隔离机制与群聊唤醒主动发声机制单元测试全部完美跑通！")
+    # ── 13. 验证群聊智能浮出决策与频控防骚扰机制 ──
+    print("\n🧪 [用例 13] 验证群聊智能主动浮出与十分钟冷却频控防骚扰机制...")
+    
+    class FloatTestGateway(QQGateway):
+        def __init__(self):
+            super().__init__(lambda key: Agent(llm=MockLLM(), registry=None, memory=None, session=None))
+            self.sent_messages = []
+            
+        async def _send(self, msg_type, user_id, group_id, message, skip_delay=False):
+            self.sent_messages.append(message)
+            
+    gateway_float = FloatTestGateway()
+    
+    # 13-a: 模拟群聊发言无敏感词，如“我们今晚去吃火锅吧”，应该秒级秒退保持绝对沉默
+    event_no_sensitive = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 1911828529,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "我们今晚去吃火锅吧"
+    }
+    await gateway_float._handle(event_no_sensitive)
+    await asyncio.sleep(0.05)
+    assert len(gateway_float.sent_messages) == 0, "❌ 错误：无敏感词群消息居然触发了浮出回复！"
+    
+    # 13-b: 模拟群聊发言含有敏感词且大模型判定浮出：
+    # 物理注入 MockLLM 的响应内容为：{"should_reply": true, "reply_content": "亮哥，小萤注意到代码有Bug，我来帮您解答！"}
+    # 并且使用 group_693134080_1705919142 的 Agent 进行判定
+    admin_agent = gateway_float._factory("group_693134080_1705919142")
+    gateway_float._agents["group_693134080_1705919142"] = admin_agent
+    admin_agent.llm.next_response = {
+        "content": '{"should_reply": true, "reply_content": "亮哥，小萤注意到代码有Bug，我来帮您解答！"}',
+        "tool_calls": []
+    }
+    
+    event_sensitive_reply = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 1911828529,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "小萤这代码bug怎么解"
+    }
+    
+    # 运行 _handle，这会触发 asyncio.create_task 后台执行，我们需要等待一下它跑完
+    await gateway_float._handle(event_sensitive_reply)
+    await asyncio.sleep(0.1)  # 等待异步任务跑完大模型决策
+    
+    assert len(gateway_float.sent_messages) == 1, "❌ 错误：有敏感词且大模型判定浮出时，居然未能产生浮出回复！"
+    assert "Bug" in gateway_float.sent_messages[0], f"❌ 错误：主动浮出的消息内容不符合预期，得到: {gateway_float.sent_messages[0]}"
+    
+    # 13-c: 验证 10 分钟频控：在 10 分钟冷却期内再次发送含有敏感词的消息，应该被绝对拦截不进行 LLM 判定
+    gateway_float.sent_messages.clear()
+    admin_agent.llm.chat_history.clear() # 清空调用历史，方便校验是否调用了大模型
+    
+    event_sensitive_throttled = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 1911828529,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "小萤，刚才的代码提交成功了吗"
+    }
+    
+    await gateway_float._handle(event_sensitive_throttled)
+    await asyncio.sleep(0.05)
+    
+    assert len(gateway_float.sent_messages) == 0, "❌ 错误：在10分钟限流冷却期内居然再次浮出了！"
+    assert len(admin_agent.llm.chat_history) == 0, "❌ 错误：在限流冷却期内居然仍然去调用了大模型进行判定！"
+    
+    print("✅ [用例 13] 成功：智能浮出秒级降噪、轻量决策以及 10 分钟冷却频控拦截单元测试完美通过！")
+        
+    print("\n🎉 [测试结果] 所有隐私沙箱物理隔离机制与群聊唤醒静默视网膜感知机制单元测试全部完美跑通！")
 
 if __name__ == "__main__":
     asyncio.run(run_test())
