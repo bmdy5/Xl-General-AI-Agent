@@ -25,3 +25,5 @@ scratch/*
 !scratch/test_sandbox.py
 !agent_activity.log
 !gateway.log
+agent/model/
+
