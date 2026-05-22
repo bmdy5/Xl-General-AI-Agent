@@ -650,6 +650,9 @@ class QQGateway:
 
         # ── 安全白名单前置拦截 ──────────────────────────────────
         WHITE_LIST = {admin_id}
+        coworker_ids = os.getenv("QQ_COWORKER_IDS", "")
+        if coworker_ids:
+            WHITE_LIST.update(x.strip() for x in coworker_ids.split(",") if x.strip())
         extra_white = os.getenv("MY_AGENT_WHITE_LIST", "")
         if extra_white:
             WHITE_LIST.update(x.strip() for x in extra_white.split(",") if x.strip())
@@ -768,9 +771,24 @@ class QQGateway:
         self._log_activity("用户输入", f"{_ua} ({session_key}): {raw}")
 
         agent = self._agents.get(session_key)
+        if agent is not None:
+            if getattr(agent, "role", "admin") == "coworker" and getattr(agent, "sandbox_violation_count", 0) >= 2:
+                reject_msg = "⚠️ [系统安全防线拦截] 检测到您已连续多次尝试未授权越权高危操作，您的沙箱会话已被系统安全机制临时冻结。小萤已自动向亮哥呈报报警并提交操作日志。如需解锁，请联系亮哥。"
+                msg_type = event.get("message_type", "private")
+                group_id = str(event.get("group_id")) if msg_type == "group" else ""
+                await self._send(msg_type, user_id, group_id, reject_msg, skip_delay=True)
+                return
+
         if agent is None:
             agent = self._factory(session_key)
             self._agents[session_key] = agent
+
+        # 注入角色属性（admin 还是 coworker）
+        if user_id == admin_id:
+            agent.role = "admin"
+        else:
+            agent.role = "coworker"
+            agent.current_user_id = user_id
 
         # 判定是否有旧任务正在运行
         active_task = self._current_tasks.get(session_key)
@@ -799,6 +817,7 @@ class QQGateway:
         self._current_tasks[session_key] = task
 
     async def _execute_task(self, session_key: str, event: dict, raw: str):
+        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
         msg_type = event.get("message_type", "private")
         user_id = str(event.get("user_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
@@ -847,9 +866,22 @@ class QQGateway:
             return
 
         agent = self._agents.get(session_key)
+        if agent is not None:
+            if getattr(agent, "role", "admin") == "coworker" and getattr(agent, "sandbox_violation_count", 0) >= 2:
+                reject_msg = "⚠️ [系统安全防线拦截] 检测到您已连续多次尝试未授权越权高危操作，您的沙箱会话已被系统安全机制临时冻结。小萤已自动向亮哥呈报报警并提交操作日志。如需解锁，请联系亮哥。"
+                await self._send(msg_type, user_id, group_id, reject_msg, skip_delay=True)
+                return
+
         if agent is None:
             agent = self._factory(session_key)
             self._agents[session_key] = agent
+
+        # 注入角色属性（admin 还是 coworker）
+        if user_id == admin_id:
+            agent.role = "admin"
+        else:
+            agent.role = "coworker"
+            agent.current_user_id = user_id
 
         import json
         _persona_name = "小萤"
