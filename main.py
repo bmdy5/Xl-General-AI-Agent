@@ -52,6 +52,8 @@ from agent.tools.web_search_tool import WebSearchTool
 from agent.tools.organize_notes_tool import OrganizeNotesTool
 from agent.tools.schedule_task_tool import ScheduleTaskTool
 from agent.tools.xiaohongshu_tool import XiaohongshuTool
+from agent.tools.notebooklm_tool import NotebookLMTool
+
 
 
 # ── 终端辅助 ───────────────────────────────────────────────
@@ -135,6 +137,8 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(OrganizeNotesTool())
         registry.register(ScheduleTaskTool())
         registry.register(XiaohongshuTool())
+        registry.register(NotebookLMTool())
+
 
     memory = MemoryManager()
     session = SessionHandler(session_id)
