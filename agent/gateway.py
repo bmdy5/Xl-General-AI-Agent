@@ -625,6 +625,93 @@ class QQGateway:
                     if event.get("post_type") == "message":
                         asyncio.create_task(self._handle(event))
 
+    async def _check_and_trigger_smart_float(self, group_id: str, user_id: str, raw: str):
+        """智能群聊浮出判定（大模型低Token轻量决策，10分钟限流冷却）"""
+        import time as _time
+        import json
+        
+        # 1. 频控限制：同一群聊 10 分钟最多主动浮出一次
+        if not hasattr(self, "_last_float_times"):
+            self._last_float_times = {}
+        
+        now = _time.time()
+        last_time = self._last_float_times.get(group_id, 0.0)
+        if now - last_time < 600:
+            logger.info(f"Smart float suppressed due to rate limiting for group {group_id}")
+            return
+            
+        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        session_key = f"group_{group_id}_{admin_id}"
+        
+        agent = self._agents.get(session_key)
+        if agent is None:
+            try:
+                agent = self._factory(session_key)
+                self._agents[session_key] = agent
+            except Exception as e:
+                logger.warning(f"Failed to create agent for smart float decision {session_key}: {e}")
+                return
+
+        # 2. 提取最近 5 条群聊消息上下文，以保证决策时拥有连贯聊天背景
+        recent_msgs = agent.messages[-6:] if len(agent.messages) >= 6 else agent.messages
+        context_lines = []
+        for m in recent_msgs:
+            role_tag = "小萤" if m.get("role") == "assistant" else f"QQ({user_id})"
+            context_lines.append(f"{role_tag}: {m.get('content')}")
+        context_str = "\n".join(context_lines)
+        
+        decision_prompt = (
+            f"你现在是亮哥的专属 AI 助手【小萤】。你刚在后台静默潜水看到了以下群聊对话：\n"
+            f"```\n{context_str}\n```\n"
+            f"规则：\n"
+            f"1. 只有当讨论内容与亮哥、系统开发/Bug、AI/Agent 密切相关，或者亮哥/小宇抛出了极度有趣、需要小萤展示贴心温度和极客个性的黄金契景时，才判定 should_reply 为 true。\n"
+            f"2. 如果只是普通的群友灌水、日常吐槽、复读机或完全不相干的八卦/闲聊，坚决判定 should_reply 为 false，保持克制潜水。\n"
+            f"3. 保持高情商，不主动刷屏，绝对不要当复读机。\n\n"
+            f"请严格按以下 JSON 格式输出，不要包含任何 markdown 块或多余字符：\n"
+            f'{{"should_reply": true或false, "reply_content": "如果should_reply为true，给出你高情商的贴心/专业回复内容，20-60字左右；如果为false，此处留空字符串\\"\\""}}'
+        )
+        
+        try:
+            # 3. 大模型 Chat 极速轻量判断
+            response = await agent.llm.chat(
+                messages=[{"role": "user", "content": decision_prompt}],
+                model_override="deepseek/deepseek-v4-flash"
+            )
+            content = response.get("content", "").strip()
+            
+            # 清除可能带有的 json 代码块标记
+            if content.startswith("```json"):
+                content = content[7:]
+            if content.startswith("```"):
+                content = content[3:]
+            if content.endswith("```"):
+                content = content[:-3]
+            content = content.strip()
+            
+            res = json.loads(content)
+            should_reply = res.get("should_reply", False)
+            reply_content = res.get("reply_content", "").strip()
+            
+            if should_reply and reply_content:
+                # 4. 执行发送并更新频控时间戳
+                self._last_float_times[group_id] = now
+                await self._send("group", "", group_id, reply_content)
+                
+                # 5. 追加同步该条助理的主动回复到群内所有活跃 Agent 实例 messages 中
+                formatted_reply = f"[小萤的主动浮出回复] {reply_content}"
+                for k, a in self._agents.items():
+                    if k.startswith(f"group_{group_id}_"):
+                        a.messages.append({"role": "assistant", "content": formatted_reply})
+                        if hasattr(a, "session") and a.session is not None:
+                            try:
+                                await a.session.append_message({"role": "assistant", "content": formatted_reply})
+                            except Exception as append_err:
+                                logger.warning(f"Failed to append float reply to {k}: {append_err}")
+                                
+                self._log_activity("智能浮出", f"小萤在群 {group_id} 中浮出回复: {reply_content}")
+        except Exception as e:
+            logger.warning(f"Failed to process smart float decision: {e}")
+
     # ── message handling ─────────────────────────────────────
 
     async def _handle(self, event: dict):
@@ -637,19 +724,17 @@ class QQGateway:
 
         admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
 
+        is_at_bot = False
         if msg_type == "group":
             self_id = str(event.get("self_id", ""))
             is_at_bot = f"[CQ:at,qq={self_id}]" in raw
             
-            # 严格遵循亮哥指示：群聊里一律必须通过物理 @ 才能唤醒，防止日常对话提到“小萤”时误唤醒抢答
-            if not is_at_bot:
-                return
-                
             raw = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
             if not raw:
                 return
             session_key = f"group_{group_id}_{user_id}"
-            raw = f"[来自 QQ: {user_id} 的群发言] {raw}"
+            if is_at_bot:
+                raw = f"[来自 QQ: {user_id} 的群发言] {raw}"
         else:
             session_key = f"user_{user_id}"
 
@@ -674,20 +759,21 @@ class QQGateway:
             is_allowed = True
 
         if not is_allowed:
-            if not hasattr(self, "_non_white_cache"):
-                self._non_white_cache = {}  # user_id -> last_reply_time
-            
-            now = time.time()
-            last_reply = self._non_white_cache.get(user_id, 0)
-            
-            if now - last_reply >= 300:  # 5分钟冷却，防止刷屏骚扰
-                self._non_white_cache[user_id] = now
-                reject_msg = "抱歉，我是亮哥的专属 AI 助手小萤，目前仅对主人开放私聊与管理服务哦。"
-                if msg_type == "group":
-                    await self._send("group", "", group_id, f"[CQ:at,qq={user_id}] {reject_msg}")
-                else:
-                    await self._send("private", user_id, "", reject_msg)
-                logger.warning(f"🛡️ [安全拦截] 拦截非白名单 QQ 用户 [{user_id}] 消息: {raw[:50]}")
+            if msg_type == "private" or (msg_type == "group" and is_at_bot):
+                if not hasattr(self, "_non_white_cache"):
+                    self._non_white_cache = {}  # user_id -> last_reply_time
+                
+                now = time.time()
+                last_reply = self._non_white_cache.get(user_id, 0)
+                
+                if now - last_reply >= 300:  # 5分钟冷却，防止刷屏骚扰
+                    self._non_white_cache[user_id] = now
+                    reject_msg = "抱歉，我是亮哥的专属 AI 助手小萤，目前仅对主人开放私聊与管理服务哦。"
+                    if msg_type == "group":
+                        await self._send("group", "", group_id, f"[CQ:at,qq={user_id}] {reject_msg}")
+                    else:
+                        await self._send("private", user_id, "", reject_msg)
+                    logger.warning(f"🛡️ [安全拦截] 拦截非白名单 QQ 用户 [{user_id}] 消息: {raw[:50]}")
             return
 
         # ── 播客选题拦截 ──────────────────────────────────────────
@@ -775,6 +861,44 @@ class QQGateway:
             return _re.sub(r'\[CQ:image,[^\]]+\]', _dl, text)
 
         raw = _download_cq_images(raw)
+
+        # ── 群聊静默感知（视网膜潜水感知） ──
+        if msg_type == "group" and not is_at_bot:
+            formatted_raw = f"[来自 QQ: {user_id} 的群发言] {raw}"
+            target_keys = set()
+            admin_group_key = f"group_{group_id}_{admin_id}"
+            target_keys.add(admin_group_key)
+            
+            for k in self._agents.keys():
+                if k.startswith(f"group_{group_id}_"):
+                    target_keys.add(k)
+                    
+            for t_key in target_keys:
+                t_agent = self._agents.get(t_key)
+                if t_agent is None:
+                    try:
+                        t_agent = self._factory(t_key)
+                        self._agents[t_key] = t_agent
+                    except Exception as e:
+                        logger.warning(f"Failed to create agent for silent group message {t_key}: {e}")
+                        continue
+                
+                t_agent.messages.append({"role": "user", "content": formatted_raw})
+                if hasattr(t_agent, "session") and t_agent.session is not None:
+                    try:
+                        await t_agent.session.append_message({"role": "user", "content": formatted_raw})
+                    except Exception as e:
+                        logger.warning(f"Failed to append message to session {t_key}: {e}")
+                        
+            self._log_activity("群潜水感知", f"群 {group_id} 中 QQ {user_id} 发言 (已静默同步至 {len(target_keys)} 个实例): {raw[:50]}")
+            
+            # 秒级降噪初筛：包含核心敏感词才触发大模型浮出判定，其余直接 return 保持静默
+            keywords = ["小萤", "小莹", "莹莹", "萤萤", "亮哥", "老板", "代码", "系统", "agent", "开发", "运行", "测试", "部署", "报错", "bug", "跑通", "提交"]
+            has_keyword = any(kw in raw for kw in keywords)
+            
+            if has_keyword:
+                asyncio.create_task(self._check_and_trigger_smart_float(group_id, user_id, raw))
+            return
 
         # 数据飞轮：检测并记录用户纠正信号
         from agent.evo_traces import record_correction
