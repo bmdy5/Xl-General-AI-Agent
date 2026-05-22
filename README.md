@@ -1,132 +1,154 @@
-# XL Agent
+# 🌟 XL Agent (小萤 AI 代理) 🌟
 
-肖亮的个人 AI 代理。基于 ReAct 循环，支持工具调用、记忆管理、知识检索、多 Agent 协作。
+肖亮的个人专属极客级 AI 智能体代理（XL Agent）。基于经典的 ReAct 决策双循环构建，支持运行时动态工具调用、多层降级长期记忆检索、多 Agent 蜂群协作、自动进化迭代，并配备了先进的 **CSMA/CD 消息避让防死锁** 与 **Token 精准脑力疲劳度打盹** 的物理网关防刷机制。
 
-## 快速开始
+---
+
+## 🚀 快速开始
+
+可以通过终端 CLI 工具进行单次对话、交互式会话、启动监控面板或开启自动学习模式：
 
 ```bash
-xl "你好"              # 单次对话
-xl                    # 交互模式（/exit 退出）
-xl --dashboard       # 监控面板
-xl --auto-learn      # 自动学习
+xl "你好"              # 单次命令行对话
+xl                    # 交互模式（支持 `/exit` 退出，支持历史上下文压缩）
+xl --dashboard       # 极简终端监控面板，实时观测 Agent 运行负荷
+xl --auto-learn      # 自动学习与规则进化模式
+python main.py --gateway  # 启动外部 IM (QQ) 消息网关服务，支持 CSMA/CD 与脑力疲劳打盹
 ```
 
-## 记忆系统
+---
 
-XL 的记忆分为两个层次：
+## 📡 消息网关控制与防死锁系统 (CSMA/CD & Fatigue)
 
-### 1. 情景记忆（FTS5 全文搜索）
-- 每次工具调用的上下文自动存入 JSONL
-- 通过 SQLite FTS5 建立全文索引，BM25 排序
-- 支持中文分词（CJK 字符自动分字处理）
-- 三层降级：FTS5 → LIKE → JSONL grep
-- 记忆注入时按关键词匹配度排序，只取 Top-5
+为了在生产环境（例如高频群聊、Bot 互怼、私聊碎碎念）中彻底规避消息连发引起的无限死锁、大模型 Token 资源恶意过载、抢话被打断等问题，XL Agent 引入了工业级的消息路由流控引擎：
 
-### 2. 知识库（学习笔记索引）
-- 自动扫描 /Users/xiaofeng/Desktop/学习笔记/ 目录
-- 长文本自动分块（max_chars=500）后索引
-- 在 memory_block 中显示为 "相关知识" 区域
-- 首次调用时延迟初始化（不阻塞启动）
+### 1. 载波监听与退避协议 (Carrier Sense)
+* **监听顺延**：当收到发言时，不立刻启动大模型提问协程，而是进入 `QQ_CSMA_BACKOFF_SECONDS`（默认 2.0s）的退避等待期。
+* **合并去重**：若对方在等待期内连续发送消息，等待定时器会自动向后延展。只有当信道连续静默 2.0 秒（即对方说完了整段碎碎念）后，网关才正式合并文本并启动推理。前序消息的无用协程将被默默废弃。
 
-### 记忆类型
+### 2. 冲突检测与暂存避让 (Collision Detection)
+* **两阶段中断丢弃**：在大模型流式推理生成中途，或在向渠道发送缓冲消息的最后时刻，如果检测到对方在此期间又“插嘴”发送了新消息，小萤会立刻**强行中断大模型运行，并彻底清空发送缓冲区**。这杜绝了各说各的、抢着发半成品碎片的尴尬局面。
+* **并发避让**：当大模型正在调用某些高耗时工具（如生图、执行长代码）时，新涌入的消息将在暂存队列中避让，防止语序错乱。
 
-| 类型 | 用途 | 来源 |
-|------|------|------|
-| [user] | 用户偏好、个人信息 | 主动保存 |
-| [learn] | 学习笔记、知识文档 | 自动索引 |
-| [feedback] | 用户纠正、经验教训 | 会话分析 |
-| [project] | 项目决策、架构记录 | 主动保存 |
+### 3. Token 精准疲劳计费与打盹梦境进化 (Nap Mode)
+* **Token 精准扣分**：非管理员（亮哥以外的普通群友或第三方 Bot）的消息会根据其回复 Token 数量乘以 `QQ_FATIGUE_RATE` 系数扣减脑力疲劳度（时间流逝会自动以每分钟 `2.0%` 的速度自我消退）。
+* **用脑过度打盹**：疲劳值首次触及 100.0% 时，小萤会在群内发送高情商的“物理冷静用脑过度吐槽”，随后进入持续 15 分钟（`QQ_FATIGUE_SLEEP_MINUTES`）的物理打盹期。
+* **打盹梦境进化**：打盹期间自动屏蔽对该用户的消息响应，同时异步唤起做梦机制，自动反思近期交互并将其压缩进进化库中。冷却结束后自动宣告苏醒。
 
-### 保存与检索
+### 4. 亮哥主控特权与穿透
+* **一键启停命令**：管理员亮哥在私聊中发送 `"暂停私聊"` 和 `"恢复私聊"`，可一键物理冻结或解冻非亮哥用户的私聊网关。
+* **特权唤醒穿透**：即使在非管理员因疲劳被打盹拦截、或私聊被暂停期间，亮哥的任何消息都能 100% 强行穿透拦截，立即强制唤醒小萤的大脑并予以高质量回复。
 
-```python
-await mm.save("filename", "[user] 描述", "内容")
-results = mm.search_memories("关键词")
-mm.list_memories()       # 列出所有
-mm.remove("filename")   # 删除
+> [!IMPORTANT]
+> 关于该网关更深度的机制原理、状态机设计及集成测试验证，请查阅 [📡 消息网关控制维护手册 (GATEWAY_CSMA_FATIGUE.md)](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/docs/GATEWAY_CSMA_FATIGUE.md)。
+
+---
+
+## 🧠 记忆与自我审视系统
+
+小萤的记忆系统经过精心设计，由轻量级纯本地向量库与运行时元认知审视机制组成：
+
+### 1. 两层记忆模型
+* **情景记忆 (FTS5 全文搜索)**：
+  * 自动将工具调用和交互上下文持久化至 SQLite，并利用 SQLite FTS5 建立全文倒排索引（已针对 CJK 中文分词进行分字分词优化），检索时若无 FTS5 则平滑降写为 `LIKE` 模糊匹配。
+* **长效知识库 (笔记自动索引)**：
+  * 首次调用时延迟且异步初始化，自动分块扫描读取指定学习笔记，作为“背景相关知识”注入大模型。
+
+### 2. 0 Key、100% 离线免费本地向量化 (Local m3e-base)
+* 在 `.env` 中将 `EMBEDDING_MODE` 设为 `local`，小萤会自动在本地 CPU 上惰性加载 `m3e-base` 编码模型。
+* 首次加载自动利用国内 HuggingFace 镜像极速拉取，无任何调用资费，完全在本地完成 768 维稠密实数向量的嵌入和 SQLite 特征存储，媲美云端网络。
+
+### 3. 元认知物理环境自主审视 (Metacognition Self-Reflection)
+* **拒绝生硬硬编码**：为了让小萤在面对“你现在有向量库吗？”、“你的 API Key 是什么？”、“你用什么模型运行？”等问题时，不依赖死记硬背的文本记忆，我们在 `STATIC_PROMPT` 中注入了“自我物理审视指令”。
+* **知行合一**：遇到此类涉及自身配置或物理代码状态的问题，小萤将**第一反应自主调用 `read_file` 工具**，去查看自己所处物理环境中的 `.env` 文件或相关核心代码（如 `agent/memory/manager.py`），从而用最严谨客观的事实进行回答。
+
+---
+
+## ⚙️ 参数配置参考 (.env)
+
+项目根目录下的 `.env` 配置文件支持全参数解耦，调优时无需修改任何 Python 逻辑：
+
+| 配置项 | 默认值 / 推荐值 | 物理意义与作用 |
+| :--- | :--- | :--- |
+| `MYAGENT_MODEL` | `openai/mimo-v2.5-pro` | 大模型主驱动模型（LiteLLM 规范，如 `openai/gpt-4o`） |
+| `MYAGENT_MAX_TURNS` | `30` | 限制单次 ReAct 会话的最深决策步数，防无限死循环 |
+| `QQ_ADMIN_ID` | `1705919142` | 管理员 (主人亮哥) 的 QQ 账号，具有高特权控制和免疲劳特权 |
+| `QQ_CSMA_BACKOFF_SECONDS` | `2.0` | 载波监听避让秒数。高频群聊可调至 `3.0` 增强消息合并 |
+| `QQ_FATIGUE_SLEEP_MINUTES`| `15.0` | 脑力疲劳过载后的打盹物理冷静睡眠时间 (分钟) |
+| `QQ_FATIGUE_RATE` | `0.4` | 私聊/群聊回复疲劳计费扣分系数，值设为 `0` 代表关闭疲劳度 |
+| `EMBEDDING_MODE` | `local` | 向量化嵌入模式。可选 `local` (纯本地免费) 或 `cloud` (远程 API) |
+
+---
+
+## 🛠️ 工具系统
+
+XL Agent 拥有极其强大的工具箱，所有工具均由 `ToolRegistry` 统一注册，支持运行时动态增删：
+
+| 工具名 | 能力范围 | 备注 |
+| :--- | :--- | :--- |
+| `read_file` | 读取物理文件内容 | 可用于自我环境审视 |
+| `write_file` | 新建或覆盖物理文件 | 写入产出等 |
+| `edit_file` | 搜索替换精准编辑 | 代码原地修改 |
+| `bash` | 执行系统 shell 终端命令 | 提供沙箱级的操作支持 |
+| `web_search` | 网页搜索 (联网检索) | 获取最新事实 |
+| `web_fetch` | 网页正文深度爬取与解析 | 剔除无效 HTML 标签 |
+| `spawn_agent` | 派生子 Agent 并发运行 | 自动分工与任务下发 |
+| `swarm` | 蜂群协作（任务拆解与 worker 结果聚合）| 处理高难度大中型任务 |
+| `mcp_client` | 挂载外部 Standard MCP 服务 | 支持各种 Stitch 等外部生态工具 |
+| `save_memory` | 长期记忆库的增加、检索与删除 | 记忆持久化 |
+
+---
+
+## 🧬 进化与自动优化引擎
+
+小萤能够在每次会话结束后进行“复盘审计”，实现越用越聪明的正向循环：
+
+```
+交互完成 ──> 触发 tool_audit ──> 检测任务 Pattern ──> 提取 Learnings ──> 生成反馈记忆 ──> 验证并自动注入 System Prompt 
 ```
 
-## 工具系统
+* **EvolutionEngine**：负责追溯每一次工具成功率、耗时表现，发现无效操作后，从反馈记忆中生成精准的规则，持久化于进化库，并由引擎在下一次初始化时动态注入大模型先识中。
 
-所有工具通过 ToolRegistry 统一注册，支持运行时动态添加/移除。
+---
 
-| 工具 | 能力 |
-|------|------|
-| read_file | 读取文件 |
-| write_file | 写入文件 |
-| edit_file | 搜索替换编辑 |
-| bash | 执行 shell 命令 |
-| web_search | 网页搜索 |
-| web_fetch | 抓取网页内容 |
-| read_image | 图片分析（视觉模型） |
-| image2_generate | 生成像素纹理 |
-| spawn_agent | 派生子 agent 并发执行 |
-| swarm | 蜂群协作（拆任务→并发 worker→聚合） |
-| run_sequence | 链式执行多个工具 |
-| manage_tool | 运行时注册/注销工具 |
-| mcp_client | 连接外部 MCP 服务器 |
-| stitch_generate | 调用 Google Stitch 生成 UI |
-| save_memory | 保存/搜索/移除长期记忆 |
-
-## 进化系统
-
-XL 在每次会话结束后自动分析表现，生成改进规则。
+## 📂 项目架构目录
 
 ```
-工具审计 → 模式检测 → 规则生成 → 规则注入 → 效果验证
+.
+├── main.py                # 主入口（支持命令行、交互模式、网关启动及自动学习）
+├── requirements.txt       # 项目 Python 依赖声明
+├── .env                  # 本地全量解耦配置文件 (必须包含详细注释)
+├── .env.example          # 包含全量解耦注释的模版脱敏文件
+├── docs/
+│   └── GATEWAY_CSMA_FATIGUE.md # 📡 消息网关控制与防死锁机制维护手册 (极客级)
+└── agent/
+    ├── core.py            # Agent 决策中心与静态 System Prompt (元认知指令)
+    ├── gateway.py         # 高级 QQ 网关逻辑 (CSMA/CD、Token 疲劳打盹、穿透逻辑)
+    ├── llm.py             # 统一 LiteLLM 驱动器
+    ├── tui.py             # 终端界面渲染 TUI
+    ├── compressor.py      # 上下文历史流式压缩器
+    ├── evolution.py       # 复盘审计与模式提取器
+    ├── evolution_apply.py # 进化引擎与规则验证注入器
+    ├── task_queue.py      # 定时持久化任务队列
+    ├── memory/
+    │   ├── manager.py     # 长期记忆管理器 (本地 m3e 惰性单例加载与 cloud 双切换)
+    │   ├── fts_index.py   # SQLite FTS5 倒排索引分词引擎
+    │   └── notes_fts.py   # 个人学习笔记检索器
+    └── tools/
+        ├── registry.py    # 运行时工具动态注册与管理中心
+        └── base_tool.py   # 工具基类
 ```
 
-- **audit_tool_call**: 每次工具调用记录耗时、成功/失败
-- **detect_task_pattern**: 发现重复操作模式
-- **on_session_end**: 会话结束后提取 learnings
-- **evolve_rules**: 从 feedback 记忆中生成规则
-- **EvolutionEngine**: 规则存储 + 置信度追踪 + 自动注入 system_prompt
+---
 
-## 任务队列
+## 🧪 静态校验与单元测试
 
-支持文件持久化的定时任务，交互模式下通过 /tasks 管理：
+为了确保任何时候对系统文档和代码的修改不引起任何核心功能的崩溃，请在发布前跑通网关防死锁和本地向量的集成测试：
 
+```bash
+# 激活虚拟环境
+source venv/bin/activate
+
+# 运行网关退避、抢话中断、疲劳打盹与苏醒的 4 大核心集成测试
+python scratch/test_csma_cd_fatigue.py
 ```
-/tasks                       # 列出待办
-/tasks add 描述 / daily     # 添加每日任务
-/tasks done task_id         # 标记完成
-/tasks clear                # 清理已完成
-```
-
-## 架构
-
-```
-main.py                    # 入口（交互/单次/自动学习模式）
-agent/
-  core.py                  # Agent 核心（ReAct 循环）
-  llm.py                   # LLM 客户端
-  tui.py                   # 终端界面渲染
-  tui_events.py            # 事件流处理
-  compressor.py            # 上下文压缩
-  evolution.py             # 审计 + 分析 + 规则生成
-  evolution_apply.py       # 规则存储 + 注入 + 验证
-  task_queue.py            # 定时任务队列
-  memory/
-    manager.py             # 记忆管理器
-    fts_index.py           # FTS5 全文索引
-    notes_fts.py           # 学习笔记索引
-  tools/
-    registry.py            # 工具注册中心
-    base_tool.py           # 工具基类
-    file_tools.py          # 文件读写
-    ... (15 tools)
-  session/
-    handler.py             # 会话管理
-```
-
-## 命令参考
-
-| 命令 | 用途 |
-|------|------|
-| /exit | 退出交互模式 |
-| /clear | 清空对话历史 |
-| /stats | 上下文用量统计 |
-| /memory | 列出所有记忆 |
-| /tools | 列出所有工具 |
-| /mode normal\|deep | 切换模式（normal 5min/deep 2h）|
-| /tasks | 管理定时任务 |
