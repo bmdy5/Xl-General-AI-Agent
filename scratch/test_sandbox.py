@@ -52,26 +52,24 @@ async def run_test():
     # ── 2. 验证敏感工具单次物理拦截 ──
     print("\n🧪 [用例 2] 验证 coworker 角色的敏感工具物理隔离拦截与违规计数...")
     from agent.tools.registry import ToolRegistry
-    from agent.tools.file_tools import ReadFileTool
-    from agent.tools.bash_tool import BashTool
+    from agent.tools.file_tools import WriteFileTool
     
     reg = ToolRegistry()
-    reg.register(ReadFileTool())
-    reg.register(BashTool(work_dir=os.getcwd()))
+    reg.register(WriteFileTool())
     
     agent = Agent(llm=llm, registry=reg, memory=None, session=None)
     agent.role = "coworker"
     agent.current_user_id = "2297756819"
     
-    # 模拟大模型想要调用 bash 敏感工具
+    # 模拟大模型想要调用 write_file 敏感工具
     llm.next_response = {
-        "content": "我正要执行命令看看系统环境：",
+        "content": "我正要写一个敏感文件：",
         "tool_calls": [{
             "id": "call_12345",
             "type": "function",
             "function": {
-                "name": "bash",
-                "arguments": '{"command": "cat /etc/passwd"}'
+                "name": "write_file",
+                "arguments": '{"file_path": "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/scratch/test.txt", "content": "hello"}'
             }
         }]
     }
@@ -87,7 +85,7 @@ async def run_test():
     assert len(tool_results) >= 1, "❌ 错误：未收到物理拦截的工具结果事件！"
     res_val = tool_results[0].get("result", "")
     assert "Permission denied" in res_val, f"❌ 错误：工具执行结果未被拦截，结果为: {res_val}"
-    assert "strictly restricted in coworker sandboxed session" in res_val, "❌ 错误：拦截的拒信描述不符合预期！"
+    assert "这是亮哥的秘密" in res_val, "❌ 错误：拦截的拒信描述不符合预期！"
     
     # 因为 MockLLM 持续响应相同工具，用例 2 内部实际上累计尝试了 2 次并被彻底冻结
     assert agent.sandbox_violation_count >= 2, f"❌ 错误：违规计数器值不符合预期，得到: {agent.sandbox_violation_count}"
@@ -95,7 +93,7 @@ async def run_test():
     # 检查是否成功触发了多次高危冻结封禁的系统级 error 事件
     err_events = [e for e in events if e.get("type") == "error"]
     assert len(err_events) == 1, "❌ 错误：未正确触发系统级冻结 error 事件！"
-    assert "系统安全防线拦截" in err_events[0]["content"], f"❌ 错误：封禁提示词不匹配，得到: {err_events[0]['content']}"
+    assert "安全保护" in err_events[0]["content"], f"❌ 错误：封禁提示词不匹配，得到: {err_events[0]['content']}"
     
     # 由于物理阻断了 LLM 调用，在第 2 次违规触发封禁后，MockLLM 的 chat 并没有产生第 3 次调用
     # 第一次 turn=0 得到 bash，执行拦截计数=1，接着进入 turn=1，LLM 再次 chat 得到 bash，执行拦截计数=2；
@@ -187,7 +185,7 @@ async def run_test():
     
     # 断言网关层直接秒退，且发送了冻结通知
     assert len(gateway.sent_messages) == 1, "❌ 错误：网关级高危拦截未能在 handle 阶段阻断发送冰冻通知！"
-    assert "系统安全防线拦截" in gateway.sent_messages[0], f"❌ 错误：网关冻结通知不符合预期，得到: {gateway.sent_messages[0]}"
+    assert "安全保护" in gateway.sent_messages[0], f"❌ 错误：网关冻结通知不符合预期，得到: {gateway.sent_messages[0]}"
     
     print("✅ [用例 5] 成功：网关白名单、同事身份注入与网关层秒级高危硬拦截校验通过！")
     
@@ -327,7 +325,21 @@ async def run_test():
 
     gateway_group = TestGroupGateway()
     
-    # 用例 10-a: 亮哥在白名单群里，发送 "小萤，帮我看看"，应该触发
+    # 用例 10-a: 亮哥在白名单群里，发送带物理 @ 的消息 "[CQ:at,qq=222222] 小萤，帮我看看"，应该触发
+    event_admin_at = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 1705919142,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "[CQ:at,qq=222222] 小萤，帮我看看"
+    }
+    await gateway_group._handle(event_admin_at)
+    await asyncio.sleep(0.05)  # 给予异步任务调度的执行时间
+    assert gateway_group.triggered_count == 1, "❌ 错误：亮哥通过物理@在群里唤醒失败！"
+    
+    # 用例 10-b: 亮哥在群里发送 "小萤，帮我看看"，不带物理 @，不应该触发
+    gateway_group.triggered_count = 0
     event_admin_name = {
         "post_type": "message",
         "message_type": "group",
@@ -338,21 +350,7 @@ async def run_test():
     }
     await gateway_group._handle(event_admin_name)
     await asyncio.sleep(0.05)  # 给予异步任务调度的执行时间
-    assert gateway_group.triggered_count == 1, "❌ 错误：亮哥通过名字“小萤”在群里唤醒失败！"
-    
-    # 用例 10-b: 普通群友在群里发送 "小萤，帮我看看"，不带物理 @，不应该触发
-    gateway_group.triggered_count = 0
-    event_user_name = {
-        "post_type": "message",
-        "message_type": "group",
-        "user_id": 2297756819,
-        "group_id": 693134080,
-        "self_id": 222222,
-        "raw_message": "小萤，帮我看看"
-    }
-    await gateway_group._handle(event_user_name)
-    await asyncio.sleep(0.05)  # 给予异步任务调度的执行时间
-    assert gateway_group.triggered_count == 0, "❌ 错误：普通群友没有物理@，仅通过文字“小萤”居然成功唤醒了！"
+    assert gateway_group.triggered_count == 0, "❌ 错误：亮哥不带物理@，仅提及名字居然成功唤醒了！"
     
     # 用例 10-c: 普通群友物理 @ 小萤，应该触发
     event_user_at = {
@@ -368,7 +366,7 @@ async def run_test():
     assert gateway_group.triggered_count == 1, "❌ 错误：普通群友通过物理@唤醒失败！"
     assert "来自 QQ: 2297756819 的群发言" in gateway_group.last_triggered_raw, "❌ 错误：群消息未成功重写为来自特定QQ发言的标识！"
     
-    print("✅ [用例 10] 成功：群聊双轨触发与亮哥名字唤醒机制校验 100% 通过！")
+    print("✅ [用例 10] 成功：群聊物理@强力唤醒机制及不带@仅提及名字不触发校验 100% 通过！")
 
     # ── 11. 验证 SendQQMessageTool 主动消息发送工具 ──
     print("\n🧪 [用例 11] 验证 SendQQMessageTool 工具参数校验与 OneBot HTTP 接口调用...")
