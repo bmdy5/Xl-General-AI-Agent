@@ -21,16 +21,19 @@ class ToolRegistry:
 
     def __init__(self):
         self._tools: dict[str, BaseTool] = {}
+        self._cached_definitions = None
 
     def register(self, tool: BaseTool) -> None:
         """注册一个工具实例."""
         if tool.name in self._tools:
             raise ValueError(f"Tool '{tool.name}' already registered")
         self._tools[tool.name] = tool
+        self._cached_definitions = None
 
     def deregister(self, name: str) -> None:
         """移除一个工具."""
         self._tools.pop(name, None)
+        self._cached_definitions = None
 
     def get(self, name: str) -> Optional[BaseTool]:
         """按名称获取工具实例."""
@@ -38,7 +41,9 @@ class ToolRegistry:
 
     def get_definitions(self) -> list[dict]:
         """返回所有已注册工具的 OpenAI function calling 格式定义."""
-        return [tool.get_tool_definition() for tool in self._tools.values()]
+        if self._cached_definitions is None:
+            self._cached_definitions = [tool.get_tool_definition() for tool in self._tools.values()]
+        return self._cached_definitions
 
     def list_names(self) -> list[str]:
         """列出所有已注册工具的名称."""
