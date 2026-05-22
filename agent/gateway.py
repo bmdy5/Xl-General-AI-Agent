@@ -956,6 +956,50 @@ class QQGateway:
         task.raw_prompt = raw
         self._current_tasks[session_key] = task
 
+    def _to_human_error(self, error_type: str, detail: str, t_name: str = None) -> str:
+        """
+        根据返回的错误（工具报错、API拥堵、崩溃等）进行拟真分类，
+        并随机或针对性生成一句高情商、富有真人活泼情感的人话。
+        """
+        import random
+        detail_lower = detail.lower()
+        
+        # 1. 爬虫或网页抓取失败 (web_fetch)
+        if (t_name and t_name == "web_fetch") or any(x in detail_lower for x in ["empty response", "fetch error", "403", "forbidden", "urllib"]):
+            templates = [
+                "亮哥，那个网页好像防备心特别重，小萤刚刚试着去爬取，结果被对方服务器无情拒绝了……（委屈）",
+                "唔……亮哥，小萤刚才努力去抓取那个网页了，但是服务器返回的数据空空如也，好像触发了对方的防爬机制。我换个法子再帮您找找？",
+                "亮哥，小萤去爬那个网站的时候吃了个闭门羹呢，对方防爬太严密啦，什么都没拿到。要不我们换个链接或者晚点我再试试？"
+            ]
+            return random.choice(templates)
+            
+        # 2. 大模型高负载拥堵 (503/Busy/Timeout)
+        elif any(x in detail_lower for x in ["service is too busy", "serviceunavailableerror", "deepseekexception", "service_unavailable_error", "503", "unavailable", "timeout"]):
+            templates = [
+                "（揉了揉太阳穴）唔……亮哥，小萤刚才脑子好像突然走神发呆了，感觉懵懵的，让我稍微缓一两分钟再陪你聊呀～",
+                "哎呀……亮哥，刚才大脑网络感觉超级拥堵，小萤一下子没反应过来（晕乎乎）。我稍微歇两分钟，马上就清醒啦！",
+                "亮哥，刚才是大模型服务器在打瞌睡呢，小萤的思绪一下子被卡住了。容我稍微喘口气，马上就回来！"
+            ]
+            return random.choice(templates)
+            
+        # 3. 工具执行失败 (BASH/命令执行等)
+        elif t_name:
+            templates = [
+                f"亮哥，刚才小萤尝试运行 `{t_name}` 的时候好像磕碰了一下，系统跟我反馈了点小状况：\n{detail[:150]}",
+                f"唔……亮哥，刚才那个 `{t_name}` 跑起来似乎不太顺利，报错说 `{detail[:150]}`。我正在想办法解决，您先别急哈~",
+                f"报告亮哥！刚才执行 `{t_name}` 的时候出了点小意外，错误反馈是：`{detail[:150]}`。小萤去帮您排查一下！"
+            ]
+            return random.choice(templates)
+            
+        # 4. 其他未知崩溃/底层异常
+        else:
+            templates = [
+                "（捂脸哭）唔……亮哥，刚才脑子里好像有一根电路突然“噼啪”闪了一下，有些想不起来刚才要说什么了，我们再说一次好不好呀～",
+                "亮哥，刚才我脑海里稍微乱了一下，思绪一下断掉了（吐舌头）。可以麻烦您再把刚才的话跟小萤说一遍吗？",
+                "哎呀，刚刚小萤的思维网络好像打了个结，没接上亮哥的话（捂脸）。能不能把刚才的指令再发我一次呀？"
+            ]
+            return random.choice(templates)
+
     async def _execute_task(self, session_key: str, event: dict, raw: str):
         admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
         msg_type = event.get("message_type", "private")
@@ -1150,7 +1194,8 @@ class QQGateway:
                     
                     if has_error:
                         self._log_activity("系统异常", f"工具 {t_name} 执行失败: {res[:200]}")
-                        await self._send(msg_type, user_id, group_id, f"⚠️ [警告] 刚才跑命令失败了！错误反馈：\n{res[:300]}")
+                        human_err = self._to_human_error("tool", res, t_name)
+                        await self._send(msg_type, user_id, group_id, human_err)
                         
                 elif evt["type"] == "permission_request":
                     cat = evt.get("category", "write")
@@ -1167,23 +1212,16 @@ class QQGateway:
                         agent.approve_permission()
                 elif evt["type"] == "error":
                     err_content = evt.get("content", "")
-                    err_lower = err_content.lower()
-                    # 强力拦截大模型高负载拥堵的特征词，维护小萤真人感
-                    if any(x in err_lower for x in ["service is too busy", "serviceunavailableerror", "deepseekexception", "service_unavailable_error", "503", "unavailable"]):
-                        buf += "\n（揉了揉太阳穴）唔……亮哥，我刚才大脑好像突然走神发呆了，感觉脑子里懵懵的，让我稍微缓一两分钟再陪你聊呀～"
-                    else:
-                        buf += f"\n[错误: {err_content}]"
+                    human_err = self._to_human_error("error", err_content)
+                    buf += f"\n{human_err}"
                     self._log_activity("系统异常", f"Agent 报错: {err_content}")
         except asyncio.CancelledError:
             self._log_activity("系统调度", f"任务被外部 Cancel 取消: {raw[:50]}")
             raise
         except Exception as e:
             err_str = str(e)
-            err_lower = err_str.lower()
-            if any(x in err_lower for x in ["service is too busy", "serviceunavailableerror", "deepseekexception", "service_unavailable_error", "503", "unavailable"]):
-                buf += "\n（揉了揉太阳穴）唔……亮哥，我刚才大脑好像突然走神发呆了，感觉脑子里懵懵的，让我稍微缓一两分钟再陪你聊呀～"
-            else:
-                buf += f"[异常: {e}]"
+            human_err = self._to_human_error("crash", err_str)
+            buf += f"\n{human_err}"
             self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
             if buf.strip():
