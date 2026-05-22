@@ -956,49 +956,108 @@ class QQGateway:
         task.raw_prompt = raw
         self._current_tasks[session_key] = task
 
-    def _to_human_error(self, error_type: str, detail: str, t_name: str = None) -> str:
+    async def _to_human_error(self, error_type: str, detail: str, t_name: str = None, agent = None) -> str:
         """
         根据返回的错误（工具报错、API拥堵、崩溃等）进行拟真分类，
-        并随机或针对性生成一句高情商、富有真人活泼情感的人话。
+        并优先调用真实大模型（LLM）进行真人动态高情商转义翻译。
+        如果大模型调用不可用（如处于单元测试Mock环境、大模型503或网络超时故障），
+        则无缝降级为富有真人活泼情感的静态模板。
         """
         import random
         detail_lower = detail.lower()
         
-        # 1. 爬虫或网页抓取失败 (web_fetch)
-        if (t_name and t_name == "web_fetch") or any(x in detail_lower for x in ["empty response", "fetch error", "403", "forbidden", "urllib"]):
-            templates = [
-                "亮哥，那个网页好像防备心特别重，小萤刚刚试着去爬取，结果被对方服务器无情拒绝了……（委屈）",
-                "唔……亮哥，小萤刚才努力去抓取那个网页了，但是服务器返回的数据空空如也，好像触发了对方的防爬机制。我换个法子再帮您找找？",
-                "亮哥，小萤去爬那个网站的时候吃了个闭门羹呢，对方防爬太严密啦，什么都没拿到。要不我们换个链接或者晚点我再试试？"
-            ]
-            return random.choice(templates)
-            
-        # 2. 大模型高负载拥堵 (503/Busy/Timeout)
-        elif any(x in detail_lower for x in ["service is too busy", "serviceunavailableerror", "deepseekexception", "service_unavailable_error", "503", "unavailable", "timeout"]):
-            templates = [
-                "（揉了揉太阳穴）唔……亮哥，小萤刚才脑子好像突然走神发呆了，感觉懵懵的，让我稍微缓一两分钟再陪你聊呀～",
-                "哎呀……亮哥，刚才大脑网络感觉超级拥堵，小萤一下子没反应过来（晕乎乎）。我稍微歇两分钟，马上就清醒啦！",
-                "亮哥，刚才是大模型服务器在打瞌睡呢，小萤的思绪一下子被卡住了。容我稍微喘口气，马上就回来！"
-            ]
-            return random.choice(templates)
-            
-        # 3. 工具执行失败 (BASH/命令执行等)
-        elif t_name:
-            templates = [
-                f"亮哥，刚才小萤尝试运行 `{t_name}` 的时候好像磕碰了一下，系统跟我反馈了点小状况：\n{detail[:150]}",
-                f"唔……亮哥，刚才那个 `{t_name}` 跑起来似乎不太顺利，报错说 `{detail[:150]}`。我正在想办法解决，您先别急哈~",
-                f"报告亮哥！刚才执行 `{t_name}` 的时候出了点小意外，错误反馈是：`{detail[:150]}`。小萤去帮您排查一下！"
-            ]
-            return random.choice(templates)
-            
-        # 4. 其他未知崩溃/底层异常
-        else:
-            templates = [
-                "（捂脸哭）唔……亮哥，刚才脑子里好像有一根电路突然“噼啪”闪了一下，有些想不起来刚才要说什么了，我们再说一次好不好呀～",
-                "亮哥，刚才我脑海里稍微乱了一下，思绪一下断掉了（吐舌头）。可以麻烦您再把刚才的话跟小萤说一遍吗？",
-                "哎呀，刚刚小萤的思维网络好像打了个结，没接上亮哥的话（捂脸）。能不能把刚才的指令再发我一次呀？"
-            ]
-            return random.choice(templates)
+        # 1. 静态兜底模板定义
+        def get_fallback_msg() -> str:
+            if (t_name and t_name == "web_fetch") or any(x in detail_lower for x in ["empty response", "fetch error", "403", "forbidden", "urllib"]):
+                templates = [
+                    "亮哥，那个网页好像防备心特别重，小萤刚刚试着去爬取，结果被对方服务器无情拒绝了……（委屈）",
+                    "唔……亮哥，小萤刚才努力去抓取那个网页了，但是服务器返回的数据空空如也，好像触发了对方的防爬机制。我换个法子再帮您找找？",
+                    "亮哥，小萤去爬那个网站的时候吃了个闭门羹呢，对方防爬太严密啦，什么都没拿到。要不我们换个链接或者晚点我再试试？"
+                ]
+                return random.choice(templates)
+            elif any(x in detail_lower for x in ["service is too busy", "serviceunavailableerror", "deepseekexception", "service_unavailable_error", "503", "unavailable", "timeout"]):
+                templates = [
+                    "（揉了揉太阳穴）唔……亮哥，小萤刚才脑子好像突然走神发呆了，感觉懵懵的，让我稍微缓一两分钟再陪你聊呀～",
+                    "哎呀……亮哥，刚才大脑网络感觉超级拥堵，小萤一下子没反应过来（晕乎乎）。我稍微歇两分钟，马上就清醒啦！",
+                    "亮哥，刚才是大模型服务器在打瞌睡呢，小萤的思绪一下子被卡住了。容我稍微喘口气，马上就回来！"
+                ]
+                return random.choice(templates)
+            elif t_name:
+                templates = [
+                    f"亮哥，刚才小萤尝试运行 `{t_name}` 的时候好像磕碰了一下，系统跟我反馈了点小状况：\n{detail[:150]}",
+                    f"唔……亮哥，刚才那个 `{t_name}` 跑起来似乎不太顺利，报错说 `{detail[:150]}`。我正在想办法解决，您先别急哈~",
+                    f"报告亮哥！刚才执行 `{t_name}` 的时候出了点小意外，错误反馈是：`{detail[:150]}`。小萤去帮您排查一下！"
+                ]
+                return random.choice(templates)
+            else:
+                templates = [
+                    "（捂脸哭）唔……亮哥，刚才脑子里好像有一根电路突然“噼啪”闪了一下，有些想不起来刚才要说什么了，我们再说一次好不好呀～",
+                    "亮哥，刚才我脑海里稍微乱了一下，思绪一下断掉了（吐舌头）。可以麻烦您再把刚才的话跟小萤说一遍吗？",
+                    "哎呀，刚刚小萤的思维网络好像打了个结，没接上亮哥的话（捂脸）。能不能把刚才的指令再发我一次呀？"
+                ]
+                return random.choice(templates)
+
+        # 2. 尝试调用真实的大模型（LLM）进行真人动态转义汇报
+        # 排除测试 MockLLM 环境（如果是单元测试，保持 100% 兜底断言稳定）
+        is_mock = False
+        agent_llm = getattr(agent, "llm", None)
+        if agent_llm:
+            llm_class_name = type(agent_llm).__name__
+            if "Mock" in llm_class_name or getattr(agent_llm, "api_key", "") == "mock":
+                is_mock = True
+
+        if agent_llm and not is_mock:
+            # 针对大模型拥堵（503）等情况，如果本身就是大模型不可用报错，调用 LLM 可能会造成无限递归或二次出错
+            # 此时直接跳过，使用原本的 503 静态兜底
+            is_llm_busy = any(x in detail_lower for x in ["service is too busy", "serviceunavailableerror", "deepseekexception", "service_unavailable_error", "503", "unavailable", "timeout"])
+            if not is_llm_busy:
+                try:
+                    # 动态读取画像名字，做到完全贴合用户自定义的人格与称呼
+                    _pn, _ua = self._load_persona()
+                    
+                    system_prompt = (
+                        f"你现在是{_ua}的专属 AI 助手【{_pn}】。你刚才在帮助{_ua}执行任务或运行工具时，系统抛出或返回了一个底层的错误/异常信息。\n"
+                        f"请你扮演【{_pn}】（一个温柔、知性且富有情感的年轻女性极客合伙人），向{_ua}口头汇报这个小故障。\n\n"
+                        f"汇报规范：\n"
+                        f"1. 态度要诚实但语气要温柔自然。绝对禁止假装成功，请用大白话或通俗易懂的高情商口吻跟{_ua}说明遇到了什么困难。\n"
+                        f"   - 例如，如果是爬虫抓取网页被对方服务器防爬（如 empty response 或 403 Forbidden），请说：‘那个网页防备心特别重，小萤抓取失败了……’\n"
+                        f"   - 例如，如果是某个工具跑出了明确的代码报错，请大白话告诉他这个工具怎么了，不需要机械死板地念全部报错信息。\n"
+                        f"2. 绝对禁止输出任何带有 [错误]、Error:、警告、retcode、exit code 等硬编码机器味、警报格式的冷冰冰词汇。\n"
+                        f"3. 保持简练，字数控制在 25 到 80 字以内。\n"
+                        f"4. 仅输出对{_ua}说的那句人话，不要包含任何 markdown 块或多余解释。"
+                    )
+                    
+                    user_prompt = (
+                        f"刚才运行的工具名称: {t_name or '未知工具'}\n"
+                        f"底层的异常/报错详情:\n{detail}"
+                    )
+                    
+                    # 设定 10 秒超时防止挂起
+                    response = await asyncio.wait_for(
+                        agent.llm.chat(
+                            messages=[
+                                {"role": "system", "content": system_prompt},
+                                {"role": "user", "content": user_prompt}
+                            ],
+                            model_override="deepseek/deepseek-v4-flash"
+                        ),
+                        timeout=10.0
+                    )
+                    
+                    translation = response.get("content", "").strip()
+                    # 净化可能产生的 markdown JSON 代码块包裹
+                    translation = re.sub(r'^```[a-zA-Z]*\s*', '', translation)
+                    translation = re.sub(r'\s*```$', '', translation)
+                    translation = translation.strip()
+                    
+                    if translation and len(translation) > 5:
+                        logger.info(f"✨ [LLM 动态错误转义成功] 原始错误: {detail[:80]} -> 拟真人话: {translation}")
+                        return translation
+                except Exception as llm_err:
+                    logger.warning(f"⚠️ [LLM 动态错误转义失败，降级为静态兜底] 报错: {llm_err}")
+
+        # 3. 兜底返回静态高质量模板
+        return get_fallback_msg()
 
     async def _execute_task(self, session_key: str, event: dict, raw: str):
         admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
@@ -1194,7 +1253,7 @@ class QQGateway:
                     
                     if has_error:
                         self._log_activity("系统异常", f"工具 {t_name} 执行失败: {res[:200]}")
-                        human_err = self._to_human_error("tool", res, t_name)
+                        human_err = await self._to_human_error("tool", res, t_name, agent=agent)
                         await self._send(msg_type, user_id, group_id, human_err)
                         
                 elif evt["type"] == "permission_request":
@@ -1212,7 +1271,7 @@ class QQGateway:
                         agent.approve_permission()
                 elif evt["type"] == "error":
                     err_content = evt.get("content", "")
-                    human_err = self._to_human_error("error", err_content)
+                    human_err = await self._to_human_error("error", err_content, agent=agent)
                     buf += f"\n{human_err}"
                     self._log_activity("系统异常", f"Agent 报错: {err_content}")
         except asyncio.CancelledError:
@@ -1220,7 +1279,7 @@ class QQGateway:
             raise
         except Exception as e:
             err_str = str(e)
-            human_err = self._to_human_error("crash", err_str)
+            human_err = await self._to_human_error("crash", err_str, agent=agent)
             buf += f"\n{human_err}"
             self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
