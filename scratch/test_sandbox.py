@@ -554,6 +554,87 @@ async def run_test():
     
     print("✅ [用例 13] 成功：智能浮出秒级降噪、轻量决策以及 10 分钟冷却频控拦截单元测试完美通过！")
         
+    # ── 14. 验证重构异常警报为拟人化温柔反馈机制 ──
+    print("\n🧪 [用例 14] 验证异常警报重构（工具报错静默及LLM死机时温柔兜底）...")
+    
+    class MockExceptionAgent:
+        def __init__(self):
+            self.role = "admin"
+            self.current_user_id = "1705919142"
+            self.messages = []
+            self.sandbox_violation_count = 0
+            
+            from pathlib import Path
+            class MockMemory:
+                base_dir = Path("/nonexistent_dir_for_test")
+            self.memory = MockMemory()
+            self.yielded_events = []
+            
+        async def run(self, raw, stream=True):
+            for evt in self.yielded_events:
+                yield evt
+                
+    class ExceptionTestGateway(QQGateway):
+        def __init__(self):
+            super().__init__(lambda key: Agent(llm=MockLLM(), registry=None, memory=None, session=None))
+            self.sent_messages = []
+            self.mock_agent = MockExceptionAgent()
+            self._agents["user_1705919142"] = self.mock_agent
+            
+        def _factory(self, session_key):
+            return self.mock_agent
+            
+        async def _send(self, msg_type, user_id, group_id, message, skip_delay=False):
+            self.sent_messages.append(message)
+            
+        async def _send_chunk(self, msg_type, user_id, group_id, message):
+            self.sent_messages.append(message)
+
+    # 用例 14-a: 验证工具发生 Error 错误时，网关动态转换为人性化汇报（如爬虫防爬被拒）
+    gateway_exception = ExceptionTestGateway()
+    gateway_exception.mock_agent.yielded_events = [
+        {"type": "tool_result", "name": "web_fetch", "result": "Error: empty response from server"}
+    ]
+    
+    event_trigger = {
+        "post_type": "message",
+        "message_type": "private",
+        "user_id": 1705919142,
+        "raw_message": "模拟工具调用错误测试"
+    }
+    await gateway_exception._execute_task("user_1705919142", event_trigger, "模拟工具调用错误测试")
+    
+    assert len(gateway_exception.sent_messages) == 1, f"❌ 错误：工具报错时网关未能发送高情商人性化汇报！发送消息数: {len(gateway_exception.sent_messages)}"
+    tool_err_msg = gateway_exception.sent_messages[0]
+    assert "⚠️ [警告]" not in tool_err_msg, f"❌ 错误：人性化汇报中居然保留了机器味强警告！得到: {tool_err_msg}"
+    assert any(x in tool_err_msg for x in ["被拒绝", "防爬", "闭门羹"]), f"❌ 错误：爬虫失败拟人特征词断言失败！得到: {tool_err_msg}"
+
+    # 用例 14-b: 验证大模型发生 error 故障时，网关高情商拟人化温柔兜底 (503/Busy)
+    gateway_exception_err = ExceptionTestGateway()
+    gateway_exception_err.mock_agent.yielded_events = [
+        {"type": "error", "content": "Service is too busy"}
+    ]
+    await gateway_exception_err._execute_task("user_1705919142", event_trigger, "模拟503错误测试")
+    
+    assert len(gateway_exception_err.sent_messages) == 1, "❌ 错误：503错误时网关未发送温柔兜底消息！"
+    reply_msg = gateway_exception_err.sent_messages[0]
+    assert any(x in reply_msg for x in ["走神", "发呆", "懵懵", "拥堵", "反应过来", "清醒", "卡住", "喘口气"]), f"❌ 错误：503兜底人设台词特征不匹配！得到: {reply_msg}"
+    assert "[错误:" not in reply_msg, f"❌ 错误：温柔兜底中居然夹带了机器错误标签！得到: {reply_msg}"
+
+    # 用例 14-c: 验证大模型遭遇未知致命崩溃时，网关高情商拟人化可爱困惑兜底
+    gateway_exception_crash = ExceptionTestGateway()
+    gateway_exception_crash.mock_agent.yielded_events = [
+        {"type": "error", "content": "api_key_invalid"}
+    ]
+    await gateway_exception_crash._execute_task("user_1705919142", event_trigger, "模拟致命崩溃测试")
+    
+    assert len(gateway_exception_crash.sent_messages) == 1, "❌ 错误：致命崩溃时网关未发送温柔兜底消息！"
+    reply_crash = gateway_exception_crash.sent_messages[0]
+    assert any(x in reply_crash for x in ["电路", "噼啪", "想不起来", "打了个结", "思绪", "乱了一下"]), f"❌ 错误：崩溃温柔兜底台词特征不匹配！得到: {reply_crash}"
+    assert "[错误:" not in reply_crash, f"❌ 错误：温柔崩溃兜底中居然夹带了机器错误标签！得到: {reply_crash}"
+
+    print("✅ [用例 14] 成功：智能错误转义及多分支真人温柔高情商兜底拦截验证 100% 通过！")
+        
     print("\n🎉 [测试结果] 所有隐私沙箱物理隔离机制与群聊唤醒静默视网膜感知机制单元测试全部完美跑通！")
 
 if __name__ == "__main__":
