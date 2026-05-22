@@ -629,10 +629,13 @@ class QQGateway:
 
     async def _handle(self, event: dict):
         import html
+        import time
         msg_type = event.get("message_type", "private")
         raw = html.unescape(event.get("raw_message", "").strip())
         user_id = str(event.get("user_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
+
+        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
 
         if msg_type == "group":
             self_id = str(event.get("self_id", ""))
@@ -644,6 +647,29 @@ class QQGateway:
             session_key = f"group_{group_id}"
         else:
             session_key = f"user_{user_id}"
+
+        # ── 安全白名单前置拦截 ──────────────────────────────────
+        WHITE_LIST = {admin_id}
+        extra_white = os.getenv("MY_AGENT_WHITE_LIST", "")
+        if extra_white:
+            WHITE_LIST.update(x.strip() for x in extra_white.split(",") if x.strip())
+
+        if user_id not in WHITE_LIST:
+            if not hasattr(self, "_non_white_cache"):
+                self._non_white_cache = {}  # user_id -> last_reply_time
+            
+            now = time.time()
+            last_reply = self._non_white_cache.get(user_id, 0)
+            
+            if now - last_reply >= 300:  # 5分钟冷却，防止刷屏骚扰
+                self._non_white_cache[user_id] = now
+                reject_msg = "抱歉，我是亮哥的专属 AI 助手小萤，目前仅对主人开放私聊与管理服务哦。"
+                if msg_type == "group":
+                    await self._send("group", "", group_id, f"[CQ:at,qq={user_id}] {reject_msg}")
+                else:
+                    await self._send("private", user_id, "", reject_msg)
+                logger.warning(f"🛡️ [安全拦截] 拦截非白名单 QQ 用户 [{user_id}] 消息: {raw[:50]}")
+            return
 
         # ── 播客选题拦截 ──────────────────────────────────────────
         if self._waiting_podcast_topic.get(session_key):
