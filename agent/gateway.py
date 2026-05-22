@@ -65,6 +65,7 @@ class QQGateway:
         self._last_voice_time: float = 0.0
         self._waiting_podcast_topic: dict[str, bool] = {}
         self._podcast_choices: dict[str, list[str]] = {}
+        self._error_translation_cache: dict[tuple[str, str, Optional[str]], tuple[float, str]] = {}
 
     def _load_persona(self) -> tuple:
         """从运行期画像读取 (name, user_address)，兜底返回默认值。"""
@@ -963,6 +964,14 @@ class QQGateway:
         如果大模型调用不可用（如处于单元测试Mock环境、大模型503或网络超时故障），
         则无缝降级为富有真人活泼情感的静态模板。
         """
+        cache_key = (error_type, detail, t_name)
+        if cache_key in self._error_translation_cache:
+            ts, translation = self._error_translation_cache[cache_key]
+            import time
+            if time.time() - ts < 300:
+                logger.info(f"✨ [LLM 动态错误转义缓存命中] 缓存内容: {translation}")
+                return translation
+
         import random
         detail_lower = detail.lower()
         
@@ -1052,6 +1061,8 @@ class QQGateway:
                     
                     if translation and len(translation) > 5:
                         logger.info(f"✨ [LLM 动态错误转义成功] 原始错误: {detail[:80]} -> 拟真人话: {translation}")
+                        import time
+                        self._error_translation_cache[cache_key] = (time.time(), translation)
                         return translation
                 except Exception as llm_err:
                     logger.warning(f"⚠️ [LLM 动态错误转义失败，降级为静态兜底] 报错: {llm_err}")
