@@ -1598,6 +1598,7 @@ class QQGateway:
         msg_type = event.get("message_type", "private")
         user_id = str(event.get("user_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
+        sender_name = event.get("sender", {}).get("card") or event.get("sender", {}).get("nickname") or user_id
         
         # 0. 100% 还原 HTML 实体转义字符，修复中括号被转义为 &#91; 导致的匹配失败
         import html
@@ -1686,8 +1687,7 @@ class QQGateway:
             f"从而自主掌控是否使用 [语音:情绪] 发声。普通聊天绝不多发，少发、精发才能带给亮哥惊喜。]"
         )
         
-        # 拼接物理状态客观事实隐性前缀，投递给大脑
-        raw = f"{state_prefix}\n{raw}"
+        # 物理状态客观事实隐性前缀由 agent.run 动态传递注入给大模型，避免污染长期记忆
 
         # 状态提示，模拟真人对话的自然过渡
         # 自然过渡：AI 自主决定，在 core.py _run_loop 中 yield transition 事件
@@ -1699,7 +1699,13 @@ class QQGateway:
  
         # 流式段落/句子分发清洗逻辑，消除憋字挂起感
         try:
-            async for evt in agent.run(raw, stream=True):
+            async for evt in agent.run(
+                raw,
+                stream=True,
+                state_prefix=state_prefix,
+                real_sender_id=user_id,
+                real_sender_name=sender_name
+            ):
                 # ── 冲突检测 (Collision Detection) ──
                 if self._last_receive_time.get(session_key, 0.0) > task_start_time:
                     self._log_activity("总线冲突", "检测到对方在推理期间有新的发言，本回复已过时。废弃当前输出。")
