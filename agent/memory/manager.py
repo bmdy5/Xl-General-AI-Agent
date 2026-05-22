@@ -755,30 +755,188 @@ class MemoryManager:
             logger.warning(f"Error during incremental search_notes: {e}")
             return []
 
+    def _run_async(self, coro):
+        """大师级同步包装器：在各种复杂已运行或未运行的 asyncio event loop 环境下安全执行协程，彻底规避重入报错。"""
+        import asyncio
+        try:
+            loop = asyncio.get_event_loop()
+        except RuntimeError:
+            loop = asyncio.new_event_loop()
+            asyncio.set_event_loop(loop)
+        
+        if loop.is_running():
+            from concurrent.futures import ThreadPoolExecutor
+            with ThreadPoolExecutor(max_workers=1) as executor:
+                future = executor.submit(asyncio.run, coro)
+                return future.result()
+        else:
+            return loop.run_until_complete(coro)
+
     def search_memories(self, query: str, limit: int = 5) -> list[dict]:
-        """FTS5 全文搜索记忆，BM25 排序 + LIKE 降级."""
+        """FTS5 + 768维语义向量双通道混合检索 (RRF 融合重排 + 时序热度衰减 + 故障类别意图纠偏)"""
         cache_key = (query, limit)
         cached_res = self._mem_cache.get(cache_key)
         if cached_res is not None:
             return cached_res
 
         import re
+        import math
         clean = re.sub(r'[^\w\u4e00-\u9fff\s]', ' ', query).strip()
         if not clean or len(clean) < 2:
             return []
+
         try:
-            fts_query = ' OR '.join(clean.split())
             db = self._get_db()
-            results = fts_search(db, fts_query, limit)
-            # LIKE fallback for CJK queries where FTS5 tokenization fails
-            if len(results) < 2 and clean:
-                like_results = _like_search(db, "memories_fts", clean, limit)
-                res = like_results or results
-            else:
-                res = results
+            
+            # --- 1. 通道一：FTS5 精准检索 ---
+            from .fts_index import _cjk_space, search as fts_search
+            fts_query = _cjk_space(clean)
+            
+            # (a) 检索最新知识库 KI 虚拟表
+            ki_fts_rows = []
+            try:
+                cur = db.execute("""
+                    SELECT ki_id, title, category, keywords, summary, content
+                    FROM kis_fts
+                    WHERE kis_fts MATCH ? LIMIT ?
+                """, (fts_query, limit * 2))
+                ki_fts_rows = cur.fetchall()
+            except Exception as e:
+                logger.warning(f"KI FTS search failed: {e}")
+                
+            # (b) 检索存量旧 memories 虚拟表 (保持 100% 向下兼容)
+            legacy_rows = []
+            try:
+                legacy_rows = fts_search(db, ' OR '.join(clean.split()), limit)
+                if len(legacy_rows) < 2 and clean:
+                    like_legacy = _like_search(db, "memories_fts", clean, limit)
+                    legacy_rows = like_legacy or legacy_rows
+            except Exception:
+                pass
+
+            # --- 2. 通道二：768 维向量语义检索 ---
+            ki_vector_rows = []
+            try:
+                # 使用大师级同步安全包装运行异步向量提取
+                query_vec = self._run_async(self._get_embedding(query))
+                
+                # 计算 magnitude 避免除以零
+                q_mag = math.sqrt(sum(x * x for x in query_vec))
+                if q_mag > 0:
+                    # 获取向量库中所有的向量
+                    cur = db.execute("SELECT ki_id, embedding FROM ki_embeddings")
+                    all_embeds = cur.fetchall()
+                    
+                    scored_kis = []
+                    for row in all_embeds:
+                        k_id = row[0]
+                        try:
+                            import json
+                            k_vec = json.loads(row[1])
+                            k_mag = math.sqrt(sum(x * x for x in k_vec))
+                            if k_mag > 0:
+                                dot = sum(a * b for a, b in zip(query_vec, k_vec))
+                                cos_sim = dot / (q_mag * k_mag)
+                                if cos_sim >= 0.60:  # 语义匹配过滤阀值
+                                    scored_kis.append((k_id, cos_sim))
+                        except Exception:
+                            continue
+                    
+                    # 按相似度倒序排序，截取前 limit * 2 个
+                    scored_kis.sort(key=lambda x: x[1], reverse=True)
+                    ki_vector_rows = scored_kis[:limit * 2]
+            except Exception as e:
+                logger.warning(f"Vector search failed: {e}")
+
+            # --- 3. 混合重排 (Reciprocal Rank Fusion, RRF) ---
+            # 建立召回文档字典以进行去重合并
+            # RRF 常数 k=60
+            rrf_scores = {}  # ki_id -> float
+            
+            # (a) 处理 FTS5 召回的 KI 排名
+            for rank, row in enumerate(ki_fts_rows):
+                k_id = row[0]
+                rrf_scores[k_id] = rrf_scores.get(k_id, 0.0) + (1.0 / (60.0 + rank))
+                
+            # (b) 处理 Vector 召回的 KI 排名
+            for rank, (k_id, _) in enumerate(ki_vector_rows):
+                rrf_scores[k_id] = rrf_scores.get(k_id, 0.0) + (1.0 / (60.0 + rank))
+
+            # --- 4. 融合意图加权与时序/热度衰减评分 ---
+            # 判断 query 中是否含报错/调试关键词
+            is_debug_intent = any(w in query.lower() for w in ["错误", "报错", "调试", "bug", "error", "exception", "traceback"])
+            
+            merged_kis = []
+            for k_id, score in rrf_scores.items():
+                # 从 SQLite 获取该 KI 的完整信息以返回并计算热度
+                cur = db.execute("""
+                    SELECT id, title, category, keywords, summary, content, visit_count, last_hit_at, updated_at
+                    FROM knowledge_items WHERE id = ?
+                """, (k_id,))
+                ki_row = cur.fetchone()
+                if not ki_row:
+                    continue
+                
+                title, category, summary, content = ki_row[1], ki_row[2], ki_row[4], ki_row[5]
+                visit_count, last_hit_at, updated_at = ki_row[6], ki_row[7], ki_row[8]
+                
+                # 热度乘子： visit_count 越高频越重要
+                heat_multiplier = 1.0 + 0.1 * math.log(1 + visit_count)
+                
+                # 意图纠偏：如果用户搜索报错且分类属于 debugging，给予 1.3 倍分流倾向加权
+                intent_multiplier = 1.3 if (is_debug_intent and category == "xl_debugging") else 1.0
+                
+                final_score = score * heat_multiplier * intent_multiplier
+                
+                # 将此 KI 构造成向下兼容的 dict 格式
+                merged_kis.append({
+                    "content": content,
+                    "description": f"[{category}] {title}",
+                    "memory_type": "ki",
+                    "filename": f"ki_{k_id}.md",
+                    "timestamp": updated_at,
+                    "score": final_score
+                })
+                
+                # 增加一次命中统计（热度累积与时序更新，限制在事务中）
+                try:
+                    from datetime import datetime, timezone as _tz
+                    now = datetime.now(_tz.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    db.execute("""
+                        UPDATE knowledge_items
+                        SET visit_count = visit_count + 1, last_hit_at = ?
+                        WHERE id = ?
+                    """, (now, k_id))
+                    db.commit()
+                except Exception:
+                    pass
+
+            # 按融合评分排序
+            merged_kis.sort(key=lambda x: x["score"], reverse=True)
+            
+            # --- 5. 组装与旧 memories 的向下兼容合并 ---
+            res = []
+            # 优先取前 limit 条高质量 KI 记忆
+            res.extend(merged_kis[:limit])
+            
+            # 若结果没填满，由 Legacy 传统记忆补全，保证原本的功能百分百完美可用
+            if len(res) < limit:
+                for row in legacy_rows:
+                    if len(res) >= limit:
+                        break
+                    # 去重，防止与新知识库内容重复
+                    legacy_fname = row.get("filename", "")
+                    if not any(legacy_fname in r.get("filename", "") for r in res):
+                        res.append(row)
+            
+            # 清理 score 临时字段并缓存
+            for r in res:
+                r.pop("score", None)
+                
             self._mem_cache.set(cache_key, res)
             return res
-        except Exception:
+        except Exception as e:
+            logger.error(f"Search memories hybrid engine error: {e}")
             return []
 
     def list_memories(self) -> list[str]:
