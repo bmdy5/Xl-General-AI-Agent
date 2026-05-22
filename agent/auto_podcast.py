@@ -148,7 +148,10 @@ def scan_obsidian_notes(vault_path: str = OBSIDIAN_VAULT_PATH, hours: int = 48) 
 
 def load_notebooklm_cookies() -> dict:
     """加载 ~/.notebooklm-mcp/auth.json 中的 Cookies，用于高保真文件下载的身份验证."""
-    auth_path = os.path.join(NOTEBOOKLM_ENV["HOME"], ".notebooklm-mcp/auth.json")
+    # 强制优先加载宿主系统的真实 HOME 目录下的 auth.json
+    auth_path = "/Users/xiaofeng/.notebooklm-mcp/auth.json"
+    if not os.path.exists(auth_path):
+        auth_path = os.path.join(NOTEBOOKLM_ENV["HOME"], ".notebooklm-mcp/auth.json")
     if not os.path.exists(auth_path):
         # 兼容性寻找系统默认 HOME
         auth_path = os.path.expanduser("~/.notebooklm-mcp/auth.json")
@@ -165,6 +168,70 @@ def load_notebooklm_cookies() -> dict:
     else:
         logger.warning(f"⚠️ 找不到授权凭证文件: {auth_path}，下载音频时可能会因无凭证跳转登录页")
     return {}
+
+
+def download_podcast_silently_sync(audio_url: str, local_path: str, proxies: dict = None) -> bool:
+    """使用绝对高保真 Cookie 跨域隔离机制，在 Python 同步上下文中下载音频."""
+    import requests
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+    
+    cookies = load_notebooklm_cookies()
+    if not cookies:
+        logger.warning("⚠️ 未加载到有效 cookies，静默下载可能失败")
+        
+    headers_template = {
+        "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        "Accept": "*/*",
+        "Accept-Language": "zh-CN,zh;q=0.9,en;q=0.8",
+        "Referer": "https://notebooklm.google.com/",
+        "Sec-Ch-Ua": '"Not_A Brand";v="8", "Chromium";v="120", "Google Chrome";v="120"',
+        "Sec-Ch-Ua-Mobile": "?0",
+        "Sec-Ch-Ua-Platform": '"macOS"',
+        "Sec-Fetch-Dest": "audio",
+        "Sec-Fetch-Mode": "no-cors",
+        "Sec-Fetch-Site": "cross-site",
+    }
+    
+    session = requests.Session()
+    session.headers.update(headers_template)
+    if proxies:
+        session.proxies.update(proxies)
+        
+    # 精确分配 Cookie 隔离域名，防止 Clear cache & cookies 冲突和 403 Forbidden
+    for k, v in cookies.items():
+        # 丢弃无用、有冲突的跟踪/分析 Cookie
+        if k in ["_gcl_au", "_ga", "_ga_W0LDH41ZCB", "SEARCH_SAMESITE", "AEC", "NID", "__Secure-BUCKET", "ACCOUNT_CHOOSER"]:
+            continue
+            
+        if "OSID" in k:
+            # OSID 绑定到 .googleusercontent.com
+            session.cookies.set(k, v, domain=".googleusercontent.com", path="/")
+        elif k.startswith("__Host-"):
+            # 极重要：__Host- 必须精确绑定到 notebooklm 主域名，绝不能丢弃
+            session.cookies.set(k, v, domain="notebooklm.google.com", path="/")
+        else:
+            # 其它正常凭证绑定到 .google.com
+            session.cookies.set(k, v, domain=".google.com", path="/")
+            
+    try:
+        logger.info(f"🚀 [静默下载] 启动隔离 Cookie 下载流，目标 URL: {audio_url}")
+        r = session.get(audio_url, verify=False, allow_redirects=True, timeout=60)
+        
+        is_html = b"<!doctype html>" in r.content.lower() or b"<html" in r.content.lower()
+        if r.status_code == 200 and not is_html and len(r.content) > 100000:
+            with open(local_path, "wb") as f:
+                f.write(r.content)
+            logger.info(f"🎯 [静默下载] 隔离 Cookie 后台下载 100% 成功！保存至: {local_path} | 大小: {len(r.content)} 字节")
+            return True
+        else:
+            logger.warning(f"⚠️ [静默下载] 校验失败。状态码: {r.status_code}, 大小: {len(r.content)}, 是否为 HTML: {is_html}")
+            if is_html:
+                logger.warning(f"内容前 200 字节: {r.content[:200]}")
+            return False
+    except Exception as e:
+        logger.error(f"❌ [静默下载] 隔离 Cookie 下载期间发生错误: {e}")
+        return False
 
 
 async def call_tool_with_retry(client, tool_name: str, arguments: dict, max_retries: int = 2, delay: int = 3) -> str:
@@ -352,26 +419,16 @@ async def check_and_download_podcast() -> Optional[str]:
         local_filename = f"daily_podcast_{today_str}.wav"
         local_path = os.path.join(output_dir, local_filename)
         
-        logger.info(f"📥 正在将音频下载到本地: {local_path}...")
-        download_cookies = load_notebooklm_cookies()
-        
-        # 将 cookies 转换为 Cookie 头拼接字符串，避免 aiohttp 跨域重定向时带上 cookie 导致死循环 (TooManyRedirects 报错)
-        cookie_str = "; ".join([f"{k}={v}" for k, v in download_cookies.items()])
-        headers = {
-            "Cookie": cookie_str,
-            "User-Agent": "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
-        }
-        
-        connector = aiohttp.TCPConnector(ssl=False)
-        async with aiohttp.ClientSession(connector=connector) as session:
-            proxy_url = NOTEBOOKLM_ENV["HTTP_PROXY"]
-            async with session.get(audio_url, headers=headers, proxy=proxy_url) as resp:
-                if resp.status == 200:
-                    with open(local_path, "wb") as f:
-                        f.write(await resp.read())
-                    logger.info(f"✅ 音频下载成功：{local_path}")
-                else:
-                    raise ConnectionError(f"音频下载失败，HTTP 状态码: {resp.status}")
+        logger.info(f"📥 正在将音频下载到本地 (隔离 Cookie 静默下载): {local_path}...")
+        proxy_url = NOTEBOOKLM_ENV.get("HTTP_PROXY") or "http://127.0.0.1:7897"
+        download_success = await asyncio.to_thread(
+            download_podcast_silently_sync,
+            audio_url,
+            local_path,
+            proxies={"http": proxy_url, "https": proxy_url} if proxy_url else None
+        )
+        if not download_success:
+            raise ConnectionError("高保真 Cookie 跨域隔离静默下载失败")
                     
         # 销毁临时笔记本，清理云端
         logger.info(f"🧹 正在清理云端临时笔记本: {notebook_id}...")
