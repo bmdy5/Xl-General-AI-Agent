@@ -72,6 +72,20 @@ class QQGateway:
         self._private_chat_paused: bool = False
         self._last_receive_time: dict[str, float] = {}
 
+        # ── 解耦与去硬编码配置区域 ──
+        # 1. 统一的管理员 QQ 账号配置及兜底
+        self.admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        # 2. 载波监听与冲突检测核心退避秒数，默认 2.0s
+        self.csma_backoff_seconds = float(os.getenv("QQ_CSMA_BACKOFF_SECONDS", "2.0"))
+        # 3. 私聊与群聊打盹深度梦境休眠时长（分钟），在代码里转成秒数，默认为 15.0 分钟
+        self.fatigue_sleep_seconds = float(os.getenv("QQ_FATIGUE_SLEEP_MINUTES", "15.0")) * 60.0
+        # 4. 私聊疲劳累加扣分系数，默认为 0.4
+        self.fatigue_rate = float(os.getenv("QQ_FATIGUE_RATE", "0.4"))
+        # 5. 人格画像自反思反省参数（检索词、检索上限、自省轮数间隔）
+        self.reflection_query = "纠正 语气 态度 称呼 性格 说话方式"
+        self.reflection_limit = 5
+        self.reflection_interval = 5
+
     async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None, is_private: bool = False):
         """调整大脑疲劳度，若跨越阈值则触发物理打盹/复苏，并实施高情商吐槽宣告"""
         import time
@@ -120,7 +134,7 @@ class QQGateway:
                 self._log_activity("物理打盹", f"大脑过热，小萤在群 {group_id} 中宣告打盹: {announcement}")
                 
                 # 异步拉起做梦净化归零闭环
-                admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+                admin_id = self.admin_id
                 session_key = f"group_{group_id}_{admin_id}"
                 agent = self._agents.get(session_key)
                 if agent is not None:
@@ -217,8 +231,8 @@ class QQGateway:
                 except Exception as e:
                     logger.warning(f"Failed to replace private session messages: {e}")
                     
-            # 2. 物理冷却等待：15 分钟 (900 秒)
-            await asyncio.sleep(900)
+            # 2. 物理冷却等待：打盹做梦深度冷却
+            await asyncio.sleep(self.fatigue_sleep_seconds)
             
             # 3. 后台做梦与技能进化
             agent.messages = snapshot_messages
@@ -272,7 +286,7 @@ class QQGateway:
             _pn, _ua = self._load_persona()
             prompt = (
                 f"你现在是{_ua}的专属 AI 助手【{_pn}】（一个温柔、知性且富有情感的年轻女性极客合伙人）。"
-                f"你刚才由于用脑过度物理打盹了半小时，并在梦境中对私聊记忆进行了净化，现在充满电成功满血复活。\n"
+                f"你刚才由于用脑过度物理打盹了{self.fatigue_sleep_seconds / 60:.0f}分钟，并在梦境中对私聊记忆进行了净化，现在充满电成功满血复活。\n"
                 f"请你自发、高情商地向对方发表一句幽默、可爱的私聊复苏宣告，告诉对方你充完电醒来了，且大脑感觉超级清醒。\n\n"
                 f"规范：\n"
                 f"1. 必须符合“单气泡三段呼吸律”：整句消息是一条气泡发走，最多三段，段落之间空一行（使用两个换行符 \\n\\n 留白隔开）。\n"
@@ -308,7 +322,7 @@ class QQGateway:
             "呼……（小声呼气）感觉大脑算力已经严重超载啦，小萤要先回我的小本本里打个盹降降温。\n\n大家不要想我，普通水群决策物理锁定中~\n\n我们一会儿见，摸摸头！"
         ]
         
-        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        admin_id = self.admin_id
         session_key = f"group_{group_id}_{admin_id}"
         agent = self._agents.get(session_key)
         if agent is None:
@@ -418,7 +432,7 @@ class QQGateway:
             "滴滴！系统更新完毕～小萤充完电醒来啦！\n\n刚刚完成了大脑记忆大整理，感觉现在头脑超级清醒。\n\n小萤重新浮出水面，贴心守护大家！"
         ]
         
-        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        admin_id = self.admin_id
         session_key = f"group_{group_id}_{admin_id}"
         agent = self._agents.get(session_key)
         if agent is None:
@@ -638,7 +652,7 @@ class QQGateway:
         logger.info("QQ Gateway Background Daemon Loop started.")
         q = TaskQueue()
 
-        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        admin_id = self.admin_id
         if not admin_id:
             logger.warning("QQ_ADMIN_ID not configured in .env. Background daemon is disabled.")
             return
@@ -1039,7 +1053,7 @@ class QQGateway:
             logger.info(f"Smart float suppressed due to rate limiting for group {group_id}")
             return
             
-        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        admin_id = self.admin_id
         session_key = f"group_{group_id}_{admin_id}"
         
         agent = self._agents.get(session_key)
@@ -1179,7 +1193,7 @@ class QQGateway:
                 inc = 0.0
             await self._adjust_fatigue(group_id, inc, event)
 
-        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        admin_id = self.admin_id
 
         is_at_bot = False
         if msg_type == "group":
@@ -1400,7 +1414,7 @@ class QQGateway:
         this_msg_time = time.time()
         self._last_receive_time[session_key] = this_msg_time
         
-        await asyncio.sleep(2.0)
+        await asyncio.sleep(self.csma_backoff_seconds)
         
         if self._last_receive_time.get(session_key, 0.0) > this_msg_time:
             logger.info(f"Carrier Sense: Newer message received for {session_key}. Quietly aborting current handler.")
@@ -1580,7 +1594,7 @@ class QQGateway:
     async def _execute_task(self, session_key: str, event: dict, raw: str):
         import time
         task_start_time = time.time()
-        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        admin_id = self.admin_id
         msg_type = event.get("message_type", "private")
         user_id = str(event.get("user_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
@@ -1835,20 +1849,20 @@ class QQGateway:
                 
             # ── 疲劳度计费 ──
             if not is_collision and msg_type == "private" and user_id != admin_id and total_sent_tokens > 0:
-                asyncio.create_task(self._adjust_fatigue(session_key, total_sent_tokens * 0.4, event=event, is_private=True))
+                asyncio.create_task(self._adjust_fatigue(session_key, total_sent_tokens * self.fatigue_rate, event=event, is_private=True))
             
-            # 后台异步触发人格自画像整理 (Consolidation)，每 5 轮一次省 token
+            # 后台异步触发人格自画像整理 (Consolidation)，定时触发省 token
             _consolidate_count = getattr(self, "_consolidate_count", 0) + 1
             self._consolidate_count = _consolidate_count
             async def async_consolidate_persona():
-                if _consolidate_count % 5 != 0:
+                if _consolidate_count % self.reflection_interval != 0:
                     return
                 profile_file = agent.memory.base_dir / "persona_profile.json"
                 if profile_file.exists():
                     try:
                         import json
                         current_profile = profile_file.read_text(encoding="utf-8")
-                        feedback_mems = agent.memory.search_memories("纠正 语气 态度 称呼 性格 说话方式", limit=5)
+                        feedback_mems = agent.memory.search_memories(self.reflection_query, limit=self.reflection_limit)
                         if feedback_mems:
                             feedback_text = "\n".join([f"- {m.get('content')}" for m in feedback_mems])
                             consolidation_prompt = [
