@@ -856,11 +856,20 @@ class Agent:
           cwd = os.getcwd()
           # 自进化规则放在 Current Context 前面 → 形成稳定前缀，命中 DeepSeek 缓存
           dynamic = ""
+          
+          # 1. 载入项目根目录下的顶级全局系统铁律 (EVOLVED_RULES.md，含 R1-R7 铁律)
+          global_rules_file = Path(__file__).resolve().parent.parent / "EVOLVED_RULES.md"
+          if global_rules_file.exists():
+              global_rules = global_rules_file.read_text(encoding="utf-8").strip()
+              if global_rules:
+                  dynamic += f"\n## Global System Evolved Rules (R1-R7)\n{global_rules}\n"
+          
+          # 2. 载入动态自进化偏好微调规则
           rules_file = self.memory.base_dir / "EVOLVED_RULES.md"
           if rules_file.exists():
               rules = rules_file.read_text(encoding="utf-8").strip()
               if rules:
-                  dynamic += f"\n## Self-Evolved Rules (learned from past corrections)\n{rules}\n"
+                  dynamic += f"\n## Dynamic Evolved Preferences (learned from past corrections)\n{rules}\n"
 
           dynamic += (
               f"\n\n---\n"
