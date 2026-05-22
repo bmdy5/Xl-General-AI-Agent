@@ -274,6 +274,54 @@ class NotebookLMTool(BaseTool):
 
                     if status == "success":
                         local_path = res_data.get("local_path")
+                        
+                        # 自主执行共享目录拷贝与 upload_private_file 推送给亮哥
+                        import shutil
+                        share_dir = "/Users/xiaofeng/napcat-data-tmp"
+                        dest_filename = os.path.basename(local_path)
+                        host_dest_path = os.path.join(share_dir, dest_filename)
+                        container_dest_path = f"/app/.config/QQ/{dest_filename}"
+                        
+                        # 确保共享文件夹目录存在
+                        os.makedirs(share_dir, exist_ok=True)
+                        logger.info(f"➡️ 工具层正在拷贝音频到共享目录: {host_dest_path}...")
+                        shutil.copy(local_path, host_dest_path)
+                        
+                        # 发送给谁？优先从 context 获取，否则默认亮哥 1705919142
+                        admin_id = "1705919142"
+                        if context and hasattr(context, "user_id"):
+                            admin_id = str(context.user_id)
+                        elif context and isinstance(context, dict) and "user_id" in context:
+                            admin_id = str(context["user_id"])
+                            
+                        file_payload = {
+                            "user_id": int(admin_id),
+                            "file": container_dest_path,
+                            "name": dest_filename
+                        }
+                        
+                        # 调用 HTTP
+                        headers = {"Content-Type": "application/json"}
+                        nc_http_url = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3020")
+                        nc_token = os.getenv("NAPCAT_TOKEN", "")
+                        if nc_token:
+                            headers["Authorization"] = f"Bearer {nc_token}"
+                            
+                        url = f"{nc_http_url}/upload_private_file"
+                        logger.info(f"📤 工具层正在向 QQ 用户 {admin_id} 推送播客文件卡片...")
+                        
+                        try:
+                            import httpx
+                            # 异步发送请求投递文件卡片
+                            async with httpx.AsyncClient(timeout=40.0) as http_client:
+                                resp = await http_client.post(url, json=file_payload, headers=headers)
+                                if resp.status_code != 200:
+                                    logger.warning(f"Tool level file upload failed ({resp.status_code}): {resp.text}")
+                                else:
+                                    logger.info("🎉 Tool level file card pushed successfully!")
+                        except Exception as upload_err:
+                            logger.error(f"Tool level upload error: {upload_err}")
+
                         yield ToolResult(
                             type="result",
                             data=res_str,
