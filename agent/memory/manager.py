@@ -489,6 +489,7 @@ class MemoryManager:
     async def _get_embedding(self, text: str) -> list[float]:
         """提取 768 维中文增强语义向量。支持本地 m3e-base 或远程 API 两种模式。"""
         import os
+        import asyncio
         embedding_mode = os.getenv("EMBEDDING_MODE", "local").lower()
 
         if embedding_mode == "local":
@@ -499,18 +500,39 @@ class MemoryManager:
                     globals()["_LOCAL_MODEL_CACHE"] = {}
                 
                 cache = globals()["_LOCAL_MODEL_CACHE"]
+                
+                # 智能断路器：如果曾经加载失败过，直接返回全零，绝不再次发起网络连接
+                if "_m3e" in cache and cache["_m3e"] is None:
+                    return [0.0] * 768
+                
                 if "_m3e" not in cache:
-                    logger.info("Initializing local m3e-base embedding model (from domestic mirror hf-mirror.com)...")
-                    # 设置国内 Hugging Face 极速镜像源，杜绝因连接 HF 官方超时导致的拉取失败
-                    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+                    local_model_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/model/m3e-base"
                     from sentence_transformers import SentenceTransformer
-                    # 首次会自动极速拉取并本地缓存
-                    cache["_m3e"] = SentenceTransformer("moka-ai/m3e-base")
-                    logger.info("Local m3e-base model loaded successfully!")
+                    
+                    try:
+                        if os.path.exists(local_model_path) and os.path.isdir(local_model_path):
+                            logger.info(f"Loading m3e-base model from local path: {local_model_path}")
+                            # 放入异步后台线程加载，防止阻塞主事件循环
+                            model = await asyncio.to_thread(SentenceTransformer, local_model_path)
+                        else:
+                            logger.info("Local path not found, falling back to domestic mirror hf-mirror.com...")
+                            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+                            model = await asyncio.to_thread(SentenceTransformer, "moka-ai/m3e-base")
+                            
+                        cache["_m3e"] = model
+                        logger.info("Local m3e-base model loaded successfully!")
+                    except Exception as load_err:
+                        # 激活断路器，记录失败，后续请求直接快速失败，不再发起联网
+                        cache["_m3e"] = None
+                        logger.error(f"Failed to load m3e-base model: {load_err}. Circuit breaker activated, local embedding disabled.")
+                        return [0.0] * 768
                 
                 model = cache["_m3e"]
-                # 运行本地 CPU 推理，得到 numpy 数组并转换为 768维 list
-                embeddings = model.encode([text], show_progress_bar=False)
+                if model is None:
+                    return [0.0] * 768
+                
+                # 运行本地 CPU 推理，通过 asyncio.to_thread 放入线程池，解放事件循环
+                embeddings = await asyncio.to_thread(model.encode, [text], show_progress_bar=False)
                 return [float(x) for x in embeddings[0]]
             except Exception as e:
                 logger.error(f"Failed to extract local embedding via m3e-base: {e}")
