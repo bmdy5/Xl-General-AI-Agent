@@ -522,19 +522,46 @@ class QQGateway:
                 topic = data.get("topic")
                 logger.info(f"🎉 [异步轮询协程] 早报播客生成成功！本地保存路径: {local_path}")
                 if os.path.exists(local_path):
-                    with open(local_path, "rb") as vf:
-                        voice_bytes = vf.read()
+                    import shutil
+                    share_dir = "/Users/xiaofeng/napcat-data-tmp"
+                    os.makedirs(share_dir, exist_ok=True)
+                    safe_topic = re.sub(r'[\/:*?"<>|]', '_', topic)
+                    dest_filename = f"亮哥专属完整播客音频-{safe_topic}.wav"
+                    host_dest_path = os.path.join(share_dir, dest_filename)
+                    container_dest_path = f"/app/.config/QQ/{dest_filename}"
                     
-                    # 填充静音以配合 QQ
-                    voice_bytes = self._pad_wav(voice_bytes)
-                    b64_data = base64.b64encode(voice_bytes).decode("utf-8")
-                    cq_record = f"[CQ:record,file=base64://{b64_data}]"
+                    logger.info(f"➡️ 正在拷贝音频到共享目录: {host_dest_path}...")
+                    shutil.copy(local_path, host_dest_path)
                     
-                    # 推送语音
-                    await self._send("private", admin_id, "", cq_record, skip_delay=True)
+                    file_payload = {
+                        "user_id": int(admin_id),
+                        "file": container_dest_path,
+                        "name": dest_filename
+                    }
+                    
+                    endpoint = "/upload_private_file"
+                    url = f"{NC_HTTP_URL}{endpoint}"
+                    headers = {"Content-Type": "application/json"}
+                    if NC_TOKEN:
+                        headers["Authorization"] = f"Bearer {NC_TOKEN}"
+                        
+                    logger.info(f"📤 正在向亮哥 QQ 推送完整版播客文件: {dest_filename}")
+                    try:
+                        if self._http:
+                            async with self._http.post(url, json=file_payload, headers=headers) as resp:
+                                if resp.status != 200:
+                                    body = await resp.text()
+                                    logger.warning(f"File upload failed ({resp.status}): {body[:100]}")
+                        else:
+                            import urllib.request
+                            req = urllib.request.Request(url, data=json.dumps(file_payload).encode(), headers=headers, method="POST")
+                            loop = asyncio.get_running_loop()
+                            await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=30))
+                    except Exception as upload_err:
+                        logger.error(f"Failed to upload file to QQ: {upload_err}")
                     
                     # 推送提示语
-                    success_msg = f"🎉 亮哥专属每日学习早报播客合成成功！（在第 {q_count} 次查询成功，累计等待了 {time_spent_str}）。\n今日主题：【{topic}】\n音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
+                    success_msg = f"🎉 亮哥专属每日学习早报播客合成成功！（在第 {q_count} 次查询成功，累计等待了 {time_spent_str}）。\n今日主题：【{topic}】\n音频已通过 QQ 文件传输发送到您的手机。\n本地保存路径：{local_path}"
                     await self._send("private", admin_id, "", success_msg)
             elif status == "pending":
                 # 2. 还在生成中
@@ -1485,16 +1512,46 @@ class QQGateway:
             if status == "success":
                 local_path = data.get("local_path")
                 topic = data.get("topic")
-                import base64
                 if os.path.exists(local_path):
-                    with open(local_path, "rb") as vf:
-                        voice_bytes = vf.read()
-                    voice_bytes = self._pad_wav(voice_bytes)
-                    b64_data = base64.b64encode(voice_bytes).decode("utf-8")
-                    cq_record = f"[CQ:record,file=base64://{b64_data}]"
-                    await self._send("private", admin_id, "", cq_record, skip_delay=True)
+                    import shutil
+                    share_dir = "/Users/xiaofeng/napcat-data-tmp"
+                    os.makedirs(share_dir, exist_ok=True)
+                    safe_topic = re.sub(r'[\/:*?"<>|]', '_', topic)
+                    dest_filename = f"亮哥专属完整播客音频-{safe_topic}.wav"
+                    host_dest_path = os.path.join(share_dir, dest_filename)
+                    container_dest_path = f"/app/.config/QQ/{dest_filename}"
                     
-                    success_msg = f"🎉 亮哥专属每日学习早报播客获取成功！\n今日主题：【{topic}】\n音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
+                    logger.info(f"➡️ 正在拷贝音频到共享目录: {host_dest_path}...")
+                    shutil.copy(local_path, host_dest_path)
+                    
+                    file_payload = {
+                        "user_id": int(admin_id),
+                        "file": container_dest_path,
+                        "name": dest_filename
+                    }
+                    
+                    endpoint = "/upload_private_file"
+                    url = f"{NC_HTTP_URL}{endpoint}"
+                    headers = {"Content-Type": "application/json"}
+                    if NC_TOKEN:
+                        headers["Authorization"] = f"Bearer {NC_TOKEN}"
+                        
+                    logger.info(f"📤 正在向亮哥 QQ 主动推送完整版播客文件: {dest_filename}")
+                    try:
+                        if self._http:
+                            async with self._http.post(url, json=file_payload, headers=headers) as resp:
+                                if resp.status != 200:
+                                    body = await resp.text()
+                                    logger.warning(f"File upload failed ({resp.status}): {body[:100]}")
+                        else:
+                            import urllib.request
+                            req = urllib.request.Request(url, data=json.dumps(file_payload).encode(), headers=headers, method="POST")
+                            loop = asyncio.get_running_loop()
+                            await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=30))
+                    except Exception as upload_err:
+                        logger.error(f"Failed to upload file to QQ: {upload_err}")
+                    
+                    success_msg = f"🎉 亮哥专属每日学习早报播客获取成功！\n今日主题：【{topic}】\n音频已通过 QQ 文件传输发送到您的手机。\n本地保存路径：{local_path}"
                     await self._send("private", admin_id, "", success_msg)
             elif status == "pending":
                 logger.info("晨间播客尚在生成中，将由守护进程轮询捕获。")
