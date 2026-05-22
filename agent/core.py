@@ -174,7 +174,15 @@ class Agent:
 
     # ── public API ─────────────────────────────────────────────
 
-    async def run(self, user_input: str, stream: bool = False) -> AsyncGenerator[dict, None]:
+    async def run(
+        self,
+        user_input: str,
+        stream: bool = False,
+        state_prefix: str = "",
+        real_sender_id: str = "",
+        real_sender_name: str = ""
+    ) -> AsyncGenerator[dict, None]:
+        self.current_state_prefix = state_prefix
         self._abort.clear()
         self._permission_granted.clear()
         self._turn_count = 0
@@ -222,9 +230,31 @@ class Agent:
         # Load error recipes from previous sessions
         await self.error_tracker.load_recipes()
 
-        self.messages.append({"role": "user", "content": user_input})
-        if self.session:
-            await self.session.append_message({"role": "user", "content": user_input})
+        # 智能去重与身份补全：构造带有发送人元数据的标准 user 消息
+        user_msg = {
+            "role": "user",
+            "content": user_input
+        }
+        if real_sender_id:
+            user_msg["real_sender_id"] = real_sender_id
+        if real_sender_name:
+            user_msg["real_sender_name"] = real_sender_name
+
+        is_duplicate = False
+        if self.messages:
+            last_msg = self.messages[-1]
+            if last_msg.get("role") == "user" and last_msg.get("content") == user_input:
+                is_duplicate = True
+                # 补充可能缺失的元数据
+                if real_sender_id and not last_msg.get("real_sender_id"):
+                    last_msg["real_sender_id"] = real_sender_id
+                if real_sender_name and not last_msg.get("real_sender_name"):
+                    last_msg["real_sender_name"] = real_sender_name
+
+        if not is_duplicate:
+            self.messages.append(user_msg)
+            if self.session:
+                await self.session.append_message(user_msg)
 
         # 智能意图防覆盖锁定：仅在无 goal 或显式输入“新任务/新需求/重新开始”前缀时允许锁定或覆盖
         is_explicit_new_task = any(user_input.startswith(prefix) for prefix in ["新任务：", "新任务:", "重新开始：", "重新开始:", "新需求：", "新需求:"])
@@ -549,6 +579,12 @@ class Agent:
                     context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
                     if memory_block:
                         context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
+                    
+                    # 动态注入物理发声限制感知客观事实，不污染原生长期记忆历史
+                    state_pref = getattr(self, "current_state_prefix", "")
+                    if state_pref:
+                        context_parts.append(state_pref)
+
                     if is_fatigued:
                         context_parts.append(
                             "## ⚠️【重要情绪设定：疲劳吐槽】\n"
