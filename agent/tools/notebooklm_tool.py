@@ -240,14 +240,47 @@ class NotebookLMTool(BaseTool):
                         
                     matched_list.sort(key=get_modified_time, reverse=True)
                     
+                    # 格式化所有的匹配笔记本信息，包含时间，明示给 Agent 和亮哥
+                    matched_details_list = []
+                    for idx, nb in enumerate(matched_list):
+                        nb_title = nb.get("title", "未命名笔记本")
+                        nb_id = nb.get("id") or nb.get("notebook_id")
+                        nb_time = nb.get("modified_at") or nb.get("created_at") or "未知时间"
+                        try:
+                            # 将 2026-05-22T01:05:12Z 等 ISO 格式格式化为 YYYY-MM-DD HH:MM:SS
+                            if "T" in nb_time and "Z" in nb_time:
+                                dt = datetime.strptime(nb_time, "%Y-%m-%dT%H:%M:%SZ")
+                                nb_time_friendly = dt.strftime("%Y-%m-%d %H:%M:%S")
+                            else:
+                                nb_time_friendly = nb_time
+                        except Exception:
+                            nb_time_friendly = nb_time
+                        
+                        is_newest = "🌟 [最新]" if idx == 0 else ""
+                        matched_details_list.append(
+                            f"  {idx + 1}. 【{nb_title}】 (更新时间: {nb_time_friendly}) {is_newest}\n     ID: {nb_id}"
+                        )
+                    matched_details_str = "\n".join(matched_details_list)
+                    
                     best_nb = matched_list[0]
                     target_id = best_nb.get("id") or best_nb.get("notebook_id")
                     target_title = best_nb.get("title", "未命名云端笔记本")
                     modified_str = best_nb.get("modified_at", "未知时间")
+                    try:
+                        if "T" in modified_str and "Z" in modified_str:
+                            dt = datetime.strptime(modified_str, "%Y-%m-%dT%H:%M:%SZ")
+                            modified_friendly = dt.strftime("%Y-%m-%d %H:%M:%S")
+                        else:
+                            modified_friendly = modified_str
+                    except Exception:
+                        modified_friendly = modified_str
                     
                     yield ToolResult(
                         type="progress", 
-                        data=f"🎯 成功识别到最新的匹配笔记本: '{target_title}' (更新时间: {modified_str}, ID: {target_id})"
+                        data=(
+                            f"🔍 检索到与关键字【{topic}】匹配 of 云端笔记本列表：\n{matched_details_str}\n\n"
+                            f"🎯 按照【最新优先】规则，已自动锁定最新的匹配项: '{target_title}'"
+                        )
                     )
 
                     # 2. 补齐/建立本地 active_podcast.json 状态机，以便触发后续捕获下载
@@ -328,7 +361,8 @@ class NotebookLMTool(BaseTool):
                             result_for_assistant=(
                                 f"🎉 完美闭环！我已在云端检索并匹配到了最新修改的笔记本：\n"
                                 f"📓 名称：【{target_title}】\n"
-                                f"⏰ 更新时间：{modified_str}\n\n"
+                                f"⏰ 更新时间：{modified_friendly}\n\n"
+                                f"📋 云端所有候选笔记本及其时间列表：\n{matched_details_str}\n\n"
                                 f"其播客音频已成功在后台静默捕获下载，并以真实文件传输方式推送到您的 QQ，支持手机拖拉进度条！"
                             ),
                         )
@@ -338,6 +372,7 @@ class NotebookLMTool(BaseTool):
                             data="pending",
                             result_for_assistant=(
                                 f"☕️ 亮哥，云端匹配到的最新笔记本【{target_title}】音频仍在生成中。\n"
+                                f"📋 云端所有候选笔记本及其时间列表：\n{matched_details_str}\n\n"
                                 f"我已建立状态机并激活了后台高频 30 秒轮询，生成好后我会第一时间自动推送给您！"
                             ),
                         )
