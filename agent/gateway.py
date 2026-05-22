@@ -501,11 +501,22 @@ class QQGateway:
         
         logger.info(f"🔄 [异步轮询协程] 开始第 {q_count} 次状态查询...")
         try:
+            # 严格遵循亮哥最新指示：最多重试 3 次，不需要频繁发送
+            is_debug = state.get("debug_mode", False)
+            max_queries = 3
+            time_val = 30
+            time_unit = "秒" if is_debug else "分钟"
+            next_wait_str = "30 秒" if is_debug else "30 分钟"
+            time_spent_str = f"{q_count * time_val} {time_unit}"
+            
             # 执行查询
             res = await check_and_push_podcast()
             data = json.loads(res)
             status = data.get("status")
             
+            if status == "error":
+                raise ConnectionError(data.get("message", "静默下载或处理发生内部错误"))
+                
             if status == "success":
                 local_path = data.get("local_path")
                 topic = data.get("topic")
@@ -523,30 +534,50 @@ class QQGateway:
                     await self._send("private", admin_id, "", cq_record, skip_delay=True)
                     
                     # 推送提示语
-                    success_msg = f"🎉 亮哥专属每日学习早报播客合成成功！（在第 {q_count} 次查询成功，累计等待了 {q_count * 30} 分钟）。\n今日主题：【{topic}】\n音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
+                    success_msg = f"🎉 亮哥专属每日学习早报播客合成成功！（在第 {q_count} 次查询成功，累计等待了 {time_spent_str}）。\n今日主题：【{topic}】\n音频已通过 QQ 语音推送到您的手机。\n本地保存路径：{local_path}"
                     await self._send("private", admin_id, "", success_msg)
             elif status == "pending":
                 # 2. 还在生成中
                 logger.info(f"⏳ [异步轮询协程] 早报播客云端生成中 (第 {q_count} 次)")
-                if q_count >= 3:
-                    # 超过3次宣告超时失败
-                    fail_msg = "❌ 每日学习早报播客生成超时。已累计查询 3 次（共 90 分钟），云端仍未完成，彻底宣告失败。"
+                if q_count >= max_queries:
+                    # 超过次数宣告超时失败
+                    fail_msg = f"❌ 每日学习早报播客生成超时。已累计查询 {q_count} 次（共 {time_spent_str}），云端仍未完成，彻底宣告失败。"
                     await self._send("private", admin_id, "", fail_msg)
                     await force_cleanup_podcast()
                 else:
-                    wait_msg = f"🔄 亮哥，学习早报播客云端仍在生成中（已等待 {q_count * 30} 分钟）。我将在 30 分钟后为您进行下一次查询（第 {q_count + 1} 次）。"
-                    await self._send("private", admin_id, "", wait_msg)
+                    # 仅在生成中时，为了不频繁打扰亮哥，不发多条消息，通过日志记录即可，不往 QQ 发送中间 pending 消息
+                    logger.info(f"🔄 亮哥，学习早报播客云端仍在生成中（已等待 {time_spent_str}）。我将在 {next_wait_str} 后为您进行下一次查询。")
             elif status == "no_active_task":
                 logger.info("无活跃播客生成任务。")
         except Exception as e:
             logger.error(f"❌ [异步轮询协程] 查询发生异常 (第 {q_count} 次): {e}", exc_info=True)
-            if q_count >= 3:
-                fail_msg = f"❌ 每日学习早报播客轮询查询时发生错误，且已达最大查询次数（3次），彻底宣告失败。错误: {str(e)[:200]}"
+            max_queries = 3
+            next_wait_str = "30 秒" if is_debug else "30 分钟"
+            
+            # 判断是否是授权过期导致的下载失败
+            is_auth_error = "Cookie" in str(e) or "下载" in str(e) or "ConnectionError" in type(e).__name__
+            
+            if q_count >= max_queries:
+                fail_msg = f"❌ 每日学习早报播客轮询时发生错误，已达最大重试次数（3次），已停止重试。最新错误: {str(e)[:200]}"
                 await self._send("private", admin_id, "", fail_msg)
                 await force_cleanup_podcast()
             else:
-                err_msg = f"⚠️ 轮询查询早报播客状态时发生网络或接口错误 (第 {q_count} 次): {str(e)[:150]}。我将在 30 分钟后尝试下一次查询。"
-                await self._send("private", admin_id, "", err_msg)
+                # 授权过期仅在第一次出错时给亮哥发一次 QQ 提醒，不要每次重试都发，防止打扰亮哥
+                if is_auth_error:
+                    notified = state.get("notified_expired", False)
+                    if not notified:
+                        err_msg = f"⚠️ 小萤提示：由于您的 Google (NotebookLM) 授权已过期，静默下载早报播客失败了。请亮哥在 Chrome 浏览器中重新访问一次 https://notebooklm.google.com/ 刷新 Cookie，完成后我会在后台自动重新下载并给您发送！(最多自动重试 3 次)"
+                        await self._send("private", admin_id, "", err_msg)
+                        state["notified_expired"] = True
+                        try:
+                            from agent.auto_podcast import ACTIVE_PODCAST_JSON
+                            with open(ACTIVE_PODCAST_JSON, "w", encoding="utf-8") as sf:
+                                json.dump(state, sf, ensure_ascii=False, indent=2)
+                        except Exception as write_err:
+                            logger.error(f"写入状态机失败: {write_err}")
+                else:
+                    # 其他普通的网络或临时接口抖动，我们仅记录日志，不发 QQ 打扰亮哥，静默在后台重试即可
+                    logger.warning(f"⚠️ 轮询查询早报播客状态时发生网络或接口错误 (第 {q_count} 次): {str(e)[:150]}。将在 {next_wait_str} 后尝试下一次重试。")
 
     async def _ws_loop(self):
         headers = {}
@@ -1435,7 +1466,7 @@ class QQGateway:
                 
             note_path = synth_data.get("note_path")
             
-            res_launch = await launch_podcast_generation(note_path, topic, debug_mode=False)
+            res_launch = await launch_podcast_generation(note_path, topic, debug_mode=True)
             launch_data = json.loads(res_launch)
             if launch_data.get("status") != "success":
                 raise ValueError(f"云端投喂失败: {launch_data.get('message')}")
