@@ -513,17 +513,29 @@ class Agent:
             else:
                 memory_block = cached_block  # 每轮注入
 
-            # 合并 system prompt + memory block 为一条消息（DeepSeek 不兼容连续 system）
-            merged_system = system_prompt
-            if memory_block:
-                merged_system += "\n\n" + memory_block
-            llm_messages = [{"role": "system", "content": merged_system}]
-            for m in self.messages:
+            # ── 缓存命中率优化 ──
+            # 保持顶层 system_prompt 绝对静态，使 system 和大体积 tools 能够 100% 稳定命中缓存。
+            # 将动态变化的 memory_block 附着于最近的一条 user 消息头部，避免污染前缀哈希。
+            llm_messages = [{"role": "system", "content": system_prompt}]
+            
+            last_user_idx = -1
+            for idx in range(len(self.messages) - 1, -1, -1):
+                if self.messages[idx].get("role") == "user":
+                    last_user_idx = idx
+                    break
+
+            for idx, m in enumerate(self.messages):
                 copy = dict(m)
                 # DeepSeek Pro thinking 模式要求 reasoning_content 必须回传
                 # 只有非 DeepSeek 模型才 pop 掉这个非标准字段
                 if "deepseek" not in self.llm.model.lower():
                     copy.pop("reasoning_content", None)
+                
+                # 仅将动态召回的记忆注入到最新的 user 消息，不污染原生 self.messages 历史
+                if idx == last_user_idx and memory_block:
+                    original_content = copy.get("content", "")
+                    copy["content"] = f"## 召回的辅助记忆 context\n{memory_block}\n\n## 当前输入\n{original_content}"
+                
                 # 不 pop tool_calls — DeepSeek 需要它匹配后续 tool 消息
                 llm_messages.append(copy)
 
