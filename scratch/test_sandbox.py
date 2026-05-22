@@ -307,7 +307,131 @@ async def run_test():
     assert "对待同事" in sys_prompt_admin_mind and "严肃、温和且绝对客观" in sys_prompt_admin_mind, "❌ 错误：缺少对待同事客观严肃纠错的规训！"
     print("✅ [用例 9] 成功：小萤独立心智、拒绝盲从、面对瑕疵和隐患据理力争的提示词防御校验 100% 通过！")
         
-    print("\n🎉 [测试结果] 所有隐私沙箱物理隔离机制（升级版）单元测试全部完美跑通！")
+    # ── 10. 验证群聊双轨触发机制与亮哥名字直接唤醒 ──
+    print("\n🧪 [用例 10] 验证群聊双轨触发（物理@与亮哥名字唤醒）及普通群员物理@强制限制...")
+    os.environ["QQ_ADMIN_ID"] = "1705919142"
+    os.environ["QQ_WHITE_GROUPS"] = "693134080"
+    
+    class TestGroupGateway(QQGateway):
+        def __init__(self):
+            super().__init__(lambda key: Agent(llm=MockLLM(), registry=None, memory=None, session=None))
+            self.triggered_count = 0
+            self.last_triggered_raw = None
+            
+        async def _execute_task(self, session_key, event, raw):
+            self.triggered_count += 1
+            self.last_triggered_raw = raw
+            
+        async def _send(self, msg_type, user_id, group_id, message, skip_delay=False):
+            pass
+
+    gateway_group = TestGroupGateway()
+    
+    # 用例 10-a: 亮哥在白名单群里，发送 "小萤，帮我看看"，应该触发
+    event_admin_name = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 1705919142,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "小萤，帮我看看"
+    }
+    await gateway_group._handle(event_admin_name)
+    await asyncio.sleep(0.05)  # 给予异步任务调度的执行时间
+    assert gateway_group.triggered_count == 1, "❌ 错误：亮哥通过名字“小萤”在群里唤醒失败！"
+    
+    # 用例 10-b: 普通群友在群里发送 "小萤，帮我看看"，不带物理 @，不应该触发
+    gateway_group.triggered_count = 0
+    event_user_name = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 2297756819,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "小萤，帮我看看"
+    }
+    await gateway_group._handle(event_user_name)
+    await asyncio.sleep(0.05)  # 给予异步任务调度的执行时间
+    assert gateway_group.triggered_count == 0, "❌ 错误：普通群友没有物理@，仅通过文字“小萤”居然成功唤醒了！"
+    
+    # 用例 10-c: 普通群友物理 @ 小萤，应该触发
+    event_user_at = {
+        "post_type": "message",
+        "message_type": "group",
+        "user_id": 2297756819,
+        "group_id": 693134080,
+        "self_id": 222222,
+        "raw_message": "[CQ:at,qq=222222] 帮我看看"
+    }
+    await gateway_group._handle(event_user_at)
+    await asyncio.sleep(0.05)  # 给予异步任务调度的执行时间
+    assert gateway_group.triggered_count == 1, "❌ 错误：普通群友通过物理@唤醒失败！"
+    assert "来自 QQ: 2297756819 的群发言" in gateway_group.last_triggered_raw, "❌ 错误：群消息未成功重写为来自特定QQ发言的标识！"
+    
+    print("✅ [用例 10] 成功：群聊双轨触发与亮哥名字唤醒机制校验 100% 通过！")
+
+    # ── 11. 验证 SendQQMessageTool 主动消息发送工具 ──
+    print("\n🧪 [用例 11] 验证 SendQQMessageTool 工具参数校验与 OneBot HTTP 接口调用...")
+    from agent.tools.send_qq_message_tool import SendQQMessageTool
+    import http.server
+    import threading
+    import json
+    
+    class MockOneBotHandler(http.server.BaseHTTPRequestHandler):
+        def do_POST(self):
+            content_length = int(self.headers['Content-Length'])
+            post_data = self.rfile.read(content_length).decode('utf-8')
+            req_json = json.loads(post_data)
+            
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.end_headers()
+            
+            # 记录接收到的请求
+            self.server.last_payload = req_json
+            
+            resp = {"status": "ok", "retcode": 0, "data": {}}
+            self.wfile.write(json.dumps(resp).encode("utf-8"))
+            
+        def log_message(self, format, *args):
+            return
+
+    mock_ob_server = http.server.HTTPServer(("127.0.0.1", 0), MockOneBotHandler)
+    mock_ob_server.last_payload = None
+    ob_port = mock_ob_server.server_port
+    ob_thread = threading.Thread(target=mock_ob_server.serve_forever)
+    ob_thread.daemon = True
+    ob_thread.start()
+    
+    os.environ["NAPCAT_HTTP_URL"] = f"http://127.0.0.1:{ob_port}"
+    
+    try:
+        msg_tool = SendQQMessageTool()
+        assert msg_tool.name == "send_qq_message"
+        
+        # 验证输入校验
+        invalid_val = await msg_tool.validate_input({"msg_type": "invalid", "target_id": "123", "message": "hello"})
+        assert invalid_val["result"] is False, "❌ 错误：未成功拦截非法消息类型！"
+        
+        valid_val = await msg_tool.validate_input({"msg_type": "group", "target_id": "693134080", "message": "hello [CQ:at,qq=123]"})
+        assert valid_val["result"] is True, "❌ 错误：合法的群消息参数校验失败！"
+        
+        # 模拟调用发送消息
+        res_list = []
+        async for r in msg_tool.call({"msg_type": "group", "target_id": "693134080", "message": "hello"}):
+            res_list.append(r)
+            
+        assert len(res_list) == 1
+        assert "成功" in res_list[0].data, f"❌ 错误：发送消息工具执行失败，详情: {res_list[0].data}"
+        assert mock_ob_server.last_payload is not None
+        assert mock_ob_server.last_payload.get("group_id") == 693134080, "❌ 错误：接口发送的目标ID不匹配！"
+        assert mock_ob_server.last_payload.get("message") == "hello", "❌ 错误：接口发送的消息内容不匹配！"
+        print("✅ [用例 11] 成功：主动消息发送工具 SendQQMessageTool 单元测试通过！")
+    finally:
+        mock_ob_server.shutdown()
+        mock_ob_server.server_close()
+        
+    print("\n🎉 [测试结果] 所有隐私沙箱物理隔离机制与群聊唤醒主动发声机制单元测试全部完美跑通！")
 
 if __name__ == "__main__":
     asyncio.run(run_test())
