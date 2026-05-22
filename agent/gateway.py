@@ -1673,7 +1673,7 @@ class QQGateway:
         def escape_invalid_cq(match):
             import base64
             cq_str = match.group(0)
-            if cq_str.startswith("[CQ:record,"):
+            if cq_str.startswith(("[CQ:record,", "[CQ:at,", "[CQ:face,", "[CQ:reply,")):
                 return cq_str
             if cq_str.startswith("[CQ:image,file="):
                 m_file = re.search(r'file=([^,\]\\]+)', cq_str)

@@ -189,6 +189,34 @@ async def run_test():
     
     print("✅ [用例 5] 成功：网关白名单、同事身份注入与网关层秒级高危硬拦截校验通过！")
     
+    # ── 5.b 验证 CQ 码转义白名单放行与非法CQ安全转义 ──
+    print("\n🧪 [用例 5.b] 验证 CQ 码转义白名单放行（At、表情、引用）与非法 CQ 安全转义...")
+    sent_msgs = []
+    class MockSession:
+        def post(self, url, json, headers):
+            sent_msgs.append(json["message"])
+            class Context:
+                async def __aenter__(self):
+                    class MockResponse:
+                        status = 200
+                        async def text(self):
+                            return "ok"
+                    return MockResponse()
+                async def __aexit__(self, exc_type, exc, tb):
+                    pass
+            return Context()
+
+    gateway_cq = QQGateway(lambda key: None)
+    gateway_cq._http = MockSession()
+    await gateway_cq._send("private", "1705919142", "", "[CQ:at,qq=2297756819] 亮哥好！[CQ:face,id=14] 收到回复 [CQ:reply,id=98765] 的消息，请不要 [CQ:shake] 我。", skip_delay=True)
+    assert len(sent_msgs) == 1, "❌ 错误：发送测试消息失败！"
+    escaped_msg = sent_msgs[0]
+    assert "[CQ:at,qq=2297756819]" in escaped_msg, f"❌ 错误：At 码被意外转义了！得到: {escaped_msg}"
+    assert "[CQ:face,id=14]" in escaped_msg, f"❌ 错误：表情码被意外转义了！得到: {escaped_msg}"
+    assert "[CQ:reply,id=98765]" in escaped_msg, f"❌ 错误：引用码被意外转义了！得到: {escaped_msg}"
+    assert "[ CQ:shake]" in escaped_msg, f"❌ 错误：非法 shake 码未能成功添加空格转义进行阻断！得到: {escaped_msg}"
+    print("✅ [用例 5.b] 成功：At、表情、引用白名单放行，及非法 CQ 码安全转义校验 100% 通过！")
+    
     # ── 6. 验证专属隔离记忆提取与保存 ──
     print("\n🧪 [用例 6] 验证 coworker 专属隔离记忆提取与物理 JSON 文件保存...")
     agent_coworker.messages = [
