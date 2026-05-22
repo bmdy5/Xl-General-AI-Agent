@@ -19,9 +19,9 @@ cookies.json
 bin/
 records/
 EVOLVED_RULES.md
-agent_activity.log
-gateway.log
 agent/memory/coworker_*.json
 agent/dashboard_v2/assets/gen_*
 scratch/*
 !scratch/test_sandbox.py
+!agent_activity.log
+!gateway.log
