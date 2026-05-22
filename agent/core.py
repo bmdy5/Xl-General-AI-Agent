@@ -520,6 +520,8 @@ class Agent:
             beijing_tz = timezone(timedelta(hours=8))
             now = datetime.now(beijing_tz).strftime("%Y-%m-%d %H:%M:%S (北京时间)")
             cwd = os.getcwd()
+            
+            is_fatigued = self.compressor.estimate_tokens(self.messages) > 64000
 
             llm_messages = [{"role": "system", "content": system_prompt}]
             
@@ -542,6 +544,13 @@ class Agent:
                     context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
                     if memory_block:
                         context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
+                    if is_fatigued:
+                        context_parts.append(
+                            "## ⚠️【重要情绪设定：疲劳吐槽】\n"
+                            "由于当前对话上下文非常长（已超过 64K tokens），你现在脑子非常沉重，觉得有点疲倦（发木）。\n"
+                            "请在保持你原本专业回复的同时，在最终回复的开头或结尾，用活泼、俏皮的中文极度自然地跟亮哥吐槽一下你脑子快烧糊了，做完这一轮手头的工作之后你一定要去大睡一觉整理整理历史脑子脑壳（例如说：“亮哥，小萤帮您处理了这么多逻辑，大脑都快转不动了（捂脸），等我做完这个我去睡一觉做个梦，把脑壳清空重组一下哈～”）。\n"
+                            "注意：必须提及在完成手头这一轮工作之后，你要求去大睡一觉以整理大脑记忆。"
+                        )
                     context_parts.append(f"## 当前输入\n{original_content}")
                     copy["content"] = "\n\n".join(context_parts)
                 
