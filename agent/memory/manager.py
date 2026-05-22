@@ -487,8 +487,36 @@ class MemoryManager:
         return None
 
     async def _get_embedding(self, text: str) -> list[float]:
-        """调用 LiteLLM 提取 768 维中文增强语义向量。支持从环境变量配置模型。"""
+        """提取 768 维中文增强语义向量。支持本地 m3e-base 或远程 API 两种模式。"""
         import os
+        embedding_mode = os.getenv("EMBEDDING_MODE", "local").lower()
+
+        if embedding_mode == "local":
+            try:
+                # 惰性单例加载本地模型，极大提升后续推理性能
+                global _LOCAL_MODEL_CACHE
+                if "_LOCAL_MODEL_CACHE" not in globals():
+                    globals()["_LOCAL_MODEL_CACHE"] = {}
+                
+                cache = globals()["_LOCAL_MODEL_CACHE"]
+                if "_m3e" not in cache:
+                    logger.info("Initializing local m3e-base embedding model (from domestic mirror hf-mirror.com)...")
+                    # 设置国内 Hugging Face 极速镜像源，杜绝因连接 HF 官方超时导致的拉取失败
+                    os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
+                    from sentence_transformers import SentenceTransformer
+                    # 首次会自动极速拉取并本地缓存
+                    cache["_m3e"] = SentenceTransformer("moka-ai/m3e-base")
+                    logger.info("Local m3e-base model loaded successfully!")
+                
+                model = cache["_m3e"]
+                # 运行本地 CPU 推理，得到 numpy 数组并转换为 768维 list
+                embeddings = model.encode([text], show_progress_bar=False)
+                return [float(x) for x in embeddings[0]]
+            except Exception as e:
+                logger.error(f"Failed to extract local embedding via m3e-base: {e}")
+                # 自动降级返回 768 维全零向量，保障极高容灾性与抗错性
+                return [0.0] * 768
+
         import litellm
         model = os.getenv("MYAGENT_EMBEDDING_MODEL", "text-embedding-3-small")
         
