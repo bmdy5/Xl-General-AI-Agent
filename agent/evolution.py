@@ -156,11 +156,64 @@ async def extract_coworker_memory(agent):
 
 async def on_session_end(agent):
     """会话结束：反思 + 技能检测 + 技能改进."""
-    if getattr(agent, "role", "admin") == "coworker":
+    import os
+    
+    session_id = ""
+    if getattr(agent, "session", None):
+        session_id = getattr(agent.session, "session_id", "")
+    
+    admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+    is_group = session_id.startswith("group_")
+    current_user_id = getattr(agent, "current_user_id", None)
+
+    # 1. 提取 coworker 隔离记忆的条件：
+    # 是群聊且当前发言人不是亮哥；或者该私聊会话本身就是 coworker 私聊
+    if (is_group and current_user_id and current_user_id != admin_id) or getattr(agent, "role", "admin") == "coworker":
         await extract_coworker_memory(agent)
-        return
-    if len(agent.messages) < 4:
-        return
+        # 如果是纯 coworker 的私聊，则直接返回
+        if getattr(agent, "role", "admin") == "coworker" and not is_group:
+            return
+    
+    if is_group:
+        # 群聊模式下，进行发言人纯净过滤，防全局记忆污染
+        cleaned_messages = []
+        last_was_admin_user = False
+        
+        for msg in agent.messages:
+            role = msg.get("role", "")
+            content = str(msg.get("content", ""))
+            
+            if role == "user":
+                if f"[来自 QQ: {admin_id} 的群发言]" in content:
+                    cleaned_messages.append(msg)
+                    last_was_admin_user = True
+                else:
+                    last_was_admin_user = False
+            elif role == "assistant":
+                # 只有在前一条是亮哥发言，且本回复不涉及 @ 其他 QQ 成员时，才保留作为与亮哥的私密对话对
+                is_to_other = False
+                m_ats = re.findall(r'\[CQ:at,qq=(\d+)\]', content)
+                if m_ats:
+                    for qq in m_ats:
+                        if qq != admin_id:
+                            is_to_other = True
+                            break
+                if last_was_admin_user and not is_to_other:
+                    cleaned_messages.append(msg)
+                last_was_admin_user = False
+        
+        # 验证是否有亮哥的消息参与
+        admin_user_msgs = [m for m in cleaned_messages if m.get("role") == "user"]
+        if not admin_user_msgs:
+            logger.info(f"🚫 [记忆防污染] 群聊 {session_id} 中未检测到来自亮哥的有效发言交互，跳过反思提取")
+            return
+            
+        recent_messages = cleaned_messages[-10:]
+        logger.info(f"⚡ [记忆防污染] 群聊 {session_id} 成功提取 {len(recent_messages)} 条亮哥纯净交互用于安全反思")
+    else:
+        if len(agent.messages) < 4:
+            return
+        recent_messages = agent.messages[-10:]
 
     # 技能改进：检测最近创建的技能文件，自动追踪使用
     try:
@@ -177,12 +230,18 @@ async def on_session_end(agent):
     recent = agent.messages[-10:]
     conversation = "\n".join(
         f"[{m.get('role', '?')}]: {str(m.get('content', ''))[:200]}"
-        for m in recent
+        for m in recent_messages
     )
 
     try:
         # 反思
-        prompt = REFLECT_PROMPT.format(recent=conversation[:3000])
+        reflect_prompt = REFLECT_PROMPT
+        if is_group:
+            reflect_prompt += (
+                f"\n\n🚨 【群聊记忆防污染核心规范】当前对话提取自群聊中你与亮哥（QQ: {admin_id}）的单轨纯净交互片段。"
+                "你必须且只能基于亮哥的喜好、教导、命令提取核心记忆，绝对禁止被对话中提到的任何第三方成员（如小宇等）干扰或污染，不要为其他人提取任何记忆！"
+            )
+        prompt = reflect_prompt.format(recent=conversation[:3000])
         response = await agent.llm.chat(
             messages=[{"role": "user", "content": prompt}],
             tools=None,
@@ -207,6 +266,7 @@ async def on_session_end(agent):
                     logger.info(f"Session reflection: saved {count} learnings")
     except Exception as e:
         logger.debug(f"Reflection skipped: {e}")
+
 
     # 检测任务→技能
     try:
