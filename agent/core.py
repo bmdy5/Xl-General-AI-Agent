@@ -24,7 +24,7 @@ from .memory.manager import MemoryManager
 from .session.handler import SessionHandler
 from .tools.registry import ToolRegistry
 from .compressor import ContextCompressor
-from .evolution import audit_tool_call, on_session_end
+from .evolution import audit_tool_call, on_session_end, inject_fatigue_prompt_if_needed
 from .memory.error_tracker import ErrorTracker, L1_TRANSIENT, L2_SELF_HEAL, L3_FATAL
 
 # v6: RAG 检索优化常量
@@ -761,6 +761,7 @@ class Agent:
 
     async def _llm_chat(self, messages: list[dict], tools: list[dict]) -> tuple:
         """非流式 LLM 调用，返回 (content, reasoning, tool_calls)."""
+        messages = inject_fatigue_prompt_if_needed(self, messages)
         try:
             llm_task = asyncio.create_task(
                 self.llm.chat(messages=messages, tools=tools if tools else None)
@@ -789,6 +790,7 @@ class Agent:
 
     async def _llm_stream(self, messages: list[dict], tools: list[dict]) -> AsyncGenerator[dict, None]:
         """流式 LLM 调用，yield UI events，最后 yield _done 事件."""
+        messages = inject_fatigue_prompt_if_needed(self, messages)
         text_parts: list[str] = []
         reasoning_parts: list[str] = []
         tool_calls: list[dict] = []
