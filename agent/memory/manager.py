@@ -8,10 +8,37 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
+import time
+from collections import OrderedDict
+
 from .fts_index import create_table, populate as fts_populate, search as fts_search, rebuild
 from .notes_fts import search as notes_search, index_all, scan_files
 
 logger = logging.getLogger(__name__)
+
+class MemoryCache:
+    def __init__(self, capacity=50, ttl=30):
+        self.cache = OrderedDict()
+        self.capacity = capacity
+        self.ttl = ttl
+    
+    def get(self, key):
+        if key not in self.cache:
+            return None
+        ts, val = self.cache[key]
+        if time.time() - ts > self.ttl:
+            del self.cache[key]
+            return None
+        self.cache.move_to_end(key)
+        return val
+    
+    def set(self, key, val):
+        self.cache[key] = (time.time(), val)
+        if len(self.cache) > self.capacity:
+            self.cache.popitem(last=False)
+    
+    def invalidate_all(self):
+        self.cache.clear()
 
 # save()/append_to_core() 绝对不能写入的文件（保护人设/系统配置不被覆盖）
 PROTECTED_FILES: set[str] = {
@@ -83,6 +110,8 @@ class MemoryManager:
         if not self.rules_file.exists():
             self.rules_file.write_text(DEFAULT_ROUTING_RULES, encoding="utf-8")
         self._db: sqlite3.Connection | None = None
+        self._mem_cache = MemoryCache(capacity=50, ttl=30)
+        self._note_cache = MemoryCache(capacity=50, ttl=30)
 
     def _get_db(self) -> sqlite3.Connection:
         """惰性初始化 SQLite + FTS5 索引，自动无损升级老数据为 CJK 高精度索引."""
@@ -199,6 +228,8 @@ class MemoryManager:
         except Exception:
             pass
 
+        self._mem_cache.invalidate_all()
+        self._note_cache.invalidate_all()
         return timestamp
 
     async def load_context(self) -> str:
@@ -317,6 +348,8 @@ class MemoryManager:
             db.commit()
         except Exception:
             pass
+        self._mem_cache.invalidate_all()
+        self._note_cache.invalidate_all()
         return timestamp
 
     def _upsert_index(self, filename: str, new_line: str):
@@ -370,6 +403,8 @@ class MemoryManager:
             db.commit()
         except Exception:
             pass
+        self._mem_cache.invalidate_all()
+        self._note_cache.invalidate_all()
 
     async def get_entry(self, filename: str) -> Optional[str]:
         """Read memory file content."""
@@ -404,6 +439,8 @@ class MemoryManager:
                 safe_name += ".md"
             filepath = target_dir / safe_name
             filepath.write_text(content, encoding="utf-8")
+            self._mem_cache.invalidate_all()
+            self._note_cache.invalidate_all()
             return str(filepath)
         except Exception as e:
             logger.warning(f"Failed to save to notes: {e}")
@@ -513,11 +550,18 @@ class MemoryManager:
                 rebuild(db)
             except Exception:
                 pass
+            self._mem_cache.invalidate_all()
+            self._note_cache.invalidate_all()
 
         return merged_count
 
     def search_notes(self, query: str, limit: int = 5) -> list[dict]:
         """搜索笔记知识库（学习笔记目录）。返回 BM25 排序的分块结果。"""
+        cache_key = (query, limit)
+        cached_res = self._note_cache.get(cache_key)
+        if cached_res is not None:
+            return cached_res
+
         import re
         clean = re.sub(r'[^\w\u4e00-\u9fff\s]', " ", query).strip()
         if not clean or len(clean) < 2:
@@ -530,13 +574,20 @@ class MemoryManager:
             # 每次搜索前自动快速增量同步
             sync_incremental(db, Path("/Users/xiaofeng/Desktop/学习笔记/Agent开发"))
             sync_incremental(db, Path("/Users/xiaofeng/Desktop/学习笔记/后端开发"))
-            return notes_search(db, query, limit)
+            res = notes_search(db, query, limit)
+            self._note_cache.set(cache_key, res)
+            return res
         except Exception as e:
             logger.warning(f"Error during incremental search_notes: {e}")
             return []
 
     def search_memories(self, query: str, limit: int = 5) -> list[dict]:
         """FTS5 全文搜索记忆，BM25 排序 + LIKE 降级."""
+        cache_key = (query, limit)
+        cached_res = self._mem_cache.get(cache_key)
+        if cached_res is not None:
+            return cached_res
+
         import re
         clean = re.sub(r'[^\w\u4e00-\u9fff\s]', ' ', query).strip()
         if not clean or len(clean) < 2:
@@ -548,8 +599,11 @@ class MemoryManager:
             # LIKE fallback for CJK queries where FTS5 tokenization fails
             if len(results) < 2 and clean:
                 like_results = _like_search(db, "memories_fts", clean, limit)
-                return like_results or results
-            return results
+                res = like_results or results
+            else:
+                res = results
+            self._mem_cache.set(cache_key, res)
+            return res
         except Exception:
             return []
 
