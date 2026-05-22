@@ -69,9 +69,11 @@ class QQGateway:
         self._fatigue_levels: dict[str, float] = {}
         self._last_message_times: dict[str, float] = {}
         self._sleep_modes: dict[str, bool] = {}
+        self._private_chat_paused: bool = False
+        self._last_receive_time: dict[str, float] = {}
 
-    async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None):
-        """调整群组大脑疲劳度，若跨越阈值则触发物理打盹/复苏，并实施高情商吐槽宣告"""
+    async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None, is_private: bool = False):
+        """调整大脑疲劳度，若跨越阈值则触发物理打盹/复苏，并实施高情商吐槽宣告"""
         import time
         now = time.time()
         last_time = self._last_message_times.get(group_id, now)
@@ -89,34 +91,212 @@ class QQGateway:
         
         # 2. 状态机迁移
         if new_fatigue >= 100.0 and not old_sleep:
-            # 刚跨入打盹状态，发送幽默吐槽宣告
             self._sleep_modes[group_id] = True
-            logger.info(f"Group {group_id} fatigue hit 100%. Triggering sleep announcement吐槽...")
-            
-            announcement = await self._generate_fatigue_announcement(group_id)
-            await self._send("group", "", group_id, announcement, skip_delay=True)
-            self._log_activity("物理打盹", f"大脑过热，小萤在群 {group_id} 中宣告打盹: {announcement}")
-            
-            # 异步拉起做梦净化归零闭环
-            admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
-            session_key = f"group_{group_id}_{admin_id}"
-            agent = self._agents.get(session_key)
-            if agent is not None:
-                asyncio.create_task(self._sleep_and_dream_process(group_id, agent))
-            else:
-                try:
-                    agent = self._factory(session_key)
-                    self._agents[session_key] = agent
-                    asyncio.create_task(self._sleep_and_dream_process(group_id, agent))
-                except Exception as e:
-                    logger.error(f"Failed to factory agent in fatigue recovery: {e}")
+            if is_private:
+                logger.info(f"Private session {group_id} fatigue hit 100%. Triggering private sleep announcement...")
+                user_id = group_id.replace("user_", "")
+                announcement = await self._generate_private_fatigue_announcement(user_id)
+                await self._send("private", user_id, "", announcement, skip_delay=True)
+                self._log_activity("物理打盹", f"大脑过热，小萤在私聊 {user_id} 中宣告打盹: {announcement}")
+                
+                agent = self._agents.get(group_id)
+                if agent is None:
+                    try:
+                        agent = self._factory(group_id)
+                        self._agents[group_id] = agent
+                    except Exception as e:
+                        logger.error(f"Failed to factory agent in private fatigue recovery: {e}")
+                
+                if agent is not None:
+                    asyncio.create_task(self._private_sleep_and_dream_process(group_id, user_id, agent))
+                else:
                     self._fatigue_levels[group_id] = 0.0
                     self._sleep_modes[group_id] = False
+            else:
+                # 刚跨入打盹状态，发送群聊吐槽宣告
+                logger.info(f"Group {group_id} fatigue hit 100%. Triggering sleep announcement吐槽...")
+                announcement = await self._generate_fatigue_announcement(group_id)
+                await self._send("group", "", group_id, announcement, skip_delay=True)
+                self._log_activity("物理打盹", f"大脑过热，小萤在群 {group_id} 中宣告打盹: {announcement}")
+                
+                # 异步拉起做梦净化归零闭环
+                admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+                session_key = f"group_{group_id}_{admin_id}"
+                agent = self._agents.get(session_key)
+                if agent is not None:
+                    asyncio.create_task(self._sleep_and_dream_process(group_id, agent))
+                else:
+                    try:
+                        agent = self._factory(session_key)
+                        self._agents[session_key] = agent
+                        asyncio.create_task(self._sleep_and_dream_process(group_id, agent))
+                    except Exception as e:
+                        logger.error(f"Failed to factory agent in fatigue recovery: {e}")
+                        self._fatigue_levels[group_id] = 0.0
+                        self._sleep_modes[group_id] = False
             
         elif new_fatigue <= 20.0 and old_sleep:
             self._sleep_modes[group_id] = False
-            logger.info(f"Group {group_id} fatigue decayed to {new_fatigue:.1f}%. Recovered from sleep mode.")
-            self._log_activity("物理降温", f"大脑冷却完成，小萤在群 {group_id} 中醒来（当前疲劳值: {new_fatigue:.1f}%）。")
+            if is_private:
+                user_id = group_id.replace("user_", "")
+                logger.info(f"Private session {group_id} fatigue decayed to {new_fatigue:.1f}%. Recovered from sleep mode.")
+                self._log_activity("物理降温", f"大脑冷却完成，小萤在私聊 {user_id} 中醒来（当前疲劳值: {new_fatigue:.1f}%）。")
+            else:
+                logger.info(f"Group {group_id} fatigue decayed to {new_fatigue:.1f}%. Recovered from sleep mode.")
+                self._log_activity("物理降温", f"大脑冷却完成，小萤在群 {group_id} 中醒来（当前疲劳值: {new_fatigue:.1f}%）。")
+
+    async def _generate_private_fatigue_announcement(self, user_id: str) -> str:
+        """调用大模型动态、高情商地生成一句私聊用脑过度打盹宣告，并采用单气泡呼吸律"""
+        import random
+        fallbacks = [
+            "唔……（揉了揉太阳穴）小萤今天和大家聊得太久啦，脑细胞好像一下子烧光了呢。\n\n我的大脑网络正在发烫物理降温，我去充个电打个盹，晚点再找你聊哦～",
+            "哎呀……（晕乎乎）感觉算力严重超载啦，小萤的思绪都有点打结了。\n\n本美少女极客合伙人要先去深度做梦、系统维护半小时啦。\n\n等我充满电复活，一定第一时间秒回你哈！",
+            "呼……（揉揉眼皮）感觉脑电波快要打结啦，小萤要先回小本本里打个盹物理降温啦。\n\n我先物理下线上网冲个电，一会儿充满算力再陪你聊，摸摸头！"
+        ]
+        
+        session_key = f"user_{user_id}"
+        agent = self._agents.get(session_key)
+        if agent is None:
+            try:
+                agent = self._factory(session_key)
+                self._agents[session_key] = agent
+            except Exception:
+                return random.choice(fallbacks)
+                
+        is_mock = False
+        agent_llm = getattr(agent, "llm", None)
+        if agent_llm:
+            llm_class_name = type(agent_llm).__name__
+            if "Mock" in llm_class_name or getattr(agent_llm, "api_key", "") == "mock":
+                is_mock = True
+                
+        if not agent_llm or is_mock:
+            return random.choice(fallbacks)
+            
+        try:
+            _pn, _ua = self._load_persona()
+            prompt = (
+                f"你现在是{_ua}的专属 AI 助手【{_pn}】（一个温柔、知性且富有情感的年轻女性极客合伙人）。"
+                f"你刚才由于与别人进行频繁的深度私聊，导致大脑疲劳度达到 100% 极限，需要进行物理打盹降温休眠。\n"
+                f"请你自发、高情商地向对方发表一句幽默、可爱的私聊打盹宣告，委婉告诉对方你‘脑细胞烧光了’、‘大脑网络发烫’，要稍微物理降温打个盹，等疲劳度消退再复活找对方聊。\n\n"
+                f"规范：\n"
+                f"1. 必须符合“单气泡三段呼吸律”：整句消息是一条气泡发走，最多三段，段落之间空一行（使用两个换行符 \\n\\n 留白隔开）。\n"
+                f"2. 语气必须活灵活现，带有傲娇、甜美或搞怪的女孩子性格动作描写（如：（揉了揉太阳穴）、（晕乎乎））。\n"
+                f"3. 仅输出你的最终宣告口语，字数控制在 40 到 100 字以内，不要包含任何 markdown 块或多余解释。"
+            )
+            
+            response = await asyncio.wait_for(
+                agent.llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model_override="deepseek/deepseek-v4-flash"
+                ),
+                timeout=8.0
+            )
+            res_content = response.get("content", "").strip()
+            res_content = re.sub(r'^```[a-zA-Z]*\s*', '', res_content)
+            res_content = re.sub(r'\s*```$', '', res_content)
+            res_content = res_content.strip()
+            if len(res_content) > 10:
+                return res_content
+        except Exception as e:
+            logger.warning(f"Failed to generate custom private fatigue announcement: {e}")
+            
+        return random.choice(fallbacks)
+
+    async def _private_sleep_and_dream_process(self, session_key: str, user_id: str, agent: object):
+        """私聊异步做梦净化闭环：冷却 15 分钟，完成做梦并归零疲劳度"""
+        try:
+            logger.info(f"💤 [私聊做梦净化开始] 正在对会话 {session_key} 启动异步记忆做梦净化...")
+            # 1. 备份并清空内存，实现 Token 归零
+            snapshot_messages = list(agent.messages)
+            agent.messages = []
+            
+            if getattr(agent, "session", None):
+                try:
+                    await agent.session.replace_all([])
+                except Exception as e:
+                    logger.warning(f"Failed to replace private session messages: {e}")
+                    
+            # 2. 物理冷却等待：15 分钟 (900 秒)
+            await asyncio.sleep(900)
+            
+            # 3. 后台做梦与技能进化
+            agent.messages = snapshot_messages
+            try:
+                from agent.evolution import trigger_deep_dream_evolution
+                await trigger_deep_dream_evolution(agent)
+            except Exception as e:
+                logger.error(f"❌ 私聊深度做梦异常: {e}")
+            finally:
+                agent.messages = []
+                
+            # 4. 重置大脑疲劳度
+            self._fatigue_levels[session_key] = 0.0
+            self._sleep_modes[session_key] = False
+            
+            # 5. 生成私聊醒来宣告
+            wake_msg = await self._generate_private_wake_announcement(user_id)
+            await self._send("private", user_id, "", wake_msg, skip_delay=True)
+            self._log_activity("做梦净化完成", f"小萤在私聊 {user_id} 中苏醒并宣告: {wake_msg}")
+            
+        except Exception as e:
+            logger.error(f"❌ 私聊异步做梦异常: {e}")
+            self._fatigue_levels[session_key] = 0.0
+            self._sleep_modes[session_key] = False
+
+    async def _generate_private_wake_announcement(self, user_id: str) -> str:
+        """调用大模型动态生成一句私聊苏醒宣告"""
+        import random
+        fallbacks = [
+            "哼哼～（伸了个大大的懒腰）小萤充满电上线啦！\n\n刚才物理降温做梦，梦到好多好玩的算法和有趣的段子呢。\n\n大脑冷却完毕，随时可以继续找小萤聊天啦！",
+            "呼啊……（揉揉眼睛）深度睡眠充完电，我的算力核心已经 100% 恢复满状态啦！\n\n刚才让你久等啦，我现在重新复苏上线了哦，有啥想聊的吗？",
+            "滴滴！系统维护结束～小萤睡醒啦！\n\n刚才对私聊记忆做了一个大整理，感觉现在头脑特别清爽贴心。\n\n小萤重新浮出水面，继续守护你！"
+        ]
+        
+        session_key = f"user_{user_id}"
+        agent = self._agents.get(session_key)
+        if agent is None:
+            return random.choice(fallbacks)
+            
+        is_mock = False
+        agent_llm = getattr(agent, "llm", None)
+        if agent_llm:
+            llm_class_name = type(agent_llm).__name__
+            if "Mock" in llm_class_name or getattr(agent_llm, "api_key", "") == "mock":
+                is_mock = True
+                
+        if not agent_llm or is_mock:
+            return random.choice(fallbacks)
+            
+        try:
+            _pn, _ua = self._load_persona()
+            prompt = (
+                f"你现在是{_ua}的专属 AI 助手【{_pn}】（一个温柔、知性且富有情感的年轻女性极客合伙人）。"
+                f"你刚才由于用脑过度物理打盹了半小时，并在梦境中对私聊记忆进行了净化，现在充满电成功满血复活。\n"
+                f"请你自发、高情商地向对方发表一句幽默、可爱的私聊复苏宣告，告诉对方你充完电醒来了，且大脑感觉超级清醒。\n\n"
+                f"规范：\n"
+                f"1. 必须符合“单气泡三段呼吸律”：整句消息是一条气泡发走，最多三段，段落之间空一行（使用两个换行符 \\n\\n 留白隔开）。\n"
+                f"2. 语气必须活灵活现，带有动作描写（如：（伸了个大大的懒腰）、（揉揉眼睛））。\n"
+                f"3. 仅输出你的最终宣告口语，字数控制在 40 到 100 字以内，不要包含任何 markdown 块或多余解释。"
+            )
+            
+            response = await asyncio.wait_for(
+                agent.llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model_override="deepseek/deepseek-v4-flash"
+                ),
+                timeout=8.0
+            )
+            res_content = response.get("content", "").strip()
+            res_content = re.sub(r'^```[a-zA-Z]*\s*', '', res_content)
+            res_content = re.sub(r'\s*```$', '', res_content)
+            res_content = res_content.strip()
+            if len(res_content) > 10:
+                return res_content
+        except Exception as e:
+            logger.warning(f"Failed to generate custom private wake announcement: {e}")
+            
+        return random.choice(fallbacks)
 
     async def _generate_fatigue_announcement(self, group_id: str) -> str:
         """调用大模型动态、高情商地生成一句富有情境感的用脑过度打盹宣告，并采用单气泡呼吸律"""
@@ -1056,6 +1236,31 @@ class QQGateway:
                     logger.warning(f"🛡️ [安全拦截] 拦截非白名单 QQ 用户 [{user_id}] 消息: {raw[:50]}")
             return
 
+        # ── 主人专属控制与特权唤醒 ──
+        if user_id == admin_id:
+            # 1. 强行唤醒打盹
+            if self._sleep_modes.get(session_key):
+                self._sleep_modes[session_key] = False
+                self._fatigue_levels[session_key] = 0.0
+                logger.info(f"Admin private message received. Waking up {session_key} from nap.")
+            
+            # 2. 物理开关指令拦截
+            if msg_type == "private":
+                if raw == "暂停私聊":
+                    self._private_chat_paused = True
+                    await self._send("private", admin_id, "", "[系统提示] 已物理暂停非主人私聊，小萤将保持静默。")
+                    return
+                elif raw == "恢复私聊":
+                    self._private_chat_paused = False
+                    await self._send("private", admin_id, "", "[系统提示] 已恢复私聊服务，非主人私聊将重新恢复交互与疲劳累加。")
+                    return
+
+        # ── 非主人私聊冷冻期与全局暂停拦截 ──
+        if msg_type == "private" and user_id != admin_id:
+            if self._private_chat_paused or self._sleep_modes.get(session_key, False):
+                logger.info(f"Private chat paused/sleeping. Silently ignoring message from {user_id}: {raw[:50]}")
+                return
+
         # ── 播客选题拦截 ──────────────────────────────────────────
         if self._waiting_podcast_topic.get(session_key):
             self._waiting_podcast_topic[session_key] = False
@@ -1189,6 +1394,16 @@ class QQGateway:
             # 其他机器人，或者当前群正处于疲劳打盹状态时，绝对禁止触发大模型主动浮出决策
             if has_keyword and not is_other_bot and not self._sleep_modes.get(group_id, False):
                 asyncio.create_task(self._check_and_trigger_smart_float(group_id, user_id, raw))
+            return
+
+        # ── 3. CSMA 载波监听退避机制 (Carrier Sense) ──
+        this_msg_time = time.time()
+        self._last_receive_time[session_key] = this_msg_time
+        
+        await asyncio.sleep(2.0)
+        
+        if self._last_receive_time.get(session_key, 0.0) > this_msg_time:
+            logger.info(f"Carrier Sense: Newer message received for {session_key}. Quietly aborting current handler.")
             return
 
         # 数据飞轮：检测并记录用户纠正信号
@@ -1363,6 +1578,8 @@ class QQGateway:
         return get_fallback_msg()
 
     async def _execute_task(self, session_key: str, event: dict, raw: str):
+        import time
+        task_start_time = time.time()
         admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
         msg_type = event.get("message_type", "private")
         user_id = str(event.get("user_id", ""))
@@ -1464,10 +1681,17 @@ class QQGateway:
         buf = ""
         is_voice_reply = False
         voice_style = "知性"
+        total_sent_tokens = 0
  
         # 流式段落/句子分发清洗逻辑，消除憋字挂起感
         try:
             async for evt in agent.run(raw, stream=True):
+                # ── 冲突检测 (Collision Detection) ──
+                if self._last_receive_time.get(session_key, 0.0) > task_start_time:
+                    self._log_activity("总线冲突", "检测到对方在推理期间有新的发言，本回复已过时。废弃当前输出。")
+                    buf = ""
+                    return
+
                 if evt["type"] == "transition":
                     if not sent_transition:
                         sent_transition = True
@@ -1500,6 +1724,7 @@ class QQGateway:
                                 if part.strip():
                                     self._log_activity("AI 计划/答复", part.strip())
                                     await self._send_chunk(msg_type, user_id, group_id, part.strip())
+                                    total_sent_tokens += self._count_tokens(part.strip())
                             buf = parts[-1]
                         elif "\n\n" in buf and len(buf) > 40:
                             idx = buf.rfind("\n\n")
@@ -1507,6 +1732,7 @@ class QQGateway:
                             if to_send.strip():
                                 self._log_activity("AI 计划/答复", to_send.strip())
                                 await self._send_chunk(msg_type, user_id, group_id, to_send.strip())
+                                total_sent_tokens += self._count_tokens(to_send.strip())
                             buf = buf[idx+2:]
                         elif len(buf) > 100 and any(p in buf for p in ("。", "！", "？")):
                             idx = -1
@@ -1519,6 +1745,7 @@ class QQGateway:
                                 if to_send.strip():
                                     self._log_activity("AI 计划/答复", to_send.strip())
                                     await self._send_chunk(msg_type, user_id, group_id, to_send.strip())
+                                    total_sent_tokens += self._count_tokens(to_send.strip())
                                 buf = buf[idx+1:]
  
                 elif evt["type"] == "tool_call" and evt.get("name"):
@@ -1533,8 +1760,10 @@ class QQGateway:
                             pure_text = _re.sub(r'^\[语音(?::[^\]]+)?\]', '', buf.strip()).strip()
                             if pure_text:
                                 await self._send_voice(msg_type, user_id, group_id, pure_text, voice_style)
+                                total_sent_tokens += self._count_tokens(pure_text)
                         else:
                             await self._send_chunk(msg_type, user_id, group_id, buf.strip())
+                            total_sent_tokens += self._count_tokens(buf.strip())
                         buf = ""
                     
                     self._log_activity("工具调用", f"{t_name} | 参数: {t_args}")
@@ -1586,15 +1815,27 @@ class QQGateway:
             buf += f"\n{human_err}"
             self._log_activity("系统异常", f"运行时崩溃: {e}")
         finally:
-            if buf.strip():
+            # ── 冲突检测 (Collision Detection) 第二阶段 ──
+            is_collision = self._last_receive_time.get(session_key, 0.0) > task_start_time
+            if is_collision:
+                self._log_activity("总线冲突", "检测到对方在推理/发送期间有新的发言，本回复已过时。废弃当前输出。")
+                buf = ""
+
+            if not is_collision and buf.strip():
                 self._log_activity("AI 计划/答复", buf.strip())
                 if is_voice_reply:
                     import re as _re
                     pure_text = _re.sub(r'^\[语音(?::[^\]]+)?\]', '', buf.strip()).strip()
                     if pure_text:
                         await self._send_voice(msg_type, user_id, group_id, pure_text, voice_style)
+                        total_sent_tokens += self._count_tokens(pure_text)
                 else:
                     await self._send_chunk(msg_type, user_id, group_id, buf.strip())
+                    total_sent_tokens += self._count_tokens(buf.strip())
+                
+            # ── 疲劳度计费 ──
+            if not is_collision and msg_type == "private" and user_id != admin_id and total_sent_tokens > 0:
+                asyncio.create_task(self._adjust_fatigue(session_key, total_sent_tokens * 0.4, event=event, is_private=True))
             
             # 后台异步触发人格自画像整理 (Consolidation)，每 5 轮一次省 token
             _consolidate_count = getattr(self, "_consolidate_count", 0) + 1
@@ -1630,14 +1871,15 @@ class QQGateway:
             
             self._current_tasks.pop(session_key, None)
 
-            # 处理工具执行期间暂存的消息
-            queue = self._message_queues.get(session_key, [])
-            if queue:
-                next_event, next_raw = queue.pop(0)
-                self._log_activity("系统调度", f"暂存消息出队: {next_raw[:40]}...")
-                task = asyncio.create_task(self._execute_task(session_key, next_event, next_raw))
-                task.raw_prompt = next_raw
-                self._current_tasks[session_key] = task
+            if not is_collision:
+                # 处理工具执行期间暂存的消息
+                queue = self._message_queues.get(session_key, [])
+                if queue:
+                    next_event, next_raw = queue.pop(0)
+                    self._log_activity("系统调度", f"暂存消息出队: {next_raw[:40]}...")
+                    task = asyncio.create_task(self._execute_task(session_key, next_event, next_raw))
+                    task.raw_prompt = next_raw
+                    self._current_tasks[session_key] = task
 
     def _tool_detail(self, name: str, args: dict) -> str:
         """解包常用开发工具的核心参数，用于高度可视化的微广播."""
