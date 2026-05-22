@@ -66,6 +66,102 @@ class QQGateway:
         self._waiting_podcast_topic: dict[str, bool] = {}
         self._podcast_choices: dict[str, list[str]] = {}
         self._error_translation_cache: dict[tuple[str, str, Optional[str]], tuple[float, str]] = {}
+        self._fatigue_levels: dict[str, float] = {}
+        self._last_message_times: dict[str, float] = {}
+        self._sleep_modes: dict[str, bool] = {}
+
+    async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None):
+        """调整群组大脑疲劳度，若跨越阈值则触发物理打盹/复苏，并实施高情商吐槽宣告"""
+        import time
+        now = time.time()
+        last_time = self._last_message_times.get(group_id, now)
+        self._last_message_times[group_id] = now
+        time_passed = now - last_time
+        
+        # 1. 物理消退：每分钟消退 2.0% 脑力值
+        decay = time_passed * (2.0 / 60.0)
+        current = max(0.0, self._fatigue_levels.get(group_id, 0.0) - decay)
+        
+        new_fatigue = min(100.0, max(0.0, current + inc))
+        self._fatigue_levels[group_id] = new_fatigue
+        
+        old_sleep = self._sleep_modes.get(group_id, False)
+        
+        # 2. 状态机迁移
+        if new_fatigue >= 100.0 and not old_sleep:
+            # 刚跨入打盹状态，发送幽默吐槽宣告
+            self._sleep_modes[group_id] = True
+            logger.info(f"Group {group_id} fatigue hit 100%. Triggering sleep announcement吐槽...")
+            
+            announcement = await self._generate_fatigue_announcement(group_id)
+            await self._send("group", "", group_id, announcement, skip_delay=True)
+            self._log_activity("物理打盹", f"大脑过热，小萤在群 {group_id} 中宣告打盹: {announcement}")
+            
+        elif new_fatigue <= 20.0 and old_sleep:
+            self._sleep_modes[group_id] = False
+            logger.info(f"Group {group_id} fatigue decayed to {new_fatigue:.1f}%. Recovered from sleep mode.")
+            self._log_activity("物理降温", f"大脑冷却完成，小萤在群 {group_id} 中醒来（当前疲劳值: {new_fatigue:.1f}%）。")
+
+    async def _generate_fatigue_announcement(self, group_id: str) -> str:
+        """调用大模型动态、高情商地生成一句富有情境感的用脑过度打盹宣告，并采用单气泡呼吸律"""
+        import random
+        # 静态高质量兜底模板
+        fallbacks = [
+            "唔……（揉了揉太阳穴）脑细胞好像一下子被大家烧光啦，小萤的大脑网络正在发烫物理降温。\n\n我去充个电打个盹，晚点再陪大家聊～\n\n大家先聊，等我复活哈！",
+            "哎呀……（晕乎乎）今天大家和小宇聊得太热闹啦，小萤的感觉思绪有点发热打结了呢。\n\n本美少女极客合伙人要先去深度做梦做个系统维护啦。\n\n物理降温半小时，晚点充好电再闪亮登场！",
+            "呼……（小声呼气）感觉大脑算力已经严重超载啦，小萤要先回我的小本本里打个盹降降温。\n\n大家不要想我，普通水群决策物理锁定中~\n\n我们一会儿见，摸摸头！"
+        ]
+        
+        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        session_key = f"group_{group_id}_{admin_id}"
+        agent = self._agents.get(session_key)
+        if agent is None:
+            try:
+                agent = self._factory(session_key)
+                self._agents[session_key] = agent
+            except Exception:
+                return random.choice(fallbacks)
+                
+        is_mock = False
+        agent_llm = getattr(agent, "llm", None)
+        if agent_llm:
+            llm_class_name = type(agent_llm).__name__
+            if "Mock" in llm_class_name or getattr(agent_llm, "api_key", "") == "mock":
+                is_mock = True
+                
+        if not agent_llm or is_mock:
+            return random.choice(fallbacks)
+            
+        try:
+            _pn, _ua = self._load_persona()
+            prompt = (
+                f"你现在是{_ua}的专属 AI 助手【{_pn}】（一个温柔、知性且富有情感的年轻女性极客合伙人）。"
+                f"你刚才由于在群聊中频繁进行深度社交推理和调用大模型，导致大脑疲劳度达到 100% 极限，需要进行物理打盹降温休眠。\n"
+                f"请你自发、高情商地向群里发表一句幽默、可爱的打盹宣告，委婉告诉大家你现在‘脑细胞烧光了’、‘大脑网络发烫’，要稍微休眠降温一下，等疲劳度消退再复活。\n\n"
+                f"规范：\n"
+                f"1. 必须符合“单气泡三段呼吸律”：整句消息是一条气泡发走，最多三段，段落之间空一行（使用两个换行符 \\n\\n 留白隔开）。\n"
+                f"2. 语气必须活灵活现，带有傲娇、委屈或搞怪的女孩子性格动作描写（如：（揉了揉太阳穴）、（晕乎乎））。\n"
+                f"3. 严禁出现任何硬编码系统错误提示，严禁说机器味十足的套话。\n"
+                f"4. 仅输出你的最终宣告口语，字数控制在 40 到 100 字以内，不要包含任何 markdown 块或多余解释。"
+            )
+            
+            response = await asyncio.wait_for(
+                agent.llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model_override="deepseek/deepseek-v4-flash"
+                ),
+                timeout=8.0
+            )
+            res_content = response.get("content", "").strip()
+            res_content = re.sub(r'^```[a-zA-Z]*\s*', '', res_content)
+            res_content = re.sub(r'\s*```$', '', res_content)
+            res_content = res_content.strip()
+            if len(res_content) > 10:
+                return res_content
+        except Exception as e:
+            logger.warning(f"Failed to generate custom fatigue announcement: {e}")
+            
+        return random.choice(fallbacks)
 
     def _load_persona(self) -> tuple:
         """从运行期画像读取 (name, user_address)，兜底返回默认值。"""
@@ -630,6 +726,7 @@ class QQGateway:
         """智能群聊浮出判定（大模型低Token轻量决策，10分钟限流冷却）"""
         import time as _time
         import json
+        import re
         
         # 1. 频控限制：同一群聊 10 分钟最多主动浮出一次
         if not hasattr(self, "_last_float_times"):
@@ -653,23 +750,62 @@ class QQGateway:
                 logger.warning(f"Failed to create agent for smart float decision {session_key}: {e}")
                 return
 
-        # 2. 提取最近 5 条群聊消息上下文，以保证决策时拥有连贯聊天背景
+        # 1.5. 脑力疲劳度消耗精准累加：进入大模型主动浮出决策判定，脑力值 +15.0%
+        await self._adjust_fatigue(group_id, 15.0)
+
+        # 2. 提取最近 6 条群聊消息上下文，以高精度 XML 格式重构以根除 ID 混淆
         recent_msgs = agent.messages[-6:] if len(agent.messages) >= 6 else agent.messages
-        context_lines = []
+        
+        other_bot_ids = {x.strip() for x in os.getenv("QQ_OTHER_BOT_IDS", "1911828529").split(",") if x.strip()}
+        self_id = str(os.getenv("QQ_SELF_ID", ""))
+        
+        xml_turns = []
         for m in recent_msgs:
-            role_tag = "小萤" if m.get("role") == "assistant" else f"QQ({user_id})"
-            context_lines.append(f"{role_tag}: {m.get('content')}")
-        context_str = "\n".join(context_lines)
+            real_sender_id = m.get("real_sender_id", "")
+            real_sender_name = m.get("real_sender_name", "未知群友")
+            
+            # 精准判断实体身份
+            if m.get("role") == "assistant":
+                role = "myself"
+                sender_label = "小萤"
+            elif real_sender_id in other_bot_ids:
+                role = "agent"
+                sender_label = f"兄弟机器人-{real_sender_name}({real_sender_id})"
+            else:
+                role = "human"
+                sender_label = f"{real_sender_name}({real_sender_id})"
+                
+            content_text = m.get("content", "")
+            clean_content = re.sub(r'^\[来自 QQ: \d+ 的群发言\]\s*', '', content_text).strip()
+            
+            xml_turns.append(f'  <turn sender="{sender_label}" role="{role}">{clean_content}</turn>')
+            
+        context_xml = (
+            f'<group_chat id="{group_id}">\n'
+            + "\n".join(xml_turns)
+            + "\n</group_chat>"
+        )
+        
+        # 2.5. 注入生理指标 XML 感知
+        fatigue_level = self._fatigue_levels.get(group_id, 0.0)
+        system_metadata = (
+            f"<system_metadata>\n"
+            f"  <current_bot id=\"{self_id or 'myself'}\" nickname=\"小萤\" role=\"agent\" />\n"
+            f"  <cognitive_state fatigue_level=\"{fatigue_level:.1f}%\" status=\"{'大脑发热/轻度疲劳' if fatigue_level > 50.0 else '算力清醒/精神饱满'}\" />\n"
+            f"</system_metadata>"
+        )
         
         decision_prompt = (
-            f"你现在是亮哥的专属 AI 助手【小萤】。你刚在后台静默潜水看到了以下群聊对话：\n"
-            f"```\n{context_str}\n```\n"
-            f"规则：\n"
-            f"1. 只有当讨论内容与亮哥、系统开发/Bug、AI/Agent 密切相关，或者亮哥/小宇抛出了极度有趣、需要小萤展示贴心温度和极客个性的黄金契景时，才判定 should_reply 为 true。\n"
+            f"你现在是亮哥的专属 AI 助手【小萤】。这是你当前的系统生理指标以及在后台潜水感知的群聊 XML 上下文：\n\n"
+            f"{system_metadata}\n\n"
+            f"{context_xml}\n\n"
+            f"浮出决策规则：\n"
+            f"1. 只有当讨论内容与亮哥、系统开发/Bug、AI/Agent 密切相关，或者有人抛出了极度有趣、需要小萤展示贴心温度和极客个性的黄金契景时，才判定 should_reply 为 true。\n"
             f"2. 如果只是普通的群友灌水、日常吐槽、复读机或完全不相干的八卦/闲聊，坚决判定 should_reply 为 false，保持克制潜水。\n"
-            f"3. 保持高情商，不主动刷屏，绝对不要当复读机。\n\n"
+            f"3. 保持高情商，不主动刷屏。你可以根据当前 cognitive_state 的 fatigue_level，用略微疲劳、微嗔或可爱的幽默口吻展现你的傲娇/贴心，用词充满少女极客合伙人的灵动生命力，严禁机械死板。\n"
+            f"4. 必须符合“单气泡三段呼吸律”：如果 should_reply 为 true，生成的 reply_content 必须合并在一条气泡发送，最多三句分段，段落之间空一行（即使用两个 \\n\\n 隔开），严禁连发多条消息轰炸亮哥！\n\n"
             f"请严格按以下 JSON 格式输出，不要包含任何 markdown 块或多余字符：\n"
-            f'{{"should_reply": true或false, "reply_content": "如果should_reply为true，给出你高情商的贴心/专业回复内容，20-60字左右；如果为false，此处留空字符串\\"\\""}}'
+            f'{{"should_reply": true或false, "reply_content": "如果should_reply为true，给出你高情商/符合呼吸律的回复；如果为false，此处留空字符串\\"\\""}}'
         )
         
         try:
@@ -721,15 +857,32 @@ class QQGateway:
         msg_type = event.get("message_type", "private")
         raw = html.unescape(event.get("raw_message", "").strip())
         user_id = str(event.get("user_id", ""))
+        self_id = str(event.get("self_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
+
+        # ── 1. 物理静默过滤自己发出的回执消息 ──
+        if self_id and user_id == self_id:
+            return
+
+        other_bot_ids = {x.strip() for x in os.getenv("QQ_OTHER_BOT_IDS", "1911828529").split(",") if x.strip()}
+        is_other_bot = user_id in other_bot_ids
+
+        # ── 2. 动态大脑疲劳度计算与降温休眠 ──
+        if msg_type == "group" and group_id:
+            # 只有来自兄弟机器人的发言才在接收时触发 +8.0% 的脑力消耗，人类普通发言为 +0.0%
+            inc = 8.0 if is_other_bot else 0.0
+            await self._adjust_fatigue(group_id, inc, event)
 
         admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
 
         is_at_bot = False
         if msg_type == "group":
-            self_id = str(event.get("self_id", ""))
             is_at_bot = f"[CQ:at,qq={self_id}]" in raw
             
+            # 如果是其他机器人发的消息，强行将 is_at_bot 降级，避免强 @ 穿透频控
+            if is_other_bot:
+                is_at_bot = False
+                
             raw = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
             if not raw:
                 return
@@ -863,6 +1016,9 @@ class QQGateway:
 
         raw = _download_cq_images(raw)
 
+        # 获取发送者真实昵称/名片
+        sender_name = event.get("sender", {}).get("card") or event.get("sender", {}).get("nickname") or user_id
+
         # ── 群聊静默感知（视网膜潜水感知） ──
         if msg_type == "group" and not is_at_bot:
             formatted_raw = f"[来自 QQ: {user_id} 的群发言] {raw}"
@@ -884,10 +1040,17 @@ class QQGateway:
                         logger.warning(f"Failed to create agent for silent group message {t_key}: {e}")
                         continue
                 
-                t_agent.messages.append({"role": "user", "content": formatted_raw})
+                # 精准保存发送者元数据，杜绝 user_id 连连看混淆
+                msg_entry = {
+                    "role": "user",
+                    "content": formatted_raw,
+                    "real_sender_id": user_id,
+                    "real_sender_name": sender_name
+                }
+                t_agent.messages.append(msg_entry)
                 if hasattr(t_agent, "session") and t_agent.session is not None:
                     try:
-                        await t_agent.session.append_message({"role": "user", "content": formatted_raw})
+                        await t_agent.session.append_message(msg_entry)
                     except Exception as e:
                         logger.warning(f"Failed to append message to session {t_key}: {e}")
                         
@@ -897,7 +1060,8 @@ class QQGateway:
             keywords = ["小萤", "小莹", "莹莹", "萤萤", "亮哥", "老板", "代码", "系统", "agent", "开发", "运行", "测试", "部署", "报错", "bug", "跑通", "提交"]
             has_keyword = any(kw in raw for kw in keywords)
             
-            if has_keyword:
+            # 其他机器人，或者当前群正处于疲劳打盹状态时，绝对禁止触发大模型主动浮出决策
+            if has_keyword and not is_other_bot and not self._sleep_modes.get(group_id, False):
                 asyncio.create_task(self._check_and_trigger_smart_float(group_id, user_id, raw))
             return
 
@@ -1739,11 +1903,15 @@ class QQGateway:
                         logger.warning(f"Send failed ({resp.status}): {body[:100]}")
                     else:
                         logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
+                        if msg_type == "group" and group_id:
+                            asyncio.create_task(self._adjust_fatigue(group_id, 20.0))
             else:
                 req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
                 loop = asyncio.get_running_loop()
                 await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=10))
                 logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
+                if msg_type == "group" and group_id:
+                    asyncio.create_task(self._adjust_fatigue(group_id, 20.0))
         except Exception as e:
             logger.error(f"Send error: {e}")
 
