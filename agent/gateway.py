@@ -640,15 +640,9 @@ class QQGateway:
         if msg_type == "group":
             self_id = str(event.get("self_id", ""))
             is_at_bot = f"[CQ:at,qq={self_id}]" in raw
-            is_called_name = "小萤" in raw
             
-            # 亮哥拥有直接称呼名字或物理 @ 触发的双重特权；普通群友必须物理 @
-            if user_id == admin_id:
-                is_triggered = is_at_bot or is_called_name
-            else:
-                is_triggered = is_at_bot
-                
-            if not is_triggered:
+            # 严格遵循亮哥指示：群聊里一律必须通过物理 @ 才能唤醒，防止日常对话提到“小萤”时误唤醒抢答
+            if not is_at_bot:
                 return
                 
             raw = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
@@ -793,24 +787,24 @@ class QQGateway:
         self._log_activity("用户输入", f"{_ua} ({session_key}): {raw}")
 
         agent = self._agents.get(session_key)
-        if agent is not None:
-            if getattr(agent, "role", "admin") == "coworker" and getattr(agent, "sandbox_violation_count", 0) >= 2:
-                reject_msg = "⚠️ [系统安全防线拦截] 检测到您已连续多次尝试未授权越权高危操作，您的沙箱会话已被系统安全机制临时冻结。小萤已自动向亮哥呈报报警并提交操作日志。如需解锁，请联系亮哥。"
-                msg_type = event.get("message_type", "private")
-                group_id = str(event.get("group_id")) if msg_type == "group" else ""
-                await self._send(msg_type, user_id, group_id, reject_msg, skip_delay=True)
-                return
-
         if agent is None:
             agent = self._factory(session_key)
             self._agents[session_key] = agent
 
-        # 注入角色属性（admin 还是 coworker）
+        # 抢先注入当前发言用户的物理 QQ 号和角色属性，实现完美的 QQ 级拦截隔离与身份实时感知
+        agent.current_user_id = user_id
         if user_id == admin_id:
             agent.role = "admin"
         else:
             agent.role = "coworker"
-            agent.current_user_id = user_id
+
+        # 基于物理隔离后的 sandbox_violation_count 进行精准安全拦截
+        if agent.role == "coworker" and agent.sandbox_violation_count >= 2:
+            reject_msg = "⚠️ [安全保护] 抱歉，由于涉及亮哥的隐私和系统安全，您的沙箱会话已被限制。如需继续交流，请联系亮哥。"
+            msg_type = event.get("message_type", "private")
+            group_id = str(event.get("group_id")) if msg_type == "group" else ""
+            await self._send(msg_type, user_id, group_id, reject_msg, skip_delay=True)
+            return
 
         # 判定是否有旧任务正在运行
         active_task = self._current_tasks.get(session_key)
@@ -888,22 +882,22 @@ class QQGateway:
             return
 
         agent = self._agents.get(session_key)
-        if agent is not None:
-            if getattr(agent, "role", "admin") == "coworker" and getattr(agent, "sandbox_violation_count", 0) >= 2:
-                reject_msg = "⚠️ [系统安全防线拦截] 检测到您已连续多次尝试未授权越权高危操作，您的沙箱会话已被系统安全机制临时冻结。小萤已自动向亮哥呈报报警并提交操作日志。如需解锁，请联系亮哥。"
-                await self._send(msg_type, user_id, group_id, reject_msg, skip_delay=True)
-                return
-
         if agent is None:
             agent = self._factory(session_key)
             self._agents[session_key] = agent
 
-        # 注入角色属性（admin 还是 coworker）
+        # 抢先注入当前发言用户的物理 QQ 号和角色属性
+        agent.current_user_id = user_id
         if user_id == admin_id:
             agent.role = "admin"
         else:
             agent.role = "coworker"
-            agent.current_user_id = user_id
+
+        # 基于物理隔离后的 sandbox_violation_count 进行精准安全拦截
+        if agent.role == "coworker" and agent.sandbox_violation_count >= 2:
+            reject_msg = "⚠️ [安全保护] 抱歉，由于涉及亮哥的隐私和系统安全，您的沙箱会话已被限制。如需继续交流，请联系亮哥。"
+            await self._send(msg_type, user_id, group_id, reject_msg, skip_delay=True)
+            return
 
         import json
         _persona_name = "小萤"

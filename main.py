@@ -54,6 +54,8 @@ from agent.tools.schedule_task_tool import ScheduleTaskTool
 from agent.tools.xiaohongshu_tool import XiaohongshuTool
 from agent.tools.notebooklm_tool import NotebookLMTool
 from agent.tools.qq_status_tool import GetQQStatusTool
+from agent.tools.send_qq_message_tool import SendQQMessageTool
+
 
 
 
@@ -140,6 +142,7 @@ def build_agent(session_id: str = "default") -> Agent:
         registry.register(XiaohongshuTool())
         registry.register(NotebookLMTool())
         registry.register(GetQQStatusTool())
+        registry.register(SendQQMessageTool())
 
 
     memory = MemoryManager()
