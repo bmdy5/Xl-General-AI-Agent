@@ -40,7 +40,10 @@ class MessageDispatcher:
         user_id = str(event.get("user_id", ""))
         self_id = str(event.get("self_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
-        sender_name = event.get("sender", {}).get("nickname", "") or event.get("sender", {}).get("card", "") or user_id
+        sender_info = event.get("sender", {})
+        card = str(sender_info.get("card", "")).strip()
+        nickname = str(sender_info.get("nickname", "")).strip()
+        sender_name = card or nickname or str(user_id)
         
         # 1. 物理静默过滤自己发出的回执消息
         if self_id and user_id == self_id:
@@ -213,7 +216,8 @@ class MessageDispatcher:
                 stream=True,
                 state_prefix=state_prefix,
                 real_sender_id=user_id,
-                real_sender_name=sender_name
+                real_sender_name=sender_name,
+                group_id=group_id
             ):
                 # ── 冲突检测 (Collision Detection) 第一阶段 ──
                 if self.bus.is_collision(session_key, task_start_time):
