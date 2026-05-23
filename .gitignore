@@ -26,3 +26,5 @@ scratch/*
 agent/model/
 !gateway.log
 !agent_activity.log
+scripts/
+skills/
