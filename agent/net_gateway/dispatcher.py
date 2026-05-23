@@ -456,6 +456,8 @@ class MessageDispatcher:
                     return
                 elif evt["type"] == "_done":
                     total_sent_tokens = getattr(agent, "_total_tokens", 0)
+                    ctx_tokens = agent.compressor.estimate_tokens(agent.messages) if agent.compressor else 0
+                    self._log_activity_dispatcher("系统调度", f"本次推理完成。大模型总共消耗约 {total_sent_tokens} Tokens，当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
 
             # ── 冲突检测 (Collision Detection) 第二阶段 ──
             if self.bus.is_collision(session_key, task_start_time):
