@@ -101,10 +101,13 @@ class LLMClient:
                 if self.api_base:
                     kwargs["api_base"] = self.api_base
         else:
-            if self.api_key:
-                kwargs["api_key"] = self.api_key
+            # 容灾鉴权自适应兜底继承：若全局 api_key 为空，则自适应继承借用可用的 deepseek_api_key
+            kwargs["api_key"] = self.api_key or self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
             if self.api_base:
                 kwargs["api_base"] = self.api_base
+            elif kwargs["api_key"] == self.deepseek_api_key:
+                # 同样继承借用其 API 路由 Base
+                kwargs["api_base"] = self.api_base or os.getenv("DEEPSEEK_API_BASE") or "https://api.deepseek.com"
 
         max_retries = 3
         backoff_factor = 2.0
@@ -202,10 +205,13 @@ class LLMClient:
                 if self.api_base:
                     kwargs["api_base"] = self.api_base
         else:
-            if self.api_key:
-                kwargs["api_key"] = self.api_key
+            # 容灾鉴权自适应兜底继承：若全局 api_key 为空，则自适应继承借用可用的 deepseek_api_key
+            kwargs["api_key"] = self.api_key or self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
             if self.api_base:
                 kwargs["api_base"] = self.api_base
+            elif kwargs["api_key"] == self.deepseek_api_key:
+                # 同样继承借用其 API 路由 Base
+                kwargs["api_base"] = self.api_base or os.getenv("DEEPSEEK_API_BASE") or "https://api.deepseek.com"
 
         max_retries = 3
         backoff_factor = 2.0

@@ -88,11 +88,9 @@ async def test_deadlock_fuse_trigger():
     agent = Agent(llm=mock_llm, registry=reg)
     agent.messages = [{"role": "user", "content": "帮我运行这个任务"}]
     
-    # 手动重置任务开始时间与总 Token 字段，防止单元测试被判定超时或属性缺失
+    # 手动重置任务开始时间，防止单元测试被判定超时
     import asyncio
     agent._task_start_time = asyncio.get_event_loop().time()
-    agent._total_tokens = 0
-    agent._turn_count = 0
     
     # 4. 运行 ReAct 核心循环并收集事件
     events = []

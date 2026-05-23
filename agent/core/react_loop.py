@@ -65,8 +65,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
     from datetime import datetime, timezone, timedelta
     beijing_tz = timezone(timedelta(hours=8))
     dt = datetime.now(beijing_tz)
-    minute_window = (dt.minute // 5)
-    minute_window = minute_window + minute_window + minute_window + minute_window + minute_window
+    minute_window = (dt.minute // 5) * 5
     now_agg = dt.replace(minute=minute_window, second=0, microsecond=0)
     now = now_agg.strftime("%Y-%m-%d %H:%M (北京时间)")
     cwd = os.getcwd()
