@@ -1200,7 +1200,8 @@ class Agent:
 
             # v7: 跨会话搜索 — 从历史聊天记录中检索相关内容
             # 放宽门槛：长度限制由 20 降至 3 字符，让短提问（如指代不明的短句）也能秒级唤醒历史会话关联
-            if self.session and len(user_input.strip()) >= 3:
+            # 跨会话搜索仅对管理员亮哥开放，坚决防止 coworker 跨频道刺探隐私或造成会话污染
+            if self.session and len(user_input.strip()) >= 3 and getattr(self, "role", "admin") == "admin":
                 try:
                     from agent.session.handler import SessionHandler
                     past = await self.session.search_all_sessions(
