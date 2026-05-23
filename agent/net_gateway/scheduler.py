@@ -19,10 +19,23 @@ class GatewayScheduler:
     def __init__(self, bot):
         self.bot = bot
         self.admin_id = bot.admin_id
+        self._is_generating = False
+        self._daemon_task = None
 
     async def start(self):
         """拉起守护后台任务循环"""
-        asyncio.create_task(self._daemon_loop())
+        self._daemon_task = asyncio.create_task(self._daemon_loop())
+
+    async def stop(self):
+        """停止定时调度并优雅取消所有活动中的协程任务"""
+        logger.info("正在停止 GatewayScheduler...")
+        if self._daemon_task and not self._daemon_task.done():
+            self._daemon_task.cancel()
+            try:
+                await self._daemon_task
+            except asyncio.CancelledError:
+                pass
+            logger.info("GatewayScheduler 守护后台任务已成功停止。")
 
     async def _daemon_loop(self):
         """后台高可用健康守护轮询进程，负责 NapCat 断线自愈重启、GPT-SoVITS 挂载自愈及定时技术早报播客推送。"""
@@ -149,6 +162,11 @@ class GatewayScheduler:
 
     async def _process_podcast_generation_async(self, session_key: str, topic: str, admin_id: str):
         """夜间播客笔记异步合成与 NotebookLM 自动投喂流程"""
+        if self._is_generating:
+            await self.bot._send("private", admin_id, "", "🌅 亮哥，夜间双人播客生成正在进行中，请耐心等待，请勿重复触发。")
+            return
+            
+        self._is_generating = True
         try:
             from agent.tools.mcp_agent_learning_server import synthesize_agent_notes, launch_podcast_generation
             res_synth = await synthesize_agent_notes(topic, use_web_search=True)
@@ -167,4 +185,6 @@ class GatewayScheduler:
         except Exception as e:
             logger.error(f"夜间播客交互生成失败: {e}", exc_info=True)
             await self.bot._send("private", admin_id, "", f"❌ 抱歉亮哥，在为您生成播客笔记或投喂 NotebookLM 时发生异常：{e}")
+        finally:
+            self._is_generating = False
 
