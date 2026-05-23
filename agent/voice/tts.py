@@ -157,12 +157,14 @@ async def generate_voice(text: str, style: str = "知性") -> tuple[bytes, str, 
     
     # 35字宽限策略：如果总字数不超过 35 字，则完全不截断
     if len(voice_text) > 35:
-        # 智能在 20 到 28 字之间标点切分，避免截断吞字
-        split_idx = 25
-        for i in range(28, 18, -1):
-            if i < len(voice_text) and voice_text[i] in ("，", "。", "！", "？", ",", ".", "!", "?", "；", ";"):
+        # 智能在 35 字范围内从后向前寻找最合理的自然停顿标点、换行或空格，避免截断吞字
+        split_idx = 35
+        for i in range(min(len(voice_text) - 1, 35), 0, -1):
+            if voice_text[i] in ("，", "。", "！", "？", ",", ".", "!", "?", "；", ";", " ", "\n", "\r", "\t", "、"):
                 split_idx = i + 1
                 break
+        else:
+            split_idx = 25  # 无标点时兜底在 25 字截断
         voice_text = text[:split_idx].strip()
         remaining_text = text[split_idx:].strip()
 
