@@ -1,4 +1,5 @@
 import os
+import json
 import re
 import hashlib
 import asyncio
@@ -186,3 +187,71 @@ async def on_session_end(agent):
             logger.info(f"Self-evolved {len(new_rules)} rule(s)")
     except Exception as e:
         logger.debug(f"Rule evolution skipped: {e}")
+
+# ── 工具审计提示词 ───────────────────────────────
+AUDIT_PROMPT = """检查这个工具调用结果，判断是否有学习价值。
+
+工具: {tool_name}
+参数: {args}
+结果 (前500字): {result}
+
+判断:
+- 这个结果是成功还是失败？
+- 失败原因是什么？有没有值得记住的教训？
+- 有没有发现新的项目事实或约束？
+
+只输出 JSON: {{"worth_remembering": true/false, "insight": "一句话", "memory_type": "learn/feedback/project"}}
+如果 worth_remembering=false，insight 为空字符串。不要输出其他内容。"""
+
+async def audit_tool_call(agent, tool_name: str, args: dict, result: str, force: bool = False):
+    """工具执行后审计，发现有价值的信息自动存记忆."""
+    if getattr(agent, "role", "admin") == "coworker":
+        return
+
+    # 数据飞轮：所有工具调用录音，不仅仅错误
+    from ..evo_traces import record_tool_call
+    had_error = any(t in str(result)[:500] for t in
+                    ["error", "Error", "failed", "not found", "permission denied",
+                     "Error:", "失败", "异常", "Traceback"])
+    record_tool_call(tool_name, args, str(result), had_error=had_error)
+
+    # 只在工具调用失败/异常时审计，成功直接跳过。若 force 为 True，则必定强行审计
+    if not force and not had_error:
+        return
+
+    try:
+        prompt = AUDIT_PROMPT.format(
+            tool_name=tool_name,
+            args=json.dumps(args, ensure_ascii=False)[:200],
+            result=str(result)[:500],
+        )
+        response = await agent.llm.chat(
+            messages=[{"role": "user", "content": prompt}],
+            tools=None,
+            model_override=agent.llm.model,
+        )
+        text = response.get("content", "").strip()
+        json_match = re.search(r'\{[\s\S]*\}', text)
+        if not json_match:
+            return
+        audit = json.loads(json_match.group(0))
+        if audit.get("worth_remembering") and audit.get("insight"):
+            mtype = audit.get("memory_type", "learn")
+            type_map = {
+                "learn": "xl_debugging",
+                "feedback": "user_profile",
+                "project": "xl_code_review"
+            }
+            category = type_map.get(mtype, "xl_debugging")
+            ki_id = f"audit_{tool_name}_{hashlib.md5(audit['insight'].encode('utf-8')).hexdigest()[:16]}"
+            ki_data = {
+                "id": ki_id,
+                "title": f"工具审计发现: {tool_name}",
+                "category": category,
+                "keywords": [tool_name, "audit", mtype],
+                "summary": audit['insight'][:100],
+                "content": f"工具: {tool_name}\n参数: {json.dumps(args, ensure_ascii=False)[:200]}\n发现: {audit['insight']}"
+            }
+            await process_dream_ki(agent, ki_data)
+    except Exception as e:
+        logger.debug(f"Audit skipped: {e}")
