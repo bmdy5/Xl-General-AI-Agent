@@ -148,7 +148,7 @@ async def build_system_prompt(agent) -> str:
         static_p += sandbox_instruction
 
     dynamic = ""
-    global_rules_file = Path(__file__).resolve().parent.parent / "EVOLVED_RULES.md"
+    global_rules_file = Path(__file__).resolve().parent.parent / "archive" / "EVOLVED_RULES.md"
     if global_rules_file.exists():
         global_rules = global_rules_file.read_text(encoding="utf-8").strip()
         if global_rules:

@@ -27,3 +27,6 @@ scratch/*
 agent/model/
 scripts/
 /skills/
+
+# 归档目录 (历史运行时产物)
+archive/
