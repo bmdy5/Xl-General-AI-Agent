@@ -183,6 +183,24 @@ class Agent:
         real_sender_name: str = ""
     ) -> AsyncGenerator[dict, None]:
         self.current_state_prefix = state_prefix
+        
+        # 抢先注入当前发言用户的物理 QQ 号和角色属性
+        if real_sender_id:
+            self.current_user_id = real_sender_id
+            admin_id = os.getenv("ADMIN_ID", "")
+            if real_sender_id == admin_id:
+                self.role = "admin"
+            else:
+                self.role = "coworker"
+        
+        # 基于物理隔离后的 sandbox_violation_count 进行精准安全拦截，下沉硬锁安全防线
+        if getattr(self, "role", "coworker") == "coworker" and self.sandbox_violation_count >= 2:
+            yield {
+                "type": "error",
+                "content": "⚠️ [安全保护] 抱歉，由于涉及亮哥的隐私和系统安全，您的沙箱会话已被限制。如需继续交流，请联系亮哥。"
+            }
+            return
+
         self._abort.clear()
         self._permission_granted.clear()
         self._turn_count = 0
