@@ -55,7 +55,7 @@ class AgentExecutor:
             f"从而自主掌控是否使用 [语音:情绪] 发声。普通聊天绝不多发，少发、精发才能带给亮哥惊喜。]"
         )
 
-        presenter = StreamPresenter(self.dispatcher)
+        presenter = StreamPresenter(self)
 
         try:
             # 核心下沉：core.py 顶部会在 coworker 违规次数超限时 yield 包含安全警告的 error 并 return
@@ -170,16 +170,23 @@ class AgentExecutor:
             logger.error(f"Error in executor runner: {e}", exc_info=True)
             await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [系统错误] 小萤的大脑有些错乱，没有听清亮哥的话，再说一次好不好呀～", skip_delay=True)
         finally:
-            if self.bot and hasattr(self.bot, "_current_tasks"):
-                self.bot._current_tasks.pop(session_key, None)
-
-            # 自动拉起下一个排队任务，维持完美功能闭环与单元测试向下兼容
-            if self.bot and hasattr(self.bot, "_message_queues"):
-                queue = self.bot._message_queues.get(session_key, [])
-                if queue:
-                    next_event, next_raw = queue.pop(0)
-                    logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务: {next_raw}")
-                    asyncio.create_task(self.dispatcher.dispatch_event(next_event))
+            if self.bot:
+                current_coro = asyncio.current_task()
+                active_task = self.bot.get_active_task(session_key)
+                
+                # 只有当 current_tasks 中的活跃任务依然是当前协程时，才说明没有被更新的任务抢占
+                is_current = active_task is current_coro or active_task is True
+                
+                if is_current:
+                    self.bot.remove_active_task(session_key, current_coro)
+                    
+                    # 自动拉起下一个排队任务，维持完美功能闭环与单元测试向下兼容
+                    if self.bot.has_queued_messages(session_key):
+                        next_pack = self.bot.pop_queued_message(session_key)
+                        if next_pack:
+                            next_event, next_raw = next_pack
+                            logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务: {next_raw}")
+                            asyncio.create_task(self.dispatcher.dispatch_event(next_event))
 
     def _count_tokens(self, text: str) -> int:
         """中英文混合 Token 科学算法"""

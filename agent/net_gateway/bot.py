@@ -50,12 +50,11 @@ class QQGateway:
         self._last_receive_time = self.context._last_receive_time
         
         # 通信底层状态与缓存
-        self._http: Optional[aiohttp.ClientSession] = None
-        self._pending_perms: dict[str, object] = {}
-        self._reconnect_failures: int = 0
-        self._last_offline_alert: float = 0.0
-        self._current_tasks: dict[str, asyncio.Task] = {}
-        self._message_queues: dict[str, list[tuple[dict, str]]] = {}
+        self._http = None
+        self._reconnect_failures = 0
+        self._last_offline_alert = 0.0
+        self._current_tasks = {}
+        self._message_queues = {}
         
         # 配置同步
         self.admin_id = admin_id
@@ -205,6 +204,55 @@ class QQGateway:
         if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "_generate_fatigue_announcement"):
             return await self.dispatcher._generate_fatigue_announcement(group_id)
         return "唔……小萤用脑过度，去打盹半小时。"
+
+    @property
+    def _pending_perms(self) -> dict:
+        if hasattr(self, "dispatcher"):
+            return self.dispatcher._pending_perms
+        return {}
+
+    @_pending_perms.setter
+    def _pending_perms(self, value: dict):
+        if hasattr(self, "dispatcher"):
+            self.dispatcher._pending_perms = value
+
+    def get_active_task(self, session_key: str):
+        return self._current_tasks.get(session_key)
+
+    def set_active_task(self, session_key: str, task):
+        self._current_tasks[session_key] = task
+
+    def remove_active_task(self, session_key: str, task = None):
+        if task is None:
+            self._current_tasks.pop(session_key, None)
+        else:
+            current = self._current_tasks.get(session_key)
+            if current is task:
+                self._current_tasks.pop(session_key, None)
+
+    def enqueue_message(self, session_key: str, event: dict, raw: str):
+        if session_key not in self._message_queues:
+            self._message_queues[session_key] = []
+        self._message_queues[session_key].append((event, raw))
+
+    def pop_queued_message(self, session_key: str):
+        queue = self._message_queues.get(session_key, [])
+        if queue:
+            return queue.pop(0)
+        return None
+
+    def has_queued_messages(self, session_key: str) -> bool:
+        return len(self._message_queues.get(session_key, [])) > 0
+
+    def get_waiting_podcast_topic(self) -> dict:
+        if hasattr(self, "dispatcher"):
+            return self.dispatcher._waiting_podcast_topic
+        return {}
+
+    def get_podcast_choices(self) -> dict:
+        if hasattr(self, "dispatcher"):
+            return self.dispatcher._podcast_choices
+        return {}
 
     async def _process_podcast_generation_async(self, session_key: str, topic: str, admin_id: str):
         """夜间播客异步生成转发代理"""

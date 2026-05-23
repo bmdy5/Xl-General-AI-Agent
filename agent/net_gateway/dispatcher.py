@@ -265,8 +265,8 @@ class MessageDispatcher:
             return
 
         # 兼容测试套件：记录排队消息队列，维持单元测试高度向下兼容
-        if self.bot and hasattr(self.bot, "_message_queues"):
-            active_task = getattr(self.bot, "_current_tasks", {}).get(session_key)
+        if self.bot:
+            active_task = self.bot.get_active_task(session_key)
             is_busy = False
             if active_task is not None:
                 if isinstance(active_task, bool):
@@ -285,11 +285,9 @@ class MessageDispatcher:
                         f"先简短确认停下上一个任务，然后切入新指令：\"{raw}\"]"
                     )
                     raw = interruption_note
-                    getattr(self.bot, "_current_tasks", {}).pop(session_key, None)
+                    self.bot.remove_active_task(session_key, active_task)
                 else:
-                    if session_key not in self.bot._message_queues:
-                        self.bot._message_queues[session_key] = []
-                    self.bot._message_queues[session_key].append((event, raw))
+                    self.bot.enqueue_message(session_key, event, raw)
                     return
 
         # 获取或惰性初始化 Agent 实例
@@ -315,13 +313,13 @@ class MessageDispatcher:
                 logger.error(f"Error in runner wrapper for {session_key}: {e}", exc_info=True)
 
         # 100% 同步瞬间抢占占位，封死微秒级竞态窗口
-        if self.bot and hasattr(self.bot, "_current_tasks"):
-            self.bot._current_tasks[session_key] = True
+        if self.bot:
+            self.bot.set_active_task(session_key, True)
 
         task = asyncio.create_task(run_with_timeout())
         task.raw_prompt = raw
-        if self.bot and hasattr(self.bot, "_current_tasks"):
-            self.bot._current_tasks[session_key] = task
+        if self.bot:
+            self.bot.set_active_task(session_key, task)
 
     async def _execute_agent_run(self, agent, raw: str, session_key: str, msg_type: str, 
                                  user_id: str, group_id: str, sender_name: str, task_start_time: float):
