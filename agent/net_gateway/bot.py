@@ -31,6 +31,10 @@ class QQGateway:
         from .sender import MessageSender
         self.sender = MessageSender(self)
         
+        # 引入并实例化轨迹日志记录器
+        from .logger import ActivityLogger
+        self.activity_logger = ActivityLogger(self)
+        
         # 2. 为 context 动态绑定发包回调，使用 lambda 动态路由以完美支持单元测试对底层方法的 Mock 劫持
         self.context.send_handler = lambda *args, **kwargs: self._send(*args, **kwargs)
         self.context.send_chunk_handler = lambda *args, **kwargs: self._send_chunk(*args, **kwargs)
@@ -50,8 +54,6 @@ class QQGateway:
         self._pending_perms: dict[str, object] = {}
         self._reconnect_failures: int = 0
         self._last_offline_alert: float = 0.0
-        self._activity_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent_activity.log"
-        self._bypass_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/coworker_activity.log"
         self._current_tasks: dict[str, asyncio.Task] = {}
         self._message_queues: dict[str, list[tuple[dict, str]]] = {}
         
@@ -131,28 +133,8 @@ class QQGateway:
         return 0.0
 
     def _log_activity(self, category: str, content: str, user_id: str = None):
-        """结构化轨迹活动日志记录，支持根据发言人身份将主流量与沙箱旁路流量物理隔离分流"""
-        now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        safe_content = content
-        for pattern in [r"(?i)token[s]?'?\s*:\s*'[^']+'", r"(?i)key[s]?'?\s*:\s*'[^']+'"]:
-            safe_content = re.sub(pattern, "token: '******'", safe_content)
-        
-        if len(safe_content) > 1000:
-            safe_content = safe_content[:1000] + " ... (truncated)"
-        
-        log_line = f"{now} | [{category}] | {safe_content}\n"
-        
-        # 物理路由判定：亮哥本人的轨迹打入主要日志，其他人的动作全数隔离归入旁路日志
-        target_path = self._activity_log_path
-        if user_id is not None:
-            if str(user_id) != str(self.admin_id):
-                target_path = self._bypass_log_path
-                
-        try:
-            with open(target_path, "a", encoding="utf-8") as f:
-                f.write(log_line)
-        except Exception as e:
-            logger.error(f"Failed to write activity log: {e}")
+        """兼容代理：委托给物理 logger 记录轨迹日志。"""
+        return self.activity_logger.log_activity(category, content, user_id)
 
     # ── 兼容测试套件属性/方法代理代理 ──
 
