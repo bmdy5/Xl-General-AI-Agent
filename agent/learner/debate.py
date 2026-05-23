@@ -60,7 +60,7 @@ class DebateSystem:
         except Exception:
             return ""
 
-    async def score_single(self, name: str, topic: str, findings: dict) -> Optional = None:
+    async def score_single(self, name: str, topic: str, findings: dict) -> dict | None:
         """双角色独立打分，评估实用性与准确性并说明论证理由."""
         prompt = (
             f"评审'{name}'关于'{topic}'的发现:\n"

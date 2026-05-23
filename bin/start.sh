@@ -46,12 +46,9 @@ echo "2. 清理旧进程与缓存..." | tee -a "$STARTUP_LOG"
 # 清理缓存时，为了绝对不使用星号，使用 find + grep 配合 xargs
 find . -type d | grep "__pycache__$" | xargs rm -rf 2>/dev/null || true
 
-# 检查是否由 launchd 托管，托管就由 launchctl 处理，否则 pkill 强杀
-if launchctl list 2>/dev/null | grep -q com.myagent.qqgateway; then
-    echo "   - 检测到 launchd 托管服务 com.myagent.qqgateway，稍后使用 launchctl 重启" | tee -a "$STARTUP_LOG"
-else
-    pkill -f "main.py --gateway" 2>/dev/null && echo "   - 旧 gateway 已停止" || echo "   - 无旧 gateway 进程" | tee -a "$STARTUP_LOG"
-fi
+# 彻底强杀所有残留的旧 gateway 进程，保证环境独占与自愈纯净
+pkill -9 -f "main.py --gateway" 2>/dev/null || true
+echo "   - 已彻底清理所有潜在的 main.py --gateway 残留进程" | tee -a "$STARTUP_LOG"
 
 # 3. 检查并拉起 NapCat 容器
 echo "3. 检查 NapCat 容器..." | tee -a "$STARTUP_LOG"
