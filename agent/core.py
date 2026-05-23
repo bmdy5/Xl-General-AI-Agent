@@ -298,13 +298,21 @@ class Agent:
                     old_sender = str(old_msg.get("real_sender_id", "")).strip()
                     new_sender = str(real_sender_id or "").strip()
                     if old_sender == new_sender:
-                        is_duplicate = True
-                        # 补全可能缺失的元数据
-                        if real_sender_id and not old_msg.get("real_sender_id"):
-                            old_msg["real_sender_id"] = real_sender_id
-                        if real_sender_name and not old_msg.get("real_sender_name"):
-                            old_msg["real_sender_name"] = real_sender_name
-                        break
+                        # 物理判定已回复防误杀：如果在该旧消息后面已经存在 assistant 的回复消息，则绝对不属于重复发包
+                        try:
+                            old_idx = self.messages.index(old_msg)
+                            has_reply = any(m.get("role") == "assistant" for m in self.messages[old_idx + 1:])
+                        except ValueError:
+                            has_reply = False
+
+                        if not has_reply:
+                            is_duplicate = True
+                            # 补全可能缺失的元数据
+                            if real_sender_id and not old_msg.get("real_sender_id"):
+                                old_msg["real_sender_id"] = real_sender_id
+                            if real_sender_name and not old_msg.get("real_sender_name"):
+                                old_msg["real_sender_name"] = real_sender_name
+                            break
 
         if not is_duplicate:
             self.messages.append(user_msg)
