@@ -7,7 +7,7 @@ import random
 import asyncio
 import logging
 from .tts import parse_voice_test_command, send_voice
-from .bus import CSMAController
+from .carrier import CSMAController
 from .presenter import StreamPresenter
 
 logger = logging.getLogger("net_gateway.dispatcher")

@@ -3,6 +3,7 @@ import json
 import logging
 import os
 import re
+import time
 import urllib.request
 import aiohttp
 from datetime import datetime
@@ -20,7 +21,6 @@ class MessageSender:
         self.bot = bot
         
         # 初始化全局发包平滑流控令牌桶限流器（默认最大并发爆发5包，每1.5秒填充1包）
-        from .bus import TokenBucketLimiter
         capacity = float(os.getenv("QQ_LIMITER_CAPACITY", "5.0"))
         refill_rate = float(os.getenv("QQ_LIMITER_REFILL_RATE", "0.67"))
         self.limiter = TokenBucketLimiter(capacity=capacity, refill_rate=refill_rate)
@@ -95,3 +95,52 @@ class MessageSender:
                 if wait > 0:
                     await asyncio.sleep(wait)
                 wait = 0
+
+
+class TokenBucketLimiter:
+    """全局物理发包平滑流控令牌桶限流器。
+    
+    采用高并发无锁死 (Lock-free/Timer-based) 排队算法，
+    并发调用时仅在微秒级入锁更新未来的绝对时间指针，
+    并在锁的外部执行 asyncio.sleep() 等待，彻底解决 sleep 霸占锁导致的高并发串行死锁。
+    """
+    
+    def __init__(self, capacity: float = 5.0, refill_rate: float = 0.67):
+        self.capacity = capacity
+        self.refill_rate = refill_rate
+        # 1.0 / refill_rate 表示产生 1 个令牌所需的物理时间 (秒)
+        self.interval = 1.0 / refill_rate
+        self.max_tokens = capacity
+        
+        # 记录下一次允许无延时发送的单调时间戳
+        self.allow_at = time.monotonic()
+        self._lock = asyncio.Lock()
+
+    async def acquire(self):
+        """获取发包令牌。采用微秒级短锁计算发包排队时间，并在锁外并发挂起。"""
+        wait_time = 0.0
+        async with self._lock:
+            now = time.monotonic()
+            
+            # 如果 allow_at 在过去太远，说明长期未发包，令牌爆满，重置 allow_at
+            # 最多允许积攒容量为 max_tokens 的爆发力，即最多回退 (max_tokens * interval)
+            max_backlog = self.max_tokens * self.interval
+            if now - self.allow_at > max_backlog:
+                self.allow_at = now - max_backlog
+                
+            # 判定当前时间是否已经到了允许发包的时间
+            if now >= self.allow_at:
+                # 扣除 1 个令牌的等价时间
+                self.allow_at = self.allow_at + self.interval
+                # 如果 allow_at 仍小于 now，重置为 now + interval
+                if self.allow_at < now:
+                    self.allow_at = now + self.interval
+                wait_time = 0.0
+            else:
+                # 令牌不足，为当前协程预支分配下一次允许的时间
+                wait_time = self.allow_at - now
+                self.allow_at = self.allow_at + self.interval
+                
+        # 锁外挂起：锁已被微秒级释放，其他协程可以瞬间入锁参与令牌时间排队
+        if wait_time > 0.0:
+            await asyncio.sleep(wait_time)
