@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 HOST = "0.0.0.0"
 PORT = 8866
-IMAGES_DIR = Path(__file__).parent.parent / "images"
+IMAGES_DIR = Path(__file__).parent.parent / "archive" / "images"
 MANIFEST_FILE = IMAGES_DIR / "manifest.json"
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
