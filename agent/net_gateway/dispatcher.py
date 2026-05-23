@@ -21,17 +21,18 @@ class MessageDispatcher:
         self.bus = CSMAController(context)
         
         # 共享状态属性，与 QQGateway 桥接兼容，保证单元测试完美运行
-        self._private_chat_paused = False
         self._waiting_podcast_topic = {} # session_key -> bool
         self._podcast_choices = {}       # session_key -> list[str]
         self._pending_perms = {}         # session_key -> _PermEvent
-        self._non_white_cache = {}       # user_id -> last_reply_time
         
         # 配置从环境变量同步
         self.admin_id = self.context.admin_id
         
         from .fatigue_manager import FatigueManager
         self.fatigue_manager = FatigueManager(self)
+
+        from .security import SecurityManager
+        self.security_manager = SecurityManager(self)
 
     @property
     def _fatigue_levels(self) -> dict:
@@ -72,6 +73,22 @@ class MessageDispatcher:
     @fatigue_sleep_seconds.setter
     def fatigue_sleep_seconds(self, value: float):
         self.fatigue_manager.fatigue_sleep_seconds = value
+
+    @property
+    def _private_chat_paused(self) -> bool:
+        return self.security_manager._private_chat_paused
+
+    @_private_chat_paused.setter
+    def _private_chat_paused(self, value: bool):
+        self.security_manager._private_chat_paused = value
+
+    @property
+    def _non_white_cache(self) -> dict:
+        return self.security_manager._non_white_cache
+
+    @_non_white_cache.setter
+    def _non_white_cache(self, value: dict):
+        self.security_manager._non_white_cache = value
 
     def _is_truly_calling_me(self, text: str) -> bool:
         """启发式分析群聊文本中提到“小萤/小荧”时，是否属于真正的直接呼唤/指令，防止抢答自作多情"""
@@ -114,23 +131,7 @@ class MessageDispatcher:
         is_other_bot = user_id in other_bot_ids
 
         # ── 2. 安全白名单前置拦截判定 ──
-        WHITE_LIST = {self.admin_id}
-        coworker_ids = os.getenv("QQ_COWORKER_IDS", "")
-        if coworker_ids:
-            WHITE_LIST.update(x.strip() for x in coworker_ids.split(",") if x.strip())
-        extra_white = os.getenv("MY_AGENT_WHITE_LIST", "")
-        if extra_white:
-            WHITE_LIST.update(x.strip() for x in extra_white.split(",") if x.strip())
-
-        # 加载 QQ 群白名单
-        white_groups_env = os.getenv("QQ_WHITE_GROUPS", "693134080")
-        WHITE_GROUPS = {x.strip() for x in white_groups_env.split(",") if x.strip()}
-
-        is_allowed = False
-        if user_id in WHITE_LIST:
-            is_allowed = True
-        elif msg_type == "group" and group_id in WHITE_GROUPS:
-            is_allowed = True
+        is_allowed = self.security_manager.is_allowed(user_id, msg_type, group_id)
 
         # ── 3. 群聊消息「智能静默旁听 + 名字/At 唤醒」重构 ──
         session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
@@ -180,22 +181,10 @@ class MessageDispatcher:
             await self.fatigue_manager.adjust_fatigue(group_id, inc, event)
 
         # ── 4. 安全拦截 ──
-        if not is_allowed:
-            if msg_type == "private" or (msg_type == "group" and is_triggered):
-                now = time.monotonic()
-                last_reply = self._non_white_cache.get(user_id, 0.0)
-                
-                if now - last_reply >= 300.0:  # 5分钟冷却
-                    self._non_white_cache[user_id] = now
-                    reject_msg = "抱歉，我是亮哥的专属 AI 助手小萤，目前仅对主人开放私聊与管理服务哦。"
-                    if msg_type == "group":
-                        await self.context.send_msg("group", "", group_id, f"[CQ:at,qq={user_id}] {reject_msg}")
-                    else:
-                        await self.context.send_msg("private", user_id, "", reject_msg)
-                    logger.warning(f"🛡️ [安全拦截] 拦截非白名单 QQ 用户 [{user_id}] 消息: {raw[:50]}")
+        if await self.security_manager.handle_security_interception(event, is_allowed, is_triggered):
             return
 
-        # ── 4. 主人专属控制与特权唤醒 ──
+        # ── 5. 主人专属控制与特权唤醒 ──
         if user_id == self.admin_id:
             # 1. 强行唤醒打盹 (管理员特权：一开口即 100% 全局复活小萤，取消所有的打盹异步任务)
             if any(self._sleep_modes.values()):
@@ -209,21 +198,14 @@ class MessageDispatcher:
                 logger.info("Admin private message received. Waking up all sessions globally from sleep/nap.")
             
             # 2. 物理开关指令拦截
-            if msg_type == "private":
-                if raw == "暂停私聊":
-                    self._private_chat_paused = True
-                    await self.context.send_msg("private", self.admin_id, "", "[系统提示] 已物理暂停非主人私聊，小萤将保持静默。")
-                    return
-                elif raw == "恢复私聊":
-                    self._private_chat_paused = False
-                    await self.context.send_msg("private", self.admin_id, "", "[系统提示] 已恢复私聊服务，非主人私聊将重新恢复交互与疲劳累加。")
-                    return
-
-        # ── 5. 非主人私聊冷冻期与全局暂停拦截 ──
-        if msg_type == "private" and user_id != self.admin_id:
-            if self._private_chat_paused or self._sleep_modes.get(session_key, False):
-                logger.info(f"Private chat paused/sleeping. Silently ignoring message from {user_id}: {raw[:50]}")
+            if await self.security_manager.handle_admin_commands(msg_type, user_id, raw):
                 return
+
+        # ── 6. 非主人私聊冷冻期与全局暂停拦截 ──
+        if self.security_manager.is_private_chat_paused(msg_type, user_id) or self._sleep_modes.get(session_key, False):
+            logger.info(f"Private chat paused/sleeping. Silently ignoring message from {user_id}: {raw[:50]}")
+            return
+
 
         # ── 6. 播客选题拦截 ──────────────────────────────────────────
         if self._waiting_podcast_topic.get(session_key):
