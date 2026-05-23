@@ -180,9 +180,11 @@ class Agent:
         stream: bool = False,
         state_prefix: str = "",
         real_sender_id: str = "",
-        real_sender_name: str = ""
+        real_sender_name: str = "",
+        group_id: str = ""
     ) -> AsyncGenerator[dict, None]:
         self.current_state_prefix = state_prefix
+        self.current_group_id = group_id
         
         # 抢先注入当前发言用户的物理 QQ 号和角色属性
         if real_sender_id:
