@@ -112,18 +112,6 @@ class QQGateway:
         # 0. 全局物理发包滑窗令牌桶平滑流控整流
         await self.limiter.acquire()
 
-        # 1. 拟人思考打字延迟
-        is_media = text.strip().startswith("[CQ:") or text.strip().startswith("[ CQ:")
-        is_system_msg = any(text.strip().startswith(prefix) for prefix in ["🤖", "⏰", "⚙️", "✅", "❌", "🔍", "🌅", "🚀", "💡"])
-        
-        if not skip_delay and not is_media and not is_system_msg:
-            n_chars = len(text)
-            base_delay = 0.35
-            char_delay = n_chars * 0.03
-            total_delay = min(base_delay + char_delay, 2.5)
-            self._log_activity("打字延迟", f"纯文本打字延迟：计算延迟 {total_delay:.2f}秒，开始等待...")
-            await asyncio.sleep(total_delay)
-
         # 2. 文本净化（QQ 不支持 Markdown 粗斜体渲染，在此进行自动降解）
         text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
         text = re.sub(r'\*(.+?)\*', r'\1', text)
@@ -324,7 +312,7 @@ class QQGateway:
         self.dispatcher._podcast_choices = value
 
     async def _send_chunk(self, msg_type: str, user_id: str, group_id: str, text: str):
-        """发送一个文本块，处理 [SPLIT] 和 [WAIT:N] 并执行拟真打字延迟"""
+        """发送一个文本块，处理 [SPLIT] 和 [WAIT:N]"""
         wait = 0
         def _extract_wait(t):
             nonlocal wait
@@ -341,24 +329,16 @@ class QQGateway:
                 continue
             if len(part) > MAX_REPLY_CHARS:
                 part = part[:MAX_REPLY_CHARS - 20] + "\n...(truncated)"
-            # 第一段保留拟真打字延迟，其余后续段通过 skip_delay=True 瞬间发送，消除 Double Delay 叠加
-            should_skip_delay = (i > 0)
-            await self._send(msg_type, user_id, group_id, part, skip_delay=should_skip_delay)
+            
+            await self._send(msg_type, user_id, group_id, part, skip_delay=True)
             if i < len(parts) - 1:
-                delay = max(0.5, wait) if wait > 0 else self._natural_delay(part)
-                await asyncio.sleep(delay)
+                if wait > 0:
+                    await asyncio.sleep(wait)
                 wait = 0
 
     def _natural_delay(self, text: str) -> float:
-        """根据文本长度自然计算发送间隔."""
-        n = len(text)
-        if n < 10:
-            return 0.3
-        if n < 30:
-            return 0.6
-        if n < 80:
-            return 1.0
-        return 1.5
+        """根据文本长度自然计算发送间隔（打字延迟已物理清退，默认为 0.0）"""
+        return 0.0
 
     def _load_persona(self) -> tuple:
         """从资源文件加载画像属性，支持被 dispatcher 调用或在测试中被 mock."""
