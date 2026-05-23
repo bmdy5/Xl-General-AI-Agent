@@ -1,5 +1,5 @@
 import os
-from ..bootstrap import build_agent
+from ..core.bootstrap import build_agent
 from ..learn.auto_learn import AutoLearner
 
 async def run_auto_learn():

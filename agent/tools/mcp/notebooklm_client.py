@@ -6,7 +6,7 @@ import logging
 import asyncio
 import requests
 import urllib3
-from agent.config import settings
+from agent.core.config import settings
 
 logger = logging.getLogger(__name__)
 

@@ -7,7 +7,7 @@
 """
 
 import sys
-from agent.bootstrap import setup_system
+from agent.core.bootstrap import setup_system
 from agent.runner import (
     run_interactive,
     run_single,
@@ -33,8 +33,8 @@ if __name__ == "__main__":
         elif arg == "--auto-learn":
             _run_safe(run_auto_learn())
         elif arg == "--cleanup":
-            from agent.cleanup import run_cleanup
-            from agent.bootstrap import build_agent
+            from agent.core.cleanup import run_cleanup
+            from agent.core.bootstrap import build_agent
             _run_safe(run_cleanup(build_agent()))
         elif arg == "--dashboard":
             _run_safe(run_dashboard())

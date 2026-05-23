@@ -1,6 +1,6 @@
 import os
-from ..bootstrap import build_agent
-from ..gateway import QQGateway
+from ..core.bootstrap import build_agent
+from ..core.gateway import QQGateway
 
 async def run_gateway():
     """QQ Gateway 模式：连接 NapCat 收发 QQ 消息."""

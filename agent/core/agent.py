@@ -11,7 +11,7 @@ import logging
 import os
 from pathlib import Path
 from typing import AsyncGenerator, Optional
-from ..config import settings
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +66,7 @@ class Agent:
         import json as _json
         profile_file = self.memory.base_dir / "persona_profile.json"
         if not profile_file.exists():
-            template_file = Path(__file__).parent / "default_persona.json"
+            template_file = Path(__file__).resolve().parents[1] / "resources" / "default_persona.json"
             if template_file.exists():
                 default_profile = _json.loads(template_file.read_text(encoding="utf-8"))
             else:

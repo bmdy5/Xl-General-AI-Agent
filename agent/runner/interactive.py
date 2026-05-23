@@ -6,7 +6,7 @@ import readline
 import operator
 import json as _json
 from ..core import AgentMode
-from ..bootstrap import build_agent
+from ..core.bootstrap import build_agent
 from ..ui.tui import console as tui_console
 from ..ui.tui_events import run_with_tui
 from ..evolution import on_session_end

@@ -4,6 +4,6 @@
 具体模块化高内聚实现均已安全迁移至 agent/net_gateway/ 子包中。
 """
 
-from .net_gateway.bot import QQGateway, main
+from agent.net_gateway.bot import QQGateway, main
 
 __all__ = ["QQGateway", "main"]

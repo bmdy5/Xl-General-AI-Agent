@@ -11,8 +11,8 @@ QQ_NUMBER="3870213248"
 NAPCAT_DATA_DIR="$HOME/.xlagent/napcat_data"
 mkdir -p "$NAPCAT_DATA_DIR"
 
-GATEWAY_LOG="$PROJECT_DIR/gateway.log"
-STARTUP_LOG="$PROJECT_DIR/startup.log"
+GATEWAY_LOG="$PROJECT_DIR/logs/gateway.log"
+STARTUP_LOG="$PROJECT_DIR/logs/startup.log"
 
 echo "=========================================="
 echo "  XL Agent 统一启动中枢"
