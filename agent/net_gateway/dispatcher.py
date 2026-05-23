@@ -90,6 +90,22 @@ class MessageDispatcher:
     def _non_white_cache(self, value: dict):
         self.security_manager._non_white_cache = value
 
+    async def _generate_private_fatigue_announcement(self, user_id: str, sender_name: str = "") -> str:
+        """物理私聊打盹宣告代理"""
+        return await self.fatigue_manager._generate_private_fatigue_announcement(user_id, sender_name)
+
+    async def _generate_fatigue_announcement(self, group_id: str) -> str:
+        """物理群聊打盹宣告代理"""
+        return await self.fatigue_manager._generate_fatigue_announcement(group_id)
+
+    async def _private_sleep_and_dream_process(self, session_key: str, user_id: str, agent: object, sender_name: str = ""):
+        """私聊异步做梦代理"""
+        return await self.fatigue_manager._private_sleep_and_dream_process(session_key, user_id, agent, sender_name)
+
+    async def _sleep_and_dream_process(self, group_id: str, agent: object):
+        """群聊异步做梦代理"""
+        return await self.fatigue_manager._sleep_and_dream_process(group_id, agent)
+
     def _is_truly_calling_me(self, text: str) -> bool:
         """启发式分析群聊文本中提到“小萤/小荧”时，是否属于真正的直接呼唤/指令，防止抢答自作多情"""
         text = text.strip()
