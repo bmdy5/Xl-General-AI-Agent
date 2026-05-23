@@ -147,6 +147,9 @@ class QQGateway:
                 await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=10))
                 
             logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
+            # 物理写入活动轨迹日志以实现输入与输出时间线完全融合
+            session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
+            self._log_activity("Agent回复", f"小萤 ({session_key}): {text}")
         except Exception as e:
             logger.error(f"Send error: {e}")
 
