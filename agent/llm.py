@@ -61,7 +61,7 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if model_name.startswith("deepseek/"):
+        if model_name.startswith("deepseek/") and not self.api_base:
             if self.deepseek_api_key:
                 kwargs["api_key"] = self.deepseek_api_key
         else:
@@ -155,7 +155,7 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if model_name.startswith("deepseek/"):
+        if model_name.startswith("deepseek/") and not self.api_base:
             if self.deepseek_api_key:
                 kwargs["api_key"] = self.deepseek_api_key
         else:
