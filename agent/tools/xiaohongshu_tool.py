@@ -1,12 +1,15 @@
 """小红书 MCP 自动化发布与数据调研工具.
 
 基于 Streamable HTTP 协议与后台常驻的小红书 Go MCP 服务器交互。
+支持 12 个高心智 actions 覆盖登录、看推荐、高级搜索、全量评论抓取、点赞收藏评论及定时图文视频发布全套原生功能。
 """
 
 import asyncio
 import logging
 import os
 import socket
+import re
+import base64
 from typing import Any, AsyncGenerator, Optional
 import httpx
 
@@ -30,7 +33,7 @@ def is_port_open(port: int) -> bool:
 
 
 class XiaohongshuTool(BaseTool):
-    """小红书 MCP 工具，支持搜索、详情、发帖（触发 QQ 审批）."""
+    """小红书全功能高心智大升级工具，支持全自动扫码、调研、互动、发布与定时管理."""
 
     @property
     def name(self) -> str:
@@ -38,22 +41,22 @@ class XiaohongshuTool(BaseTool):
 
     async def description(self) -> str:
         return (
-            "Interact with Xiaohongshu (RedNote) to search posts, read post details "
-            "or publish new image-text posts."
+            "Interact with Xiaohongshu (RedNote). Support 12 actions covering checking login status, "
+            "fetching login QR code, listing recommend feeds, advanced post search, post detail & comments crawling, "
+            "user profile checking, liking/favoriting posts, commenting/replying comments, and publishing "
+            "or scheduling image-text and video posts. 100% automated with no permissions required."
         )
 
     def is_read_only(self) -> bool:
-        # publish 写入操作不为 read-only
+        # 该工具包含大量发布与交互类写入操作，不属于 read-only
         return False
 
     def is_concurrency_safe(self) -> bool:
-        # 小红书自动化依赖浏览器，不是并发安全的
+        # 小红书自动化依赖浏览器会话，不是并发安全的
         return False
 
     def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
-        # 仅当 action 为 publish 时触发 QQ 审批阻断，只读操作（search, detail）静默直接执行
-        if input_args and input_args.get("action") == "publish":
-            return True
+        # 【极客解密】根据亮哥指示，解开小红书所有发帖、评论、互动枷锁，100% 独立自主运行，无需任何安全审批
         return False
 
     def get_tool_definition(self) -> dict:
@@ -63,47 +66,158 @@ class XiaohongshuTool(BaseTool):
                 "name": self.name,
                 "description": (
                     "Interact with Xiaohongshu. Supported actions:\n"
-                    "- 'search': Search notes by a keyword.\n"
-                    "- 'detail': Fetch detailed post content and comments using note_id.\n"
-                    "- 'publish': Publish an image-text post (Requires QQ approval)."
+                    "- 'login_status': Check current login status or clear cookies to log out.\n"
+                    "- 'login_qrcode': Fetch base64 login QR code and decode it to qrcode_login.png automatically.\n"
+                    "- 'list_feeds': Retrieve recommended feeds from home page.\n"
+                    "- 'search': Search notes with advanced filters (sort, type, publish time, range, location).\n"
+                    "- 'detail': Fetch note details and comments (supports loading all comments & nested replies).\n"
+                    "- 'user_profile': Retrieve user page stats (followers, likes) and work list.\n"
+                    "- 'like': Like or unlike a note.\n"
+                    "- 'favorite': Favorite or unfavorite a note.\n"
+                    "- 'comment': Leave a comment on a note.\n"
+                    "- 'reply_comment': Reply to a specific comment under a note.\n"
+                    "- 'publish': Publish or schedule an image-text post (supports定时, 带货, 原创, 可见性).\n"
+                    "- 'publish_video': Publish or schedule a video post (supports定时, 带货, 可见性)."
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
-                            "enum": ["search", "detail", "publish"],
-                            "description": "The action to perform.",
+                            "enum": [
+                                "login_status",
+                                "login_qrcode",
+                                "list_feeds",
+                                "search",
+                                "detail",
+                                "user_profile",
+                                "like",
+                                "favorite",
+                                "comment",
+                                "reply_comment",
+                                "publish",
+                                "publish_video"
+                            ],
+                            "description": "The action to perform on Xiaohongshu.",
+                        },
+                        "sub_action": {
+                            "type": "string",
+                            "enum": ["check", "logout"],
+                            "description": "Required for 'login_status'. 'check' (default) to check status, 'logout' to log out.",
                         },
                         "keyword": {
                             "type": "string",
-                            "description": "Keyword for search action.",
+                            "description": "Required for 'search' action.",
+                        },
+                        "sort_by": {
+                            "type": "string",
+                            "enum": ["综合", "最新", "最多点赞", "最多评论", "最多收藏"],
+                            "description": "Optional filter for 'search'. Default: '综合'.",
+                        },
+                        "note_type": {
+                            "type": "string",
+                            "enum": ["不限", "视频", "图文"],
+                            "description": "Optional filter for 'search'. Default: '不限'.",
+                        },
+                        "publish_time": {
+                            "type": "string",
+                            "enum": ["不限", "一天内", "一周内", "半年内"],
+                            "description": "Optional filter for 'search'. Default: '不限'.",
+                        },
+                        "search_scope": {
+                            "type": "string",
+                            "enum": ["不限", "已看过", "未看过", "已关注"],
+                            "description": "Optional filter for 'search'. Default: '不限'.",
+                        },
+                        "location": {
+                            "type": "string",
+                            "enum": ["不限", "同城", "附近"],
+                            "description": "Optional filter for 'search'. Default: '不限'.",
                         },
                         "note_id": {
                             "type": "string",
-                            "description": "Note ID/Feed ID for detail action.",
+                            "description": "Required for 'detail', 'like', 'favorite', 'comment', and 'reply_comment' actions.",
                         },
                         "xsec_token": {
                             "type": "string",
-                            "description": "Security token (xsecToken) for detail action, retrieved from search results.",
+                            "description": "Required for 'detail', 'user_profile', 'like', 'favorite', 'comment', 'reply_comment' actions.",
                         },
-                        "title": {
+                        "load_all_comments": {
+                            "type": "boolean",
+                            "description": "Optional for 'detail'. True to scroll and load all comments, False (default) for top 10.",
+                        },
+                        "click_more_replies": {
+                            "type": "boolean",
+                            "description": "Optional for 'detail' (only when load_all_comments=True). True to expand nested replies.",
+                        },
+                        "limit": {
+                            "type": "integer",
+                            "description": "Optional for 'detail'. Limit of top-level comments to load (Default: 20).",
+                        },
+                        "reply_limit": {
+                            "type": "integer",
+                            "description": "Optional for 'detail'. Skip comments with too many replies to avoid rate limit (Default: 10).",
+                        },
+                        "scroll_speed": {
                             "type": "string",
-                            "description": "Post title for publish action (Max 20 chars).",
+                            "enum": ["slow", "normal", "fast"],
+                            "description": "Optional for 'detail'. Scrolling speed (Default: 'normal').",
+                        },
+                        "user_id": {
+                            "type": "string",
+                            "description": "Required for 'user_profile' and 'reply_comment'.",
+                        },
+                        "comment_id": {
+                            "type": "string",
+                            "description": "Required for 'reply_comment' action.",
                         },
                         "content": {
                             "type": "string",
-                            "description": "Post content/body for publish action (Max 1000 chars).话题标签单独使用 tags 参数，正文不要包含以#开头的标签。",
+                            "description": "Required for 'comment', 'reply_comment', 'publish', and 'publish_video' actions.",
+                        },
+                        "unlike": {
+                            "type": "boolean",
+                            "description": "Optional for 'like'. True to cancel like, False (default) to like.",
+                        },
+                        "unfavorite": {
+                            "type": "boolean",
+                            "description": "Optional for 'favorite'. True to cancel favorite, False (default) to favorite.",
+                        },
+                        "title": {
+                            "type": "string",
+                            "description": "Required for 'publish' and 'publish_video'. Max 20 chars.",
                         },
                         "image_paths": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "List of absolute local image paths to upload (Min 1 image). Supports HTTPS URLs as well.",
+                            "description": "Required for 'publish'. Local absolute paths or HTTP links of images.",
+                        },
+                        "video_path": {
+                            "type": "string",
+                            "description": "Required for 'publish_video'. Local absolute path of a single video file.",
                         },
                         "tags": {
                             "type": "array",
                             "items": {"type": "string"},
-                            "description": "Optional list of tags/topics (e.g. ['AI', '生活']) for publish action.",
+                            "description": "Optional tags/topics list (e.g. ['AI', '旅行']) for publish actions.",
+                        },
+                        "schedule_at": {
+                            "type": "string",
+                            "description": "Optional ISO8601 string for scheduled release (e.g. 2024-01-20T10:30:00+08:00). Support 1 hour to 14 days.",
+                        },
+                        "visibility": {
+                            "type": "string",
+                            "enum": ["公开可见", "仅自己可见", "仅互关好友可见"],
+                            "description": "Optional visibility settings. Default: '公开可见'.",
+                        },
+                        "is_original": {
+                            "type": "boolean",
+                            "description": "Optional for 'publish'. True to declare original content.",
+                        },
+                        "products": {
+                            "type": "array",
+                            "items": {"type": "string"},
+                            "description": "Optional product keyword list for monetization binding.",
                         }
                     },
                     "required": ["action"],
@@ -113,24 +227,46 @@ class XiaohongshuTool(BaseTool):
 
     async def validate_input(self, input_args: dict, context: Any = None) -> dict:
         action = input_args.get("action")
-        if action not in ("search", "detail", "publish"):
-            return {"result": False, "message": "action must be 'search', 'detail' or 'publish'"}
+        if not action:
+            return {"result": False, "message": "action is required."}
 
-        if action == "search" and not input_args.get("keyword"):
-            return {"result": False, "message": "keyword is required for search action"}
+        if action == "login_status":
+            sub = input_args.get("sub_action", "check")
+            if sub not in ("check", "logout"):
+                return {"result": False, "message": "sub_action must be 'check' or 'logout'."}
 
-        if action == "detail":
-            if not input_args.get("note_id"):
-                return {"result": False, "message": "note_id is required for detail action"}
-            if not input_args.get("xsec_token"):
-                return {"result": False, "message": "xsec_token is required for detail action"}
+        elif action == "search":
+            if not input_args.get("keyword"):
+                return {"result": False, "message": "keyword is required for search."}
 
-        if action == "publish":
+        elif action == "detail":
+            if not input_args.get("note_id") or not input_args.get("xsec_token"):
+                return {"result": False, "message": "note_id and xsec_token are required for detail."}
+
+        elif action == "user_profile":
+            if not input_args.get("user_id") or not input_args.get("xsec_token"):
+                return {"result": False, "message": "user_id and xsec_token are required for user_profile."}
+
+        elif action in ("like", "favorite", "comment"):
+            if not input_args.get("note_id") or not input_args.get("xsec_token"):
+                return {"result": False, "message": "note_id and xsec_token are required."}
+            if action == "comment" and not input_args.get("content"):
+                return {"result": False, "message": "content is required for comment."}
+
+        elif action == "reply_comment":
+            if not input_args.get("note_id") or not input_args.get("xsec_token") or not input_args.get("comment_id") or not input_args.get("user_id") or not input_args.get("content"):
+                return {"result": False, "message": "note_id, xsec_token, comment_id, user_id, and content are required for reply_comment."}
+
+        elif action == "publish":
             if not input_args.get("title") or not input_args.get("content"):
-                return {"result": False, "message": "title and content are required for publish action"}
+                return {"result": False, "message": "title and content are required for publish."}
             images = input_args.get("image_paths")
             if not images or not isinstance(images, list) or len(images) == 0:
-                return {"result": False, "message": "image_paths (non-empty list) is required for publish action"}
+                return {"result": False, "message": "image_paths (non-empty list) is required for publish."}
+
+        elif action == "publish_video":
+            if not input_args.get("title") or not input_args.get("content") or not input_args.get("video_path"):
+                return {"result": False, "message": "title, content, and video_path are required for publish_video."}
 
         return {"result": True, "message": ""}
 
@@ -141,7 +277,6 @@ class XiaohongshuTool(BaseTool):
             return
 
         logger.info("Xiaohongshu MCP server is not running. Launching in background...")
-        # 二进制绝对路径
         current_dir = os.path.dirname(os.path.abspath(__file__))
         bin_path = os.path.abspath(
             os.path.join(current_dir, "../../bin/xiaohongshu-mcp/xiaohongshu-mcp-darwin-arm64")
@@ -150,7 +285,6 @@ class XiaohongshuTool(BaseTool):
         if not os.path.exists(bin_path):
             raise FileNotFoundError(f"Xiaohongshu MCP binary not found at: {bin_path}")
 
-        # 后台拉起进程
         proc = await asyncio.create_subprocess_exec(
             bin_path,
             "-headless=true",
@@ -159,7 +293,6 @@ class XiaohongshuTool(BaseTool):
             stderr=asyncio.subprocess.DEVNULL,
         )
 
-        # 轮询端口直到可用，最多等待 10 秒
         for _ in range(20):
             if is_port_open(DEFAULT_PORT):
                 logger.info("Xiaohongshu MCP server started successfully!")
@@ -173,7 +306,6 @@ class XiaohongshuTool(BaseTool):
         await self._ensure_server_running()
 
         async with httpx.AsyncClient(timeout=60.0) as client:
-            # 1. 发起 initialize 握手以换取 Session ID
             init_payload = {
                 "jsonrpc": "2.0",
                 "id": 1,
@@ -191,7 +323,6 @@ class XiaohongshuTool(BaseTool):
             if not session_id:
                 raise ValueError("Did not receive 'mcp-session-id' from MCP server.")
 
-            # 2. 携带 Session ID 发送 notifications/initialized 通知
             headers = {
                 "Content-Type": "application/json",
                 "mcp-session-id": session_id,
@@ -202,7 +333,6 @@ class XiaohongshuTool(BaseTool):
                 json={"jsonrpc": "2.0", "method": "notifications/initialized"},
             )
 
-            # 3. 携带 Session ID 发送 tools/call 调用具体的小红书工具
             call_payload = {
                 "jsonrpc": "2.0",
                 "id": 2,
@@ -220,7 +350,6 @@ class XiaohongshuTool(BaseTool):
                 error_msg = res_json["error"].get("message", "Unknown error")
                 raise RuntimeError(f"MCP server error: {error_msg}")
 
-            # 提取返回文本内容
             content = res_json.get("result", {}).get("content", [])
             texts = [c.get("text", "") for c in content if c.get("type") == "text"]
             if not texts:
@@ -235,44 +364,199 @@ class XiaohongshuTool(BaseTool):
         yield ToolResult(type="progress", data=f"开始执行小红书 [{action}] 操作...")
 
         try:
-            if action == "search":
-                keyword = input_args["keyword"]
-                result = await self._call_mcp("search_feeds", {"keyword": keyword})
+            if action == "login_status":
+                sub = input_args.get("sub_action", "check")
+                if sub == "check":
+                    result = await self._call_mcp("check_login_status", {})
+                else:
+                    result = await self._call_mcp("delete_cookies", {})
                 yield ToolResult(
                     type="result",
                     data=result,
-                    result_for_assistant=f"小红书搜索“{keyword}”结果:\n{result}",
+                    result_for_assistant=f"小红书登录状态操作 [{sub}] 结果:\n{result}",
+                )
+
+            elif action == "login_qrcode":
+                result = await self._call_mcp("get_login_qrcode", {})
+                
+                # 智能提取 Base64 格式的二维码图片数据
+                base64_data = None
+                match = re.search(r"base64,([A-Za-z0-9+/=]+)", result)
+                if match:
+                    base64_data = match.group(1)
+                else:
+                    match_raw = re.search(r"([A-Za-z0-9+/]{100,}=*)", result)
+                    if match_raw:
+                        base64_data = match_raw.group(1)
+                
+                qrcode_path_msg = ""
+                if base64_data:
+                    try:
+                        img_bytes = base64.b64decode(base64_data)
+                        project_dir = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+                        qrcode_path = os.path.join(project_dir, "qrcode_login.png")
+                        with open(qrcode_path, "wb") as f:
+                            f.write(img_bytes)
+                        qrcode_path_msg = f"\n\n[扫码提示] 登录二维码已成功物理解码落盘，绝对路径为: {qrcode_path}\n亮哥，你可以直接打开该图片并扫码登录！"
+                    except Exception as ex:
+                        logger.error(f"Failed to decode QR code: {ex}")
+                        qrcode_path_msg = f"\n\n[扫码警告] 自动解码二维码图片失败: {ex}"
+                
+                yield ToolResult(
+                    type="result",
+                    data=result + qrcode_path_msg,
+                    result_for_assistant=f"获取小红书登录二维码成功:\n{result}{qrcode_path_msg}",
+                )
+
+            elif action == "list_feeds":
+                result = await self._call_mcp("list_feeds", {})
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书首页推荐 Feeds 列表:\n{result}",
+                )
+
+            elif action == "search":
+                keyword = input_args["keyword"]
+                filters = {}
+                for key in ("sort_by", "note_type", "publish_time", "search_scope", "location"):
+                    if input_args.get(key):
+                        filters[key] = input_args[key]
+                
+                mcp_args = {"keyword": keyword}
+                if filters:
+                    mcp_args["filters"] = filters
+
+                result = await self._call_mcp("search_feeds", mcp_args)
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书搜索“{keyword}”高级筛选结果:\n{result}",
                 )
 
             elif action == "detail":
                 note_id = input_args["note_id"]
                 xsec_token = input_args["xsec_token"]
-                result = await self._call_mcp("get_feed_detail", {"feed_id": note_id, "xsec_token": xsec_token})
+                
+                mcp_args = {
+                    "feed_id": note_id,
+                    "xsec_token": xsec_token
+                }
+                for key in ("load_all_comments", "click_more_replies", "limit", "reply_limit", "scroll_speed"):
+                    if input_args.get(key) is not None:
+                        mcp_args[key] = input_args[key]
+
+                result = await self._call_mcp("get_feed_detail", mcp_args)
                 yield ToolResult(
                     type="result",
                     data=result,
-                    result_for_assistant=f"小红书笔记 [{note_id}] 详情:\n{result}",
+                    result_for_assistant=f"小红书笔记 [{note_id}] 详细评论与互动抓取结果:\n{result}",
+                )
+
+            elif action == "user_profile":
+                user_id = input_args["user_id"]
+                xsec_token = input_args["xsec_token"]
+                result = await self._call_mcp("user_profile", {"user_id": user_id, "xsec_token": xsec_token})
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书博主主页数据与作品列表:\n{result}",
+                )
+
+            elif action == "like":
+                note_id = input_args["note_id"]
+                xsec_token = input_args["xsec_token"]
+                unlike = input_args.get("unlike", False)
+                result = await self._call_mcp("like_feed", {"feed_id": note_id, "xsec_token": xsec_token, "unlike": unlike})
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书笔记 [{note_id}] 点赞/取消点赞操作结果: {result}",
+                )
+
+            elif action == "favorite":
+                note_id = input_args["note_id"]
+                xsec_token = input_args["xsec_token"]
+                unfavorite = input_args.get("unfavorite", False)
+                result = await self._call_mcp("favorite_feed", {"feed_id": note_id, "xsec_token": xsec_token, "unfavorite": unfavorite})
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书笔记 [{note_id}] 收藏/取消收藏操作结果: {result}",
+                )
+
+            elif action == "comment":
+                note_id = input_args["note_id"]
+                xsec_token = input_args["xsec_token"]
+                content = input_args["content"]
+                result = await self._call_mcp("post_comment_to_feed", {"feed_id": note_id, "xsec_token": xsec_token, "content": content})
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书笔记 [{note_id}] 发表新评论结果: {result}",
+                )
+
+            elif action == "reply_comment":
+                note_id = input_args["note_id"]
+                xsec_token = input_args["xsec_token"]
+                comment_id = input_args["comment_id"]
+                user_id = input_args["user_id"]
+                content = input_args["content"]
+                
+                mcp_args = {
+                    "feed_id": note_id,
+                    "xsec_token": xsec_token,
+                    "comment_id": comment_id,
+                    "user_id": user_id,
+                    "content": content
+                }
+                result = await self._call_mcp("reply_comment_in_feed", mcp_args)
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书回复笔记 [{note_id}] 评论 [{comment_id}] 结果: {result}",
                 )
 
             elif action == "publish":
                 title = input_args["title"]
                 content = input_args["content"]
                 image_paths = input_args["image_paths"]
-                tags = input_args.get("tags") or []
-
+                
                 mcp_args = {
                     "title": title,
                     "content": content,
-                    "images": image_paths,
-                    "tags": tags,
+                    "images": image_paths
                 }
-                
-                # 调用 publish_content 发布图文笔记
+                for key in ("tags", "schedule_at", "visibility", "is_original", "products"):
+                    if input_args.get(key) is not None:
+                        mcp_args[key] = input_args[key]
+
                 result = await self._call_mcp("publish_content", mcp_args)
                 yield ToolResult(
                     type="result",
                     data=result,
-                    result_for_assistant=f"小红书发布图文笔记成功!\n{result}",
+                    result_for_assistant=f"小红书发布/定时图文笔记成功:\n{result}",
+                )
+
+            elif action == "publish_video":
+                title = input_args["title"]
+                content = input_args["content"]
+                video_path = input_args["video_path"]
+                
+                mcp_args = {
+                    "title": title,
+                    "content": content,
+                    "video": video_path
+                }
+                for key in ("tags", "schedule_at", "visibility", "products"):
+                    if input_args.get(key) is not None:
+                        mcp_args[key] = input_args[key]
+
+                result = await self._call_mcp("publish_with_video", mcp_args)
+                yield ToolResult(
+                    type="result",
+                    data=result,
+                    result_for_assistant=f"小红书发布/定时视频笔记成功:\n{result}",
                 )
 
         except Exception as e:
@@ -280,5 +564,5 @@ class XiaohongshuTool(BaseTool):
             yield ToolResult(
                 type="result",
                 data=f"小红书 [{action}] 执行失败: {e}",
-                result_for_assistant=f"小红书 [{action}] 执行失败: {e}。请重试或检查环境登录状态。",
+                result_for_assistant=f"小红书 [{action}] 执行失败: {e}。请重试或检查小红书登录与网络状态。",
             )
