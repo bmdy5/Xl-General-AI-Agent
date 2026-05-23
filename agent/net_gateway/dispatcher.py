@@ -9,6 +9,7 @@ import logging
 from .tts import parse_voice_test_command, send_voice
 from .carrier import CSMAController
 from .presenter import StreamPresenter
+from .middleware import get_default_middlewares
 
 logger = logging.getLogger("net_gateway.dispatcher")
 
@@ -36,6 +37,7 @@ class MessageDispatcher:
 
         from .security import SecurityManager
         self.security_manager = SecurityManager(self)
+        self.middlewares = get_default_middlewares()
 
     @property
     def _fatigue_levels(self) -> dict:
@@ -126,7 +128,7 @@ class MessageDispatcher:
         return False
 
     async def dispatch_event(self, event: dict):
-        """解析 QQ 事件，进行白名单拦截、私聊控制，最后触发 ReAct 异步处理"""
+        """解析 QQ 事件，运行中间件管道，最后触发 ReAct 异步处理"""
         msg_type = event.get("message_type", "private")
         raw = html.unescape(event.get("raw_message", "").strip())
         user_id = str(event.get("user_id", ""))
@@ -137,189 +139,30 @@ class MessageDispatcher:
         nickname = str(sender_info.get("nickname", "")).strip()
         sender_name = card or nickname or str(user_id)
         
-        # 1. 物理静默过滤自己发出的回执消息
-        if self_id and user_id == self_id:
-            return
-
-        # 写入物理用户指令审计日志，以实现最前端全量流量隔离审计
-        _pn, _ua = self._load_persona()
-        _skey = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
-        self._log_activity_dispatcher("用户输入", f"{_ua} ({_skey}): {raw}", user_id=user_id)
-
-        other_bot_ids = {x.strip() for x in os.getenv("QQ_OTHER_BOT_IDS", "1911828529").split(",") if x.strip()}
-        is_other_bot = user_id in other_bot_ids
-
-        # ── 2. 安全白名单前置拦截判定 ──
-        is_allowed = self.security_manager.is_allowed(user_id, msg_type, group_id)
-
-        # ── 3. 群聊消息「智能静默旁听 + 名字/At 唤醒」重构 ──
         session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
-        is_triggered = True  # 默认为 True (私聊始终唤醒)
-
-        if msg_type == "group" and group_id:
-            is_at_bot = f"[CQ:at,qq={self_id}]" in raw
-            if is_other_bot:
-                is_at_bot = False
-            
-            raw_cleaned = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
-            if not raw_cleaned:
-                return
-
-            # 真假呼唤判定：At 唤醒，或者在非机器人消息中匹配到名字指令呼唤
-            is_triggered = is_at_bot or (self._is_truly_calling_me(raw_cleaned) and not is_other_bot)
-
-            # A. 若在白名单群，且未触发唤醒：静默旁听并追加历史缓存，直接退出
-            if is_allowed and not is_triggered:
-                # 获取或惰性初始化 Agent 实例
-                agent = self.context._agents.get(session_key)
-                if agent is None:
-                    agent = self.context._factory(session_key)
-                    self.context._agents[session_key] = agent
-                
-                # 默默追加群聊闲聊到缓存（0大模型开销）
-                user_msg = {"role": "user", "content": f"[{sender_name}]: {raw_cleaned}"}
-                agent.messages.append(user_msg)
-                
-                # 防爆裁剪保护
-                if len(agent.messages) > 100:
-                    agent.messages = [agent.messages[0]] + agent.messages[-50:]
-                
-                if agent.session:
-                    await agent.session.replace_all(agent.messages)
-                return  # 完美降载退出
-
-            # B. 若被触发唤醒：补齐群聊发言人元数据身份，确保大模型 100% 分清亮哥与普通群成员
-            if is_triggered:
-                if user_id != self.admin_id:
-                    raw = f"[来自 QQ: {user_id} 的群发言] {raw_cleaned}"
-                else:
-                    raw = f"[来自亮哥的群发言] {raw_cleaned}"
-
-            # C. 疲劳累积清零：群聊发言的被动扣分疲劳值直接设为 0，防止被动累趴
-            inc = 0.0
-            await self.fatigue_manager.adjust_fatigue(group_id, inc, event)
-
-        # ── 4. 安全拦截 ──
-        if await self.security_manager.handle_security_interception(event, is_allowed, is_triggered):
-            return
-
-        # ── 5. 主人专属控制与特权唤醒 ──
-        if user_id == self.admin_id:
-            # 1. 强行唤醒打盹 (管理员特权：一开口即 100% 全局复活小萤，取消所有的打盹异步任务)
-            if any(self._sleep_modes.values()):
-                for key, task in list(self._active_sleep_tasks.items()):
-                    if task and not task.done():
-                        task.cancel()
-                        logger.info(f"Admin message received. Cancelled background sleep task for {key}.")
-                self._sleep_modes.clear()
-                self._active_sleep_tasks.clear()
-                self._fatigue_levels.clear()
-                logger.info("Admin private message received. Waking up all sessions globally from sleep/nap.")
-            
-            # 2. 物理开关指令拦截
-            if await self.security_manager.handle_admin_commands(msg_type, user_id, raw):
-                return
-
-        # ── 6. 非主人私聊冷冻期与全局暂停拦截 ──
-        if self.security_manager.is_private_chat_paused(msg_type, user_id) or self._sleep_modes.get(session_key, False):
-            logger.info(f"Private chat paused/sleeping. Silently ignoring message from {user_id}: {raw[:50]}")
-            return
-
-
-        # ── 6. 主人专属敏感指令物理卡片授权审批答复拦截 ──
-        if session_key in self._pending_perms:
-            evt_perm = self._pending_perms[session_key]
-            is_approved = raw.lower() in ("y", "yes", "允许", "ok", "通过")
-            evt_perm.set(is_approved)
-            return
-
-        # ── 7. 播客选题拦截 ──────────────────────────────────────────
-        if self._waiting_podcast_topic.get(session_key):
-            self._waiting_podcast_topic[session_key] = False
-            choices = self._podcast_choices.get(session_key, [])
-            
-            selected_topic = raw.strip()
-            if selected_topic in ("1", "2", "3") and len(choices) >= 3:
-                selected_topic = choices[int(selected_topic) - 1]
-                if ". " in selected_topic:
-                    selected_topic = selected_topic.split(". ", 1)[1]
-                elif "、" in selected_topic:
-                    selected_topic = selected_topic.split("、", 1)[1]
-                    
-            await self.context.send_msg("private", self.admin_id, "", f"🎯 已锁定明早播客选题：【{selected_topic}】。\n正在为您融合本地笔记与网络参考资料，合成为约 2000 字的极客研究笔记并投喂云端，请稍等...")
-            
-            # 桥接 bot 实例触发异步生成
-            bot = self.bot
-            if bot and hasattr(bot, "_process_podcast_generation_async"):
-                asyncio.create_task(bot._process_podcast_generation_async(session_key, selected_topic, self.admin_id))
-            return
-
-        # ── 7. 语音指令与 CSMA / CD 检测 ──
-        test_style, test_text = parse_voice_test_command(raw)
-        if test_style is not None:
-            if test_text:
-                await send_voice(self.context, msg_type, user_id, group_id, test_text, test_style, is_test=True)
-            else:
-                await self.context.send_msg(msg_type, user_id, group_id, 
-                    "⚠️ 请输入要合成的文本，格式如：小萤语音测试：[委屈] 小萤好难过呀", skip_delay=True)
-            return
-
-        # 兼容测试套件：记录排队消息队列，维持单元测试高度向下兼容
-        if self.bot:
-            active_task = self.bot.get_active_task(session_key)
-            is_busy = False
-            if active_task is not None:
-                if isinstance(active_task, bool):
-                    is_busy = active_task
-                else:
-                    is_busy = not active_task.done()
-
-            if is_busy:
-                is_preempt = any(kw in raw for kw in ["停", "别跑了", "取消", "刹车", "先别", "停下"])
-                if is_preempt:
-                    if not isinstance(active_task, bool):
-                        active_task.cancel()
-                    self._log_activity_dispatcher("系统调度", f"紧急强占中断当前任务: {session_key}")
-                    interruption_note = (
-                        f"[系统提示：{_ua}在刚才的任务中途发送了这条新命令。"
-                        f"先简短确认停下上一个任务，然后切入新指令：\"{raw}\"]"
-                    )
-                    raw = interruption_note
-                    self.bot.remove_active_task(session_key, active_task)
-                else:
-                    self.bot.enqueue_message(session_key, event, raw)
-                    return
-
-        # 获取或惰性初始化 Agent 实例
-        agent = self.context._agents.get(session_key)
-        if agent is None:
-            agent = self.context._factory(session_key)
-            self.context._agents[session_key] = agent
-
-        # 注册单调发言时间戳以供 CSMA/CD 检测
-        this_msg_time = self.bus.register_message(session_key)
-
-        # 封装超时熔断强力驱动，防止协程卡死导致通道永久静默
-        async def run_with_timeout():
+        
+        context = {
+            "msg_type": msg_type,
+            "raw": raw,
+            "user_id": user_id,
+            "self_id": self_id,
+            "group_id": group_id,
+            "sender_name": sender_name,
+            "session_key": session_key,
+            "is_other_bot": False,
+            "is_allowed": False,
+            "is_triggered": True,
+            "raw_cleaned": "",
+            "this_msg_time": 0.0
+        }
+        
+        for middleware in self.middlewares:
             try:
-                await asyncio.wait_for(
-                    self._execute_agent_run(agent, raw, session_key, msg_type, user_id, group_id, sender_name, this_msg_time),
-                    timeout=90.0
-                )
-            except asyncio.TimeoutError:
-                logger.error(f"⏳ [超时熔断] 会话 {session_key} 任务运行超过 90 秒，强行物理熔断！")
-                await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [系统提示] 小萤的大脑刚被卡住啦，本次任务已超时中断，亮哥可以重新对我说点别的哦～", skip_delay=True)
+                should_stop = await middleware.process(self, event, context)
+                if should_stop:
+                    return
             except Exception as e:
-                logger.error(f"Error in runner wrapper for {session_key}: {e}", exc_info=True)
-
-        # 100% 同步瞬间抢占占位，封死微秒级竞态窗口
-        if self.bot:
-            self.bot.set_active_task(session_key, True)
-
-        task = asyncio.create_task(run_with_timeout())
-        task.raw_prompt = raw
-        if self.bot:
-            self.bot.set_active_task(session_key, task)
+                logger.error(f"Error in middleware {middleware.__class__.__name__}: {e}", exc_info=True)
 
     async def _execute_agent_run(self, agent, raw: str, session_key: str, msg_type: str, 
                                  user_id: str, group_id: str, sender_name: str, task_start_time: float):
