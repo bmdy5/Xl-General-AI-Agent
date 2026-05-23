@@ -17,6 +17,7 @@ napcat_data/
 qrcode_login.png
 cookies.json
 bin/
+!bin/start.sh
 records/
 EVOLVED_RULES.md
 agent/memory/coworker_*.json
