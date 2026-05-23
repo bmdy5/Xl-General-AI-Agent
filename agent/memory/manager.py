@@ -647,6 +647,13 @@ class MemoryManager:
 
     async def get_entry(self, filename: str) -> Optional[str]:
         """Read memory file content."""
+        if filename.startswith("ki_") and filename.endswith(".md"):
+            ki_id = filename[3:-3]
+            ki_data = self.get_ki(ki_id)
+            if ki_data:
+                return ki_data.get("content", "")
+            return None
+
         safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
         if not safe_name.endswith(".md"):
             safe_name += ".md"
