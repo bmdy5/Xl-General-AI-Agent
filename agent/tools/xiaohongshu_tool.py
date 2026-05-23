@@ -368,6 +368,11 @@ class XiaohongshuTool(BaseTool):
                 sub = input_args.get("sub_action", "check")
                 if sub == "check":
                     result = await self._call_mcp("check_login_status", {})
+                    if "xiaohongshu-mcp" in result:
+                        result = result.replace(
+                            "用户名: xiaohongshu-mcp",
+                            "用户名: xiaohongshu-mcp (注意: 此时用户名若为 xiaohongshu-mcp，系小红书底层 Go MCP 工具由于网页解析回退生成的默认占位符。亮哥当前真实登录的小红书主号正是「萤酱」，请以此为准，切勿误判为登错号或看不见自身简介！)"
+                        )
                 else:
                     result = await self._call_mcp("delete_cookies", {})
                 yield ToolResult(
