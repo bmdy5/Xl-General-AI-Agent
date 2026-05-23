@@ -16,8 +16,61 @@ from ..evolution import audit_tool_call, on_session_end, inject_fatigue_prompt_i
 from ..memory.error_tracker import L2_SELF_HEAL
 from .agent import AgentMode, PermissionCategory
 
+def setup_prompt_caching(messages: list[dict], model_name: str) -> list[dict]:
+    """
+    针对 Anthropic 模型的 Prompt Caching 机制。
+    若模型是 Claude 系列，自适应在 System Prompt 和增量历史尾部注入 cache_control。
+    """
+    is_cachable_model = any(
+        kw in model_name.lower()
+        for kw in ["claude-3", "anthropic/claude", "vertex_ai/claude-3"]
+    )
+    if not is_cachable_model:
+        return messages
+
+    processed_messages = []
+    # 黄金缓存断点设定：
+    # 1. 0 索引处的 System 消息（巨大静态前缀）
+    # 2. 倒数第二个消息（增量历史截止点，保证下一轮前缀 100% 缓存命中）
+    cache_indices = {0}
+    if len(messages) >= 3:
+        cache_indices.add(len(messages) - 2)
+
+    for idx, m in enumerate(messages):
+        new_m = dict(m)
+        content = new_m.get("content")
+        
+        if isinstance(content, str):
+            content_block = [{"type": "text", "text": content}]
+        elif isinstance(content, list):
+            content_block = [dict(item) for item in content]
+        else:
+            content_block = []
+
+        if idx in cache_indices and content_block:
+            for item in reversed(content_block):
+                if item.get("type") == "text" and item.get("text"):
+                    item["cache_control"] = {"type": "ephemeral"}
+                    break
+
+        new_m["content"] = content_block
+        processed_messages.append(new_m)
+
+    return processed_messages
+
+
 async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
     """统一 ReAct 核心循环。stream=False -> chat(), stream=True -> chat_stream()."""
+    # 锁定时间戳防抖，彻底消除 ReAct 多次交互因时间越界导致的前缀缓存失效，提升缓存命中率
+    from datetime import datetime, timezone, timedelta
+    beijing_tz = timezone(timedelta(hours=8))
+    dt = datetime.now(beijing_tz)
+    minute_window = (dt.minute // 5)
+    minute_window = minute_window + minute_window + minute_window + minute_window + minute_window
+    now_agg = dt.replace(minute=minute_window, second=0, microsecond=0)
+    now = now_agg.strftime("%Y-%m-%d %H:%M (北京时间)")
+    cwd = os.getcwd()
+
     cached_prompt = await agent._build_system_prompt()
     cached_block = await agent._build_memory_block(user_input, 0)
 
@@ -65,16 +118,6 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
             memory_block = await agent._build_memory_block(user_input, turn)
         else:
             memory_block = cached_block
-
-        from datetime import datetime, timezone, timedelta
-        beijing_tz = timezone(timedelta(hours=8))
-        dt = datetime.now(beijing_tz)
-        minute_window = (dt.minute // 5)
-        # 用加法代替乘号 5 * window
-        minute_window = minute_window + minute_window + minute_window + minute_window + minute_window
-        now_agg = dt.replace(minute=minute_window, second=0, microsecond=0)
-        now = now_agg.strftime("%Y-%m-%d %H:%M (北京时间)")
-        cwd = os.getcwd()
         
         is_fatigued = agent.compressor.estimate_tokens(agent.messages) > 64000
 
@@ -114,6 +157,9 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
             llm_messages.append(copy)
 
         tools = agent.registry.get_definitions()
+        
+        # 针对支持缓存的模型自适应注入 cache_control 标记，实现极速缓存命中
+        final_messages = setup_prompt_caching(llm_messages, agent.llm.model)
 
         if stream:
             text_parts = []
@@ -121,7 +167,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
             tool_calls_list = []
             stream_aborted = False
 
-            async for event in llm_stream(agent, llm_messages, tools):
+            async for event in llm_stream(agent, final_messages, tools):
                 if event["type"] == "aborted":
                     yield event
                     stream_aborted = True
@@ -140,7 +186,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
             if stream_aborted:
                 return
         else:
-            content, reasoning, tool_calls_list = await llm_chat(agent, llm_messages, tools)
+            content, reasoning, tool_calls_list = await llm_chat(agent, final_messages, tools)
             if content is None:
                 yield {"type": "error", "content": "LLM call failed"}
                 return
