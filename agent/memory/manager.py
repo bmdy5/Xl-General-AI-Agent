@@ -120,6 +120,7 @@ class MemoryManager:
             is_new = not db_path.exists()
             self._db = sqlite3.connect(str(db_path))
             self._db.execute("PRAGMA foreign_keys = ON")
+            self._db.execute("PRAGMA journal_mode = WAL")  # 极简开启 WAL 读写并发隔离防写锁互斥死锁
             create_table(self._db)
             
             # 自动创建长期大脑关系表 knowledge_items
@@ -511,23 +512,21 @@ class MemoryManager:
                     current_dir = Path(__file__).resolve().parent
                     local_model_path = current_dir.parent / "model" / "m3e-base"
                     
+                    # 方案 A 极致防线：如果物理目录不存在，0 毫秒熔断返回全零，绝不联网空等 10 秒去折腾 hf-mirror.com
+                    if not (local_model_path.exists() and local_model_path.is_dir()):
+                        cache["_m3e"] = None
+                        logger.error(f"Offline model path not found at {local_model_path}. Circuit breaker activated instantly. 0ms fallback to zeros.")
+                        return [0.0] * 768
+                    
                     from sentence_transformers import SentenceTransformer
                     
                     try:
-                        if local_model_path.exists() and local_model_path.is_dir():
-                            logger.info(f"Loading m3e-base model from local path: {local_model_path}")
-                            # 强超时防线：通过 asyncio.wait_for 限制 10.0 秒超时，杜绝网络库挂死后台线程
-                            model = await asyncio.wait_for(
-                                asyncio.to_thread(SentenceTransformer, str(local_model_path)),
-                                timeout=10.0
-                            )
-                        else:
-                            logger.info("Local path not found, falling back to domestic mirror hf-mirror.com...")
-                            os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-                            model = await asyncio.wait_for(
-                                asyncio.to_thread(SentenceTransformer, "moka-ai/m3e-base"),
-                                timeout=10.0
-                            )
+                        logger.info(f"Loading m3e-base model from local path: {local_model_path}")
+                        # 强超时防线：通过 asyncio.wait_for 限制 10.0 秒超时，杜绝网络库挂死后台线程
+                        model = await asyncio.wait_for(
+                            asyncio.to_thread(SentenceTransformer, str(local_model_path)),
+                            timeout=10.0
+                        )
                             
                         cache["_m3e"] = model
                         logger.info("Local m3e-base model loaded successfully!")
