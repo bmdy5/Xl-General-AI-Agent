@@ -490,6 +490,7 @@ class MemoryManager:
         """提取 768 维中文增强语义向量。支持本地 m3e-base 或远程 API 两种模式。"""
         import os
         import asyncio
+        from pathlib import Path
         embedding_mode = os.getenv("EMBEDDING_MODE", "local").lower()
 
         if embedding_mode == "local":
@@ -506,18 +507,27 @@ class MemoryManager:
                     return [0.0] * 768
                 
                 if "_m3e" not in cache:
-                    local_model_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/model/m3e-base"
+                    # 抛弃脆弱的写死物理路径，改用基于当前文件位置动态相对定位自愈 (解决路径编码或环境变化问题)
+                    current_dir = Path(__file__).resolve().parent
+                    local_model_path = current_dir.parent / "model" / "m3e-base"
+                    
                     from sentence_transformers import SentenceTransformer
                     
                     try:
-                        if os.path.exists(local_model_path) and os.path.isdir(local_model_path):
+                        if local_model_path.exists() and local_model_path.is_dir():
                             logger.info(f"Loading m3e-base model from local path: {local_model_path}")
-                            # 放入异步后台线程加载，防止阻塞主事件循环
-                            model = await asyncio.to_thread(SentenceTransformer, local_model_path)
+                            # 强超时防线：通过 asyncio.wait_for 限制 10.0 秒超时，杜绝网络库挂死后台线程
+                            model = await asyncio.wait_for(
+                                asyncio.to_thread(SentenceTransformer, str(local_model_path)),
+                                timeout=10.0
+                            )
                         else:
                             logger.info("Local path not found, falling back to domestic mirror hf-mirror.com...")
                             os.environ["HF_ENDPOINT"] = "https://hf-mirror.com"
-                            model = await asyncio.to_thread(SentenceTransformer, "moka-ai/m3e-base")
+                            model = await asyncio.wait_for(
+                                asyncio.to_thread(SentenceTransformer, "moka-ai/m3e-base"),
+                                timeout=10.0
+                            )
                             
                         cache["_m3e"] = model
                         logger.info("Local m3e-base model loaded successfully!")
@@ -532,7 +542,11 @@ class MemoryManager:
                     return [0.0] * 768
                 
                 # 运行本地 CPU 推理，通过 asyncio.to_thread 放入线程池，解放事件循环
-                embeddings = await asyncio.to_thread(model.encode, [text], show_progress_bar=False)
+                # 推理计算同样施加 10.0 秒强超时保护，超时自动熔断
+                embeddings = await asyncio.wait_for(
+                    asyncio.to_thread(model.encode, [text], show_progress_bar=False),
+                    timeout=10.0
+                )
                 return [float(x) for x in embeddings[0]]
             except Exception as e:
                 logger.error(f"Failed to extract local embedding via m3e-base: {e}")
