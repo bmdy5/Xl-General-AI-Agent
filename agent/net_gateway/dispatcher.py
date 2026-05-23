@@ -219,10 +219,18 @@ class MessageDispatcher:
         # 兼容测试套件：记录排队消息队列，维持单元测试高度向下兼容
         if self.bot and hasattr(self.bot, "_message_queues"):
             active_task = getattr(self.bot, "_current_tasks", {}).get(session_key)
-            if active_task and not active_task.done():
+            is_busy = False
+            if active_task is not None:
+                if isinstance(active_task, bool):
+                    is_busy = active_task
+                else:
+                    is_busy = not active_task.done()
+
+            if is_busy:
                 is_preempt = any(kw in raw for kw in ["停", "别跑了", "取消", "刹车", "先别", "停下"])
                 if is_preempt:
-                    active_task.cancel()
+                    if not isinstance(active_task, bool):
+                        active_task.cancel()
                     self._log_activity_dispatcher("系统调度", f"紧急强占中断当前任务: {session_key}")
                     interruption_note = (
                         f"[系统提示：{_ua}在刚才的任务中途发送了这条新命令。"
@@ -257,6 +265,10 @@ class MessageDispatcher:
                 await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [系统提示] 小萤的大脑刚被卡住啦，本次任务已超时中断，亮哥可以重新对我说点别的哦～", skip_delay=True)
             except Exception as e:
                 logger.error(f"Error in runner wrapper for {session_key}: {e}", exc_info=True)
+
+        # 100% 同步瞬间抢占占位，封死微秒级竞态窗口
+        if self.bot and hasattr(self.bot, "_current_tasks"):
+            self.bot._current_tasks[session_key] = True
 
         task = asyncio.create_task(run_with_timeout())
         task.raw_prompt = raw
