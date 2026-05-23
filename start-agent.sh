@@ -165,6 +165,28 @@ EOF
     fi
 fi
 
+# ── 5.5. 启动 GPT-SoVITS 语音服务 ──
+echo "" | tee -a "$STARTUP_LOG"
+echo "5.5. 检查与启动 GPT-SoVITS 语音服务..." | tee -a "$STARTUP_LOG"
+TTS_DIR="/Users/xiaofeng/bot-我的自搭建agent/新的agent/GPT-SoVITS"
+if curl -s --connect-timeout 2 http://127.0.0.1:9880/ >/dev/null 2>&1; then
+    echo "   ✓ GPT-SoVITS 语音服务已在运行" | tee -a "$STARTUP_LOG"
+else
+    echo "   启动 GPT-SoVITS 语音服务..." | tee -a "$STARTUP_LOG"
+    cd "$TTS_DIR"
+    # 清理可能残留的坏载或错误环境启动的旧进程
+    pkill -f "api_v2.py" || true
+    # 强制用专属 venv Python 后台拉起
+    nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &
+    cd "$PROJECT_DIR"
+    sleep 3
+    if curl -s --connect-timeout 2 http://127.0.0.1:9880/ >/dev/null 2>&1; then
+        echo "   ✓ GPT-SoVITS 语音服务成功拉起" | tee -a "$STARTUP_LOG"
+    else
+        echo "   ⚠️  GPT-SoVITS 语音服务启动较慢，哨兵守护将在 15s 内自愈拉起" | tee -a "$STARTUP_LOG"
+    fi
+fi
+
 # ── 6. 启动 Gateway ──
 echo "" | tee -a "$STARTUP_LOG"
 echo "6. 启动 Gateway..." | tee -a "$STARTUP_LOG"

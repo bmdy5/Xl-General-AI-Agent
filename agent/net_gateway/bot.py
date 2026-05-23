@@ -133,9 +133,10 @@ class QQGateway:
             headers["Authorization"] = f"Bearer {NC_TOKEN}"
 
         try:
-            # 采用异步 non-blocking 请求，防止卡死
+            # 采用异步 non-blocking 请求，并设置 5.0 秒超时限制防卡死
             if self._http and not self._http.closed:
-                async with self._http.post(url, json=payload, headers=headers) as resp:
+                timeout = aiohttp.ClientTimeout(total=5.0)
+                async with self._http.post(url, json=payload, headers=headers, timeout=timeout) as resp:
                     if resp.status != 200:
                         body = await resp.text()
                         logger.warning(f"Message send failed ({resp.status}): {body[:100]}")
@@ -150,12 +151,32 @@ class QQGateway:
             logger.error(f"Send error: {e}")
 
     async def _daemon_loop(self):
-        """后台高可用健康守护轮询进程，负责 NapCat 断线自愈重启及定时技术早报播客推送。"""
+        """后台高可用健康守护轮询进程，负责 NapCat 断线自愈重启、GPT-SoVITS 挂载自愈及定时技术早报播客推送。"""
         logger.info("QQ Gateway Background Daemon Loop started.")
         while True:
             await asyncio.sleep(15)  # 每 15s 轮询检测一次健康度
             
-            # 1. 监测 NapCat WebSocket 连通状态进行自愈判定
+            # 1. 自动对 GPT-SoVITS 语音服务进行高可用探测与假死自愈，确保重启或意外终止时瞬间拉起
+            try:
+                timeout_tts = aiohttp.ClientTimeout(total=2.0)
+                async with aiohttp.ClientSession(timeout=timeout_tts) as session:
+                    async with session.get("http://127.0.0.1:9880/") as resp:
+                        if resp.status not in (200, 404):
+                            raise ValueError(f"Status {resp.status}")
+            except Exception:
+                logger.warning("🎙️ [守护进程] 发现 GPT-SoVITS 语音服务离线，正在以专属 venv 虚拟环境启动自愈机制...")
+                tts_dir = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/GPT-SoVITS"
+                cmd_kill = 'pkill -f "api_v2.py" || true'
+                cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
+                try:
+                    import os
+                    os.system(cmd_kill)
+                    os.system(cmd_start)
+                    logger.info("🎙️ [守护进程] 语音服务自愈启动信号已发送。")
+                except Exception as tts_err:
+                    logger.error(f"🎙️ [守护进程] 自愈拉起失败: {tts_err}")
+
+            # 2. 监测 NapCat WebSocket 连通状态进行自愈判定
             # 获取当前时间
             now_dt = datetime.now()
             
@@ -251,7 +272,8 @@ class QQGateway:
                     logger.info(f"📤 正在向亮哥 QQ 主动推送完整版播客文件: {dest_filename}")
                     try:
                         if self._http and not self._http.closed:
-                            async with self._http.post(url, json=file_payload, headers=headers) as resp:
+                            timeout_upload = aiohttp.ClientTimeout(total=30.0)
+                            async with self._http.post(url, json=file_payload, headers=headers, timeout=timeout_upload) as resp:
                                 if resp.status != 200:
                                     body = await resp.text()
                                     logger.warning(f"File upload failed ({resp.status}): {body[:100]}")
