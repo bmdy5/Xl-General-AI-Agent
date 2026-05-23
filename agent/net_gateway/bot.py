@@ -27,6 +27,10 @@ class QQGateway:
         admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
         self.context = GatewayContext(admin_id=admin_id, factory=agent_factory)
         
+        # 引入并实例化高内聚网络消息发送器
+        from .sender import MessageSender
+        self.sender = MessageSender(self)
+        
         # 2. 为 context 动态绑定发包回调，使用 lambda 动态路由以完美支持单元测试对底层方法的 Mock 劫持
         self.context.send_handler = lambda *args, **kwargs: self._send(*args, **kwargs)
         self.context.send_chunk_handler = lambda *args, **kwargs: self._send_chunk(*args, **kwargs)
@@ -56,12 +60,6 @@ class QQGateway:
         from .scheduler import GatewayScheduler
         self.scheduler = GatewayScheduler(self)
         self.csma_backoff_seconds = float(os.getenv("QQ_CSMA_BACKOFF_SECONDS", "2.0"))
-        
-        # 初始化全局发包平滑流控令牌桶限流器（默认最大并发爆发5包，每1.5秒填充1包）
-        from .bus import TokenBucketLimiter
-        capacity = float(os.getenv("QQ_LIMITER_CAPACITY", "5.0"))
-        refill_rate = float(os.getenv("QQ_LIMITER_REFILL_RATE", "0.67"))
-        self.limiter = TokenBucketLimiter(capacity=capacity, refill_rate=refill_rate)
 
     async def run(self):
         """网关启动主协程，启动 WebSocket 长连接并挂载守护协程。"""
@@ -115,51 +113,22 @@ class QQGateway:
                     elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
                         break
 
+    @property
+    def limiter(self):
+        """提供 limiter 属性代理以兼容既有 Mock 逻辑"""
+        return self.sender.limiter
+
     async def _send(self, msg_type: str, user_id: str, group_id: str, text: str, skip_delay: bool = False):
-        """OneBot HTTP 协议消息发送，负责具体的网络包推送。"""
-        # 0. 全局物理发包滑窗令牌桶平滑流控整流
-        await self.limiter.acquire()
+        """兼容代理：委托给物理 sender 发送网络包。"""
+        return await self.sender.send(msg_type, user_id, group_id, text, skip_delay)
 
-        # 2. 文本净化（QQ 不支持 Markdown 粗斜体渲染，在此进行自动降解）
-        text = re.sub(r'\*\*(.+?)\*\*', r'\1', text)
-        text = re.sub(r'\*(.+?)\*', r'\1', text)
-        text = re.sub(r'__(.+?)__', r'\1', text)
+    async def _send_chunk(self, msg_type: str, user_id: str, group_id: str, text: str):
+        """兼容代理：委托给物理 sender 拆分发送文本块。"""
+        return await self.sender.send_chunk(msg_type, user_id, group_id, text)
 
-        # 3. 构造发送 payload
-        payload = {}
-        endpoint = ""
-        if msg_type == "group" and group_id:
-            endpoint = "/send_group_msg"
-            payload = {"group_id": int(group_id), "message": text}
-        else:
-            endpoint = "/send_private_msg"
-            payload = {"user_id": int(user_id), "message": text}
-
-        url = f"{NC_HTTP_URL}{endpoint}"
-        headers = {"Content-Type": "application/json"}
-        if NC_TOKEN:
-            headers["Authorization"] = f"Bearer {NC_TOKEN}"
-
-        try:
-            # 采用异步 non-blocking 请求，并设置 5.0 秒超时限制防卡死
-            if self._http and not self._http.closed:
-                timeout = aiohttp.ClientTimeout(total=5.0)
-                async with self._http.post(url, json=payload, headers=headers, timeout=timeout) as resp:
-                    if resp.status != 200:
-                        body = await resp.text()
-                        logger.warning(f"Message send failed ({resp.status}): {body[:100]}")
-            else:
-                # 兜底同步请求，防止 _http 被关闭时发生崩溃
-                req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers, method="POST")
-                loop = asyncio.get_running_loop()
-                await loop.run_in_executor(None, lambda: urllib.request.urlopen(req, timeout=10))
-                
-            logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
-            # 物理写入活动轨迹日志以实现输入与输出时间线完全融合
-            session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
-            self._log_activity("Agent回复", f"小萤 ({session_key}): {text}", user_id=user_id)
-        except Exception as e:
-            logger.error(f"Send error: {e}")
+    def _natural_delay(self, text: str) -> float:
+        """根据文本长度自然计算发送间隔（打字延迟已物理清退，默认为 0.0）"""
+        return 0.0
 
     def _log_activity(self, category: str, content: str, user_id: str = None):
         """结构化轨迹活动日志记录，支持根据发言人身份将主流量与沙箱旁路流量物理隔离分流"""
@@ -226,35 +195,6 @@ class QQGateway:
     @_podcast_choices.setter
     def _podcast_choices(self, value: dict):
         self.dispatcher._podcast_choices = value
-
-    async def _send_chunk(self, msg_type: str, user_id: str, group_id: str, text: str):
-        """发送一个文本块，处理 [SPLIT] 和 [WAIT:N]"""
-        wait = 0
-        def _extract_wait(t):
-            nonlocal wait
-            m = re.search(r'\[WAIT:([\d.]+)\]', t)
-            if m:
-                wait = max(wait, float(m.group(1)))
-                t = re.sub(r'\[WAIT:[\d.]+\]', '', t)
-            return t
-
-        parts = text.split("[SPLIT]")
-        for i, part in enumerate(parts):
-            part = _extract_wait(part.strip())
-            if not part:
-                continue
-            if len(part) > MAX_REPLY_CHARS:
-                part = part[:MAX_REPLY_CHARS - 20] + "\n...(truncated)"
-            
-            await self._send(msg_type, user_id, group_id, part, skip_delay=True)
-            if i < len(parts) - 1:
-                if wait > 0:
-                    await asyncio.sleep(wait)
-                wait = 0
-
-    def _natural_delay(self, text: str) -> float:
-        """根据文本长度自然计算发送间隔（打字延迟已物理清退，默认为 0.0）"""
-        return 0.0
 
     def _load_persona(self) -> tuple:
         """从资源文件加载画像属性，支持被 dispatcher 调用或在测试中被 mock."""
