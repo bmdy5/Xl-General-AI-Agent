@@ -2,7 +2,7 @@ import logging
 
 logger = logging.getLogger("agent.history_repair")
 
-from .memory.error_tracker import ERROR_INDICATORS
+from ..memory.error_tracker import ERROR_INDICATORS
 
 async def repair_history(agent) -> None:
     """双向修复：补全缺失的 tool 结果 + 删除孤立的 tool 消息 + 智能重排交错的工具响应."""

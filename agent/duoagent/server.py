@@ -10,7 +10,7 @@ import sys
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))
 
 from agent.duoagent import Discussion, AGENT_TEMPLATES
-from agent.llm import LLMClient
+from agent.core.llm import LLMClient
 
 logging.basicConfig(level=logging.INFO, format="%(asctime)s - %(message)s")
 logger = logging.getLogger(__name__)
@@ -31,7 +31,7 @@ discussions: dict[str, Discussion] = {}
 active_streams: dict[str, asyncio.Queue] = {}
 
 # 使用与 XL 相同的 LLM 配置
-from agent.llm import LLMClient as _LLM
+from agent.core.llm import LLMClient as _LLM
 llm = _LLM(
     model=os.getenv("MYAGENT_MODEL", "openai/gpt-4o"),
     api_key=os.getenv("MYAGENT_API_KEY") or os.getenv("OPENAI_API_KEY") or os.getenv("ANTHROPIC_API_KEY"),

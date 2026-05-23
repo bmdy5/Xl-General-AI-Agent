@@ -11,20 +11,20 @@ import logging
 import os
 from pathlib import Path
 from typing import AsyncGenerator, Optional
-from .config import settings
+from ..config import settings
 
 logger = logging.getLogger(__name__)
 
 from .llm import LLMClient
-from .memory.manager import MemoryManager
-from .session.handler import SessionHandler
-from .tools.registry import ToolRegistry
+from ..memory.manager import MemoryManager
+from ..session.handler import SessionHandler
+from ..tools.registry import ToolRegistry
 from .compressor import ContextCompressor
-from .memory.error_tracker import ErrorTracker
+from ..memory.error_tracker import ErrorTracker
 
 # 导入静态提示词以维持后向兼容性
 from .prompt_builder import STATIC_PROMPT
-from .memory.error_tracker import ERROR_INDICATORS
+from ..memory.error_tracker import ERROR_INDICATORS
 
 class AgentMode(enum.Enum):
     NORMAL = "normal"
@@ -257,7 +257,7 @@ class Agent:
     async def _handle_tool_error(self, tool_name: str, error_text: str):
         """工具错误分类记录."""
         should_report, level = self.error_tracker.should_report(error_text)
-        from .memory.error_tracker import L2_SELF_HEAL
+        from ..memory.error_tracker import L2_SELF_HEAL
         if level == L2_SELF_HEAL:
             recipe = self.error_tracker.find_recipe(error_text)
             if recipe:
@@ -328,7 +328,7 @@ class Agent:
         if not tool.needs_permissions(tool_args):
             return PermissionCategory.SAFE
         if tool_name == "bash":
-            from .tools.bash_tool import BashTool
+            from ..tools.bash_tool import BashTool
             category_str = BashTool.classify_command(tool_args.get("command", ""))
             return {
                 "safe": PermissionCategory.SAFE,

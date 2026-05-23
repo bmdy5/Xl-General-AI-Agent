@@ -1,5 +1,5 @@
 from ..bootstrap import build_agent
-from ..tui_events import run_with_tui
+from ..ui.tui_events import run_with_tui
 
 async def run_single(query: str):
     """单次模式：执行一次查询后退出."""

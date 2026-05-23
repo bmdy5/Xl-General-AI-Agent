@@ -2,8 +2,8 @@ import os
 import sys
 import asyncio
 from ..bootstrap import build_agent
-from ..dashboard import DashboardServer
-from ..auto_learn import AutoLearner
+from ..ui.dashboard import DashboardServer
+from ..learn.auto_learn import AutoLearner
 
 async def run_dashboard_learn():
     """Dashboard + 自主学习."""

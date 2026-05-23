@@ -18,8 +18,8 @@ def setup_system():
 
 def build_agent(session_id: str = "default"):
     """规范化组装 Agent：LLM + 物理子包工具集 + 记忆 + 会话"""
-    from .llm import LLMClient
-    from .core import Agent
+    from .core.llm import LLMClient
+    from .core.agent import Agent
     from .memory.manager import MemoryManager
     from .session.handler import SessionHandler
     

@@ -3,7 +3,7 @@ import logging
 from typing import Any, AsyncGenerator, Optional
 
 from ..base_tool import BaseTool, ToolResult
-from agent.task_queue import TaskQueue
+from agent.core.task_queue import TaskQueue
 
 logger = logging.getLogger(__name__)
 

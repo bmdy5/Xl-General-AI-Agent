@@ -21,7 +21,7 @@ IMAGE2_BASE = os.getenv("IMAGE2_BASE", "https://gpt-image2.xiaoliang.tech")
 IMAGE2_USER = os.getenv("IMAGE2_USER", "")
 IMAGE2_PASS = os.getenv("IMAGE2_PASS", "")
 
-ASSETS_DIR = Path(__file__).parent.parent.parent / "dashboard_v2" / "assets"
+ASSETS_DIR = Path(__file__).parent.parent.parent / "ui" / "dashboard_v2" / "assets"
 
 
 class Image2GenerateTool(BaseTool):

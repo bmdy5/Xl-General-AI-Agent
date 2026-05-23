@@ -8,7 +8,7 @@ import urllib.request
 import aiohttp
 from datetime import datetime, timedelta, timezone
 
-from .tools.mcp.notebooklm_client import NotebookLMMCPClient, download_podcast_silently_sync, get_notebooklm_config
+from ..tools.mcp.notebooklm_client import NotebookLMMCPClient, download_podcast_silently_sync, get_notebooklm_config
 
 logger = logging.getLogger(__name__)
 
