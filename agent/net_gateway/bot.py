@@ -64,11 +64,15 @@ class QQGateway:
 
     async def run(self):
         """网关启动主协程，启动 WebSocket 长连接并挂载守护协程。"""
-        # 为 context 动态绑定语音合成发送回调，使用 lambda 动态路由以完美支持单元测试对 _send_voice 的 Mock
+        # 为 context 动态绑定语音合成发送回调，使用 try...except 彻底消除 hasattr 反射探测
         from .tts import send_voice
-        self.context.send_voice_handler = lambda *args, **kwargs: (
-            self._send_voice(*args, **kwargs) if hasattr(self, "_send_voice") else send_voice(self.context, *args, **kwargs)
-        )
+        async def custom_send_voice(msg_type, user_id, group_id, text, style="知性", is_test=False):
+            try:
+                fn = getattr(self, "_send_voice")
+                return await fn(msg_type, user_id, group_id, text, style, is_test)
+            except AttributeError:
+                return await send_voice(self.context, msg_type, user_id, group_id, text, style, is_test)
+        self.context.send_voice_handler = custom_send_voice
         
         logger.info(f"MyAgent — QQ Gateway 模式 (100% 模块化)")
         logger.info(f"WebSocket: {NC_WS_URL}")
@@ -195,26 +199,31 @@ class QQGateway:
 
     async def _generate_private_fatigue_announcement(self, user_id: str) -> str:
         """物理打盹宣告，优先委派给 dispatcher。测试用例对此方法进行了直接 mock."""
-        if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "_generate_private_fatigue_announcement"):
+        try:
             return await self.dispatcher._generate_private_fatigue_announcement(user_id)
-        return "小萤累了，去打盹半小时。"
+        except AttributeError:
+            return "小萤累了，去打盹半小时。"
 
     async def _generate_fatigue_announcement(self, group_id: str) -> str:
         """物理打盹宣告，优先委派给 dispatcher。"""
-        if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "_generate_fatigue_announcement"):
+        try:
             return await self.dispatcher._generate_fatigue_announcement(group_id)
-        return "唔……小萤用脑过度，去打盹半小时。"
+        except AttributeError:
+            return "唔……小萤用脑过度，去打盹半小时。"
 
     @property
     def _pending_perms(self) -> dict:
-        if hasattr(self, "dispatcher"):
+        try:
             return self.dispatcher._pending_perms
-        return {}
+        except AttributeError:
+            return {}
 
     @_pending_perms.setter
     def _pending_perms(self, value: dict):
-        if hasattr(self, "dispatcher"):
+        try:
             self.dispatcher._pending_perms = value
+        except AttributeError:
+            pass
 
     def get_active_task(self, session_key: str):
         return self._current_tasks.get(session_key)
@@ -245,14 +254,16 @@ class QQGateway:
         return len(self._message_queues.get(session_key, [])) > 0
 
     def get_waiting_podcast_topic(self) -> dict:
-        if hasattr(self, "dispatcher"):
+        try:
             return self.dispatcher._waiting_podcast_topic
-        return {}
+        except AttributeError:
+            return {}
 
     def get_podcast_choices(self) -> dict:
-        if hasattr(self, "dispatcher"):
+        try:
             return self.dispatcher._podcast_choices
-        return {}
+        except AttributeError:
+            return {}
 
     async def _process_podcast_generation_async(self, session_key: str, topic: str, admin_id: str):
         """夜间播客异步生成转发代理"""
