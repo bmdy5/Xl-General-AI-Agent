@@ -84,13 +84,9 @@ class LLMClient:
                         f"从 {kwargs['model']} 切换为高稳定通道 openai/gpt-4o"
                     )
                     kwargs["model"] = "openai/gpt-4o"
-                    if self.api_key:
-                        kwargs["api_key"] = self.api_key
-                    elif "api_key" in kwargs:
+                    if "api_key" in kwargs:
                         kwargs.pop("api_key")
-                    if self.api_base:
-                        kwargs["api_base"] = self.api_base
-                    elif "api_base" in kwargs:
+                    if "api_base" in kwargs:
                         kwargs.pop("api_base")
                 response = await acompletion(**kwargs)
                 break
@@ -179,13 +175,9 @@ class LLMClient:
                         f"从 {kwargs['model']} 切换为高稳定通道 openai/gpt-4o"
                     )
                     kwargs["model"] = "openai/gpt-4o"
-                    if self.api_key:
-                        kwargs["api_key"] = self.api_key
-                    elif "api_key" in kwargs:
+                    if "api_key" in kwargs:
                         kwargs.pop("api_key")
-                    if self.api_base:
-                        kwargs["api_base"] = self.api_base
-                    elif "api_base" in kwargs:
+                    if "api_base" in kwargs:
                         kwargs.pop("api_base")
                 response = await acompletion(**kwargs)
                 break
