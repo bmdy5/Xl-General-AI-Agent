@@ -1,6 +1,6 @@
 #!/bin/bash
-cd "$(dirname "$0")"
-source .venv/bin/activate
+cd "$(dirname "$0")/.."
+source venv/bin/activate
 
 echo "👑 XL Agent — Pixel Dashboard"
 echo ""
