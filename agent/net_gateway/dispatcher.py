@@ -33,6 +33,22 @@ class MessageDispatcher:
         self.admin_id = self.context.admin_id
         self.fatigue_sleep_seconds = float(os.getenv("QQ_FATIGUE_SLEEP_MINUTES", "15.0")) * 60.0
 
+    def _is_truly_calling_me(self, text: str) -> bool:
+        """启发式分析群聊文本中提到“小萤/小荧”时，是否属于真正的直接呼唤/指令，防止抢答自作多情"""
+        text = text.strip()
+        if not text:
+            return False
+        # 1. 直接以名字开头，后接逗号、感叹号、问号、空格或直接带命令动作
+        if re.match(r"^(小萤|小荧)([，,！!？?\s]|帮|写|查|做|算|听|读|说|问|看|下|[^\w]|$)", text):
+            return True
+        # 2. 以名字结尾，前接呼应符号（如 "对吧，小萤" / "帮我看看，小荧"）
+        if re.search(r"([，,！!？?\s])(小萤|小荧)$", text):
+            return True
+        # 3. 消息中包含明确的问句提问或直接呼唤，且名字紧邻状态疑问词
+        if re.search(r"(小萤|小荧)(在吗|呢|好|早|晚安|出来|在不)", text):
+            return True
+        return False
+
     async def dispatch_event(self, event: dict):
         """解析 QQ 事件，进行白名单拦截、私聊控制，最后触发 ReAct 异步处理"""
         msg_type = event.get("message_type", "private")
@@ -52,32 +68,7 @@ class MessageDispatcher:
         other_bot_ids = {x.strip() for x in os.getenv("QQ_OTHER_BOT_IDS", "1911828529").split(",") if x.strip()}
         is_other_bot = user_id in other_bot_ids
 
-        # ── 2. 动态大脑疲劳度计算与降温休眠 ──
-        session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
-        if msg_type == "group" and group_id:
-            if is_other_bot:
-                # 兄弟机器人发言，按消息 Token 精确消耗：每个 Token 0.15% 疲劳度
-                bot_tokens = self._count_tokens(raw)
-                inc = bot_tokens * 0.15
-            else:
-                inc = 0.0
-            await self._adjust_fatigue(group_id, inc, event)
-
-        is_at_bot = False
-        if msg_type == "group":
-            is_at_bot = f"[CQ:at,qq={self_id}]" in raw
-            
-            # 如果是其他机器人发的消息，强行将 is_at_bot 降级，避免强 @ 穿透频控
-            if is_other_bot:
-                is_at_bot = False
-                
-            raw = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
-            if not raw:
-                return
-            if is_at_bot:
-                raw = f"[来自 QQ: {user_id} 的群发言] {raw}"
-
-        # ── 3. 安全白名单前置拦截 ──────────────────────────────────
+        # ── 2. 安全白名单前置拦截判定 ──
         WHITE_LIST = {self.admin_id}
         coworker_ids = os.getenv("QQ_COWORKER_IDS", "")
         if coworker_ids:
@@ -96,12 +87,60 @@ class MessageDispatcher:
         elif msg_type == "group" and group_id in WHITE_GROUPS:
             is_allowed = True
 
+        # ── 3. 群聊消息「智能静默旁听 + 名字/At 唤醒」重构 ──
+        session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
+        is_triggered = True  # 默认为 True (私聊始终唤醒)
+
+        if msg_type == "group" and group_id:
+            is_at_bot = f"[CQ:at,qq={self_id}]" in raw
+            if is_other_bot:
+                is_at_bot = False
+            
+            raw_cleaned = re.sub(r'\[CQ:at,qq=\d+\]', '', raw).strip()
+            if not raw_cleaned:
+                return
+
+            # 真假呼唤判定：At 唤醒，或者在非机器人消息中匹配到名字指令呼唤
+            is_triggered = is_at_bot or (self._is_truly_calling_me(raw_cleaned) and not is_other_bot)
+
+            # A. 若在白名单群，且未触发唤醒：静默旁听并追加历史缓存，直接退出
+            if is_allowed and not is_triggered:
+                # 获取或惰性初始化 Agent 实例
+                agent = self.context._agents.get(session_key)
+                if agent is None:
+                    agent = self.context._factory(session_key)
+                    self.context._agents[session_key] = agent
+                
+                # 默默追加群聊闲聊到缓存（0大模型开销）
+                user_msg = {"role": "user", "content": f"[{sender_name}]: {raw_cleaned}"}
+                agent.messages.append(user_msg)
+                
+                # 防爆裁剪保护
+                if len(agent.messages) > 100:
+                    agent.messages = [agent.messages[0]] + agent.messages[-50:]
+                
+                if agent.session:
+                    await agent.session.replace_all(agent.messages)
+                return  # 完美降载退出
+
+            # B. 若被触发唤醒：如果是他人发言被唤醒，在头部加上身份前缀；如果是亮哥发言，保持原文
+            if is_triggered:
+                if user_id != self.admin_id:
+                    raw = f"[来自 QQ: {user_id} 的群发言] {raw_cleaned}"
+                else:
+                    raw = raw_cleaned
+
+            # C. 疲劳累积清零：群聊发言的被动扣分疲劳值直接设为 0，防止被动累趴
+            inc = 0.0
+            await self._adjust_fatigue(group_id, inc, event)
+
+        # ── 4. 安全拦截 ──
         if not is_allowed:
-            if msg_type == "private" or (msg_type == "group" and is_at_bot):
+            if msg_type == "private" or (msg_type == "group" and is_triggered):
                 now = time.monotonic()
                 last_reply = self._non_white_cache.get(user_id, 0.0)
                 
-                if now - last_reply >= 300.0:  # 5分钟冷却，防止刷屏骚扰
+                if now - last_reply >= 300.0:  # 5分钟冷却
                     self._non_white_cache[user_id] = now
                     reject_msg = "抱歉，我是亮哥的专属 AI 助手小萤，目前仅对主人开放私聊与管理服务哦。"
                     if msg_type == "group":
@@ -323,9 +362,10 @@ class MessageDispatcher:
                     await self.context.send_chunk(msg_type, user_id, group_id, buf.strip())
                     total_sent_tokens += self._count_tokens(buf.strip())
 
-            # 私聊疲劳累加扣分机制（非管理员私聊）
+            # 私聊疲劳累加扣分机制（非管理员私聊），默认下调至 0.025 对标 DeepSeek-V4-Flash
             if msg_type == "private" and user_id != self.admin_id:
-                inc = total_sent_tokens * 0.4
+                fatigue_rate = float(os.getenv("QQ_FATIGUE_RATE", "0.025"))
+                inc = total_sent_tokens * fatigue_rate
                 await self._adjust_fatigue(session_key, inc, is_private=True)
 
         except asyncio.CancelledError:
