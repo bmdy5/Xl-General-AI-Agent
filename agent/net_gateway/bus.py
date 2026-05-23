@@ -39,35 +39,48 @@ class CSMAController:
 class TokenBucketLimiter:
     """全局物理发包平滑流控令牌桶限流器。
     
-    使用令牌桶（Token Bucket）算法实现，允许最大容纳容量（capacity）的并发爆发生，
-    并以指定的 refill_rate（每秒填充令牌数）平滑补充令牌。
-    未获取到令牌时，自动计算并异步挂起等待补充，达到完美的滑窗平滑整流控速。
+    采用高并发无锁死 (Lock-free/Timer-based) 排队算法，
+    并发调用时仅在微秒级入锁更新未来的绝对时间指针，
+    并在锁的外部执行 asyncio.sleep() 等待，彻底解决 sleep 霸占锁导致的高并发串行死锁。
     """
     
     def __init__(self, capacity: float = 5.0, refill_rate: float = 0.67):
         self.capacity = capacity
         self.refill_rate = refill_rate
-        self.tokens = capacity
-        self.last_update = time.monotonic()
+        # 1.0 / refill_rate 表示产生 1 个令牌所需的物理时间 (秒)
+        self.interval = 1.0 / refill_rate
+        self.max_tokens = capacity
+        
+        # 记录下一次允许无延时发送的单调时间戳
+        self.allow_at = time.monotonic()
         self._lock = asyncio.Lock()
 
     async def acquire(self):
-        """获取发包令牌。若令牌不足，将自动计算并异步挂起，直到补充出 1 个可用令牌。"""
+        """获取发包令牌。采用微秒级短锁计算发包排队时间，并在锁外并发挂起。"""
+        wait_time = 0.0
         async with self._lock:
-            while True:
-                now = time.monotonic()
-                # 补充令牌
-                elapsed = now - self.last_update
-                self.last_update = now
-                self.tokens = min(self.capacity, self.tokens + elapsed * self.refill_rate)
+            now = time.monotonic()
+            
+            # 如果 allow_at 在过去太远，说明长期未发包，令牌爆满，重置 allow_at
+            # 最多允许积攒容量为 max_tokens 的爆发力，即最多回退 (max_tokens * interval)
+            max_backlog = self.max_tokens * self.interval
+            if now - self.allow_at > max_backlog:
+                self.allow_at = now - max_backlog
                 
-                if self.tokens >= 1.0:
-                    self.tokens -= 1.0
-                    return
+            # 判定当前时间是否已经到了允许发包的时间
+            if now >= self.allow_at:
+                # 扣除 1 个令牌的等价时间
+                self.allow_at = self.allow_at + self.interval
+                # 如果 allow_at 仍小于 now，重置为 now + interval
+                if self.allow_at < now:
+                    self.allow_at = now + self.interval
+                wait_time = 0.0
+            else:
+                # 令牌不足，为当前协程预支分配下一次允许的时间
+                wait_time = self.allow_at - now
+                self.allow_at = self.allow_at + self.interval
                 
-                # 计算需要等待的时间以生成 1 个令牌
-                needed = 1.0 - self.tokens
-                wait_time = needed / self.refill_rate
-                # 释放锁并等待，防止其他协程等待霸占 Lock
-                await asyncio.sleep(wait_time)
+        # 锁外挂起：锁已被微秒级释放，其他协程可以瞬间入锁参与令牌时间排队
+        if wait_time > 0.0:
+            await asyncio.sleep(wait_time)
 

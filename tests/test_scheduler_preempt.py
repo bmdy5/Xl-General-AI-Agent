@@ -32,7 +32,7 @@ class MockAgent:
         self.memory = MockMemory()
         self.messages = []
         self.session = None
-    async def run(self, prompt, stream=True):
+    async def run(self, prompt, stream=True, **kwargs):
         if "long" in prompt:
             yield {"type": "text_delta", "content": "长任务第一阶段"}
             try:
@@ -45,7 +45,9 @@ class MockAgent:
             yield {"type": "text_delta", "content": f"普通回复: {prompt}"}
 
 @pytest.mark.asyncio
-async def test_ai_driven_scheduler():
+async def test_ai_driven_scheduler(monkeypatch):
+    monkeypatch.setenv("QQ_ADMIN_ID", "123")
+    monkeypatch.setenv("ADMIN_ID", "123")
     gw = QQGateway(agent_factory=MockAgent)
     sent_messages = []
     async def mock_send(msg_type, user_id, group_id, text, *args, **kwargs):
