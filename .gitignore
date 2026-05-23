@@ -23,7 +23,5 @@ agent/memory/coworker_*.json
 agent/dashboard_v2/assets/gen_*
 scratch/*
 !scratch/test_sandbox.py
-agent_activity.log
-gateway.log
 agent/model/
 
