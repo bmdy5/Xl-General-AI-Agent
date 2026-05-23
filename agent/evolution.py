@@ -394,13 +394,17 @@ async def on_session_end(agent):
 
     # 技能改进：检测最近创建的技能文件，自动追踪使用
     try:
-        skill_dir = Path("/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西/技能")
-        if skill_dir.exists():
-            for sf in skill_dir.glob("*.md"):
-                mtime = sf.stat().st_mtime
-                # 最近 1 小时内创建/修改的 → 自动追踪
-                if __import__("time").time() - mtime < 3600:
-                    track_skill_usage(str(sf), success=True)
+        from .skills import get_skills_root, track_skill_usage
+        skills_root = get_skills_root()
+        if skills_root.exists():
+            for subdir in skills_root.iterdir():
+                if subdir.is_dir():
+                    sf = subdir / "SKILL.md"
+                    if sf.exists():
+                        mtime = sf.stat().st_mtime
+                        # 最近 1 小时内创建/修改的 → 自动追踪
+                        if __import__("time").time() - mtime < 3600:
+                            track_skill_usage(str(sf), success=True)
     except Exception:
         pass
 
@@ -463,23 +467,8 @@ async def on_session_end(agent):
             steps = pattern.get("steps", [])
             trigger = pattern.get("trigger", "")
             if name and len(steps) >= 2:
-                skill_dir = Path(
-                    "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西/技能"
-                )
-                skill_dir.mkdir(parents=True, exist_ok=True)
-                safe_name = re.sub(r'[^\w一-鿿-]', '_', name)[:40]
-                skill_path = skill_dir / f"{safe_name}.md"
-                if not skill_path.exists():
-                    now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    content = (
-                        f"---\nname: {name}\ndescription: 会话自动检测的重复模式\n"
-                        f"trigger: {trigger}\ncreated: {now}\nversion: 1.0\n"
-                        f"usage_count: 0\nsuccess_count: 0\n---\n\n"
-                        f"# {name}\n\n## 触发\n{trigger}\n\n## 步骤\n"
-                        + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))
-                    )
-                    skill_path.write_text(content, encoding="utf-8")
-                    logger.info(f"Auto-skill created: {name}")
+                from .skills import create_skill
+                create_skill(name, trigger, steps)
     except Exception as e:
         logger.debug(f"Task pattern detection skipped: {e}")
 
@@ -821,21 +810,10 @@ async def trigger_deep_dream_evolution(agent):
                 md_content = result_skill.get("skill_md_content", "")
                 
                 if folder_name and md_content:
-                    skills_root = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/skills")
-                    skill_dir = skills_root / folder_name
-                    skill_dir.mkdir(parents=True, exist_ok=True)
-                    
-                    skill_md_path = skill_dir / "SKILL.md"
-                    skill_md_path.write_text(md_content, encoding="utf-8")
-                    
+                    from .skills import register_skill_evolution
                     script_name = result_skill.get("helper_script_filename")
                     script_code = result_skill.get("helper_script_content")
-                    if script_name and script_code:
-                        script_name = re.sub(r'[^\w.-]', '_', script_name)
-                        script_path = skill_dir / script_name
-                        script_path.write_text(script_code, encoding="utf-8")
-                        logger.info(f"🛠️ [新技能突变] 配套辅助脚本 {script_name} 已生成在 {script_path}")
-                        
+                    register_skill_evolution(folder_name, md_content, script_name, script_code)
                     logger.info(f"🎉 [技能进化成功] 自进化突变合成全新技能: 【{skill_name}】 -> skills/{folder_name}/")
     except Exception as e:
         logger.error(f"❌ [技能突变异常] 自进化合成 Skill 失败: {e}")
