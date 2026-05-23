@@ -207,7 +207,11 @@ class TaskQueue:
                     target_day_of_week = m_cron.group(3)
                     
                     # 构造今日的绝对触发时间点 (继承 now 的 UTC 时区信息)
-                    trigger_today = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+                    try:
+                        trigger_today = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+                    except ValueError as val_err:
+                        logger.error(f"Task {t['id']} has invalid cron values: {cron}. Error: {val_err}")
+                        continue
                     
                     # 校验星期数是否匹配
                     if target_day_of_week != "*":

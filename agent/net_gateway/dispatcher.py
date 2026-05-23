@@ -167,19 +167,38 @@ class MessageDispatcher:
                     "⚠️ 请输入要合成的文本，格式如：小萤语音测试：[委屈] 小萤好难过呀", skip_delay=True)
             return
 
-        this_msg_time = self.bus.register_message(session_key)
-        if await self.bus.wait_for_carrier_sense(session_key, this_msg_time):
-            return
-
         # 写入用户指令审计日志
         _pn, _ua = self._load_persona()
         self._log_activity_dispatcher("用户输入", f"{_ua} ({session_key}): {raw}")
+
+        # 兼容测试套件：记录排队消息队列，维持单元测试高度向下兼容
+        if self.bot and hasattr(self.bot, "_message_queues"):
+            active_task = getattr(self.bot, "_current_tasks", {}).get(session_key)
+            if active_task and not active_task.done():
+                is_preempt = any(kw in raw for kw in ["停", "别跑了", "取消", "刹车", "先别", "停下"])
+                if is_preempt:
+                    active_task.cancel()
+                    self._log_activity_dispatcher("系统调度", f"紧急强占中断当前任务: {session_key}")
+                    interruption_note = (
+                        f"[系统提示：{_ua}在刚才的任务中途发送了这条新命令。"
+                        f"先简短确认停下上一个任务，然后切入新指令：\"{raw}\"]"
+                    )
+                    raw = interruption_note
+                    getattr(self.bot, "_current_tasks", {}).pop(session_key, None)
+                else:
+                    if session_key not in self.bot._message_queues:
+                        self.bot._message_queues[session_key] = []
+                    self.bot._message_queues[session_key].append((event, raw))
+                    return
 
         # 获取或惰性初始化 Agent 实例
         agent = self.context._agents.get(session_key)
         if agent is None:
             agent = self.context._factory(session_key)
             self.context._agents[session_key] = agent
+
+        # 注册单调发言时间戳以供 CSMA/CD 检测
+        this_msg_time = self.bus.register_message(session_key)
 
         # 启动非阻塞后台任务驱动
         task = asyncio.create_task(
@@ -192,6 +211,10 @@ class MessageDispatcher:
     async def _execute_agent_run(self, agent, raw: str, session_key: str, msg_type: str, 
                                  user_id: str, group_id: str, sender_name: str, task_start_time: float):
         """流式处理 Agent 推理输出，处理总线冲突、流式 [SPLIT] 块分发与拟真打字延迟"""
+        # 1. 载波冲突避免挂起退避与冲突判定
+        if await self.bus.wait_for_carrier_sense(session_key, task_start_time):
+            return
+
         now = time.monotonic()
         last_voice = self.context._last_voice_time
         time_diff = now - last_voice
@@ -313,6 +336,14 @@ class MessageDispatcher:
         finally:
             if self.bot and hasattr(self.bot, "_current_tasks"):
                 self.bot._current_tasks.pop(session_key, None)
+
+            # 自动拉起下一个排队任务，维持完美功能闭环与单元测试向下兼容
+            if self.bot and hasattr(self.bot, "_message_queues"):
+                queue = self.bot._message_queues.get(session_key, [])
+                if queue:
+                    next_event, next_raw = queue.pop(0)
+                    logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务: {next_raw}")
+                    asyncio.create_task(self.dispatch_event(next_event))
 
     async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None, is_private: bool = False):
         """疲劳计算逻辑与高情商打盹宣告"""
