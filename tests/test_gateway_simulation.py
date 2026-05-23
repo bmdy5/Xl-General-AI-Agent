@@ -3,7 +3,7 @@ import pytest
 import os
 import time
 import operator
-from agent.gateway import QQGateway
+from agent.core.gateway import QQGateway
 
 class DummyLLM:
     async def chat(self, messages, tools=None, model_override=""):
@@ -333,7 +333,7 @@ async def test_gateway_real_qq_connectivity(monkeypatch):
     import aiohttp
     import time
     from pathlib import Path
-    from agent.bootstrap import build_agent
+    from agent.core.bootstrap import build_agent
     from agent.memory.manager import MemoryManager
     
     admin_id = "1705919142"

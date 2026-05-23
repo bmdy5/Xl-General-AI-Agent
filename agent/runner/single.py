@@ -1,4 +1,4 @@
-from ..bootstrap import build_agent
+from ..core.bootstrap import build_agent
 from ..ui.tui_events import run_with_tui
 
 async def run_single(query: str):

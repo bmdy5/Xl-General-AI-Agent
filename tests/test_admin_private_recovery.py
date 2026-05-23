@@ -1,7 +1,7 @@
 import asyncio
 import pytest
 import os
-from agent.gateway import QQGateway
+from agent.core.gateway import QQGateway
 
 class MockLLM:
     async def chat(self, messages, tools=None, model_override=""):

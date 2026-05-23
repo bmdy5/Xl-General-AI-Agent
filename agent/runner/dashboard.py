@@ -1,7 +1,7 @@
 import os
 import sys
 import asyncio
-from ..bootstrap import build_agent
+from ..core.bootstrap import build_agent
 from ..ui.dashboard import DashboardServer
 from ..learn.auto_learn import AutoLearner
 
