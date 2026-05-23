@@ -35,3 +35,14 @@ MYAGENT_MODEL_PRO: "deepseek/deepseek-v4-pro"
 IMAGE2_BASE: "https://gpt-image2.xiaoliang.tech"
 IMAGE2_USER: "admin"
 IMAGE2_PASS: "adMin123"
+
+# 7. NotebookLM Early Podcast Async Pipeline (NotebookLM 播客生成)
+notebooklm:
+  vault_path: "/Users/xiaofeng/Documents/个人博客/学习笔记"
+  bin_path: "/Users/xiaofeng/.gemini/antigravity/scratch/venv/bin/notebooklm-mcp"
+  env:
+    HOME: "/Users/xiaofeng/.gemini/antigravity/scratch"
+    HTTP_PROXY: "http://127.0.0.1:7897"
+    HTTPS_PROXY: "http://127.0.0.1:7897"
+    ALL_PROXY: "http://127.0.0.1:7897"
+    PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
