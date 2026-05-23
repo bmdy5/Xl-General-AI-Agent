@@ -300,6 +300,10 @@ class MessageDispatcher:
                         style_match = re.match(r'^\[([^\s\]]+)\]', buf.strip())
                         if style_match:
                             candidate_style = style_match.group(1).strip()
+                            # 自动支持并兼容 [语音:傲娇] 格式，清洗剥离提取核心情绪
+                            if candidate_style.startswith("语音:") or candidate_style.startswith("语音："):
+                                candidate_style = candidate_style.split(":", 1)[-1].split("：", 1)[-1].strip()
+                                
                             known_styles = {"喜", "怒", "哀", "乐", "撒娇", "傲娇", "委屈", "小脾气", "元气", "温柔", "知性", "正常"}
                             if candidate_style in reversed(sorted(known_styles, key=len)):
                                 is_voice_reply = True
