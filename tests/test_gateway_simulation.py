@@ -318,3 +318,155 @@ async def test_gateway_admin_penetration_and_recovery(monkeypatch):
     # 应且仅应有一条系统提示消息
     assert len(sent_messages) == 1
     assert "已物理暂停非主人私聊" in sent_messages[0]
+
+
+@pytest.mark.asyncio
+async def test_gateway_real_qq_connectivity(monkeypatch):
+    """用例 6: 真实环境下的 OneBot 接口与 7 大核心功能物理双向拨测"""
+    monkeypatch.setenv("QQ_ADMIN_ID", "1705919142")
+    monkeypatch.setenv("ADMIN_ID", "1705919142")
+    
+    import urllib.request
+    import urllib.parse
+    import json
+    import uuid
+    import aiohttp
+    import time
+    from pathlib import Path
+    from agent.bootstrap import build_agent
+    from agent.memory.manager import MemoryManager
+    
+    admin_id = "1705919142"
+    nc_http = os.getenv("NAPCAT_HTTP_URL", "http://127.0.0.1:3020")
+    nc_ws = os.getenv("NAPCAT_WS_URL", "ws://127.0.0.1:3001")
+    nc_token = os.getenv("NAPCAT_TOKEN", "")
+    
+    # ── 1. 物理检查 OneBot 服务是否在线 ──
+    try:
+        req = urllib.request.Request(f"{nc_http}/get_login_info")
+        if nc_token:
+            req.add_header("Authorization", f"Bearer {nc_token}")
+        with urllib.request.urlopen(req, timeout=2) as r:
+            pass
+    except Exception as e:
+        pytest.skip(f"Live OneBot environment offline: {e}")
+        return
+        
+    # ── 2. 白盒记忆与白名单隔离（防止测试数据污染长期记忆） ──
+    test_base = Path("/tmp/myagent_test_memory_e2e")
+    test_base.mkdir(parents=True, exist_ok=True)
+    
+    # 动态拦截 MemoryManager 初始化以实现白盒重定向
+    original_init = MemoryManager.__init__
+    def mock_init(self, base_dir=None):
+        original_init(self, base_dir=test_base)
+    monkeypatch.setattr(MemoryManager, "__init__", mock_init)
+    
+    # 注入暗号用于物理 RAG 检索校验
+    mem = MemoryManager()
+    await mem.save("user_profile.md", "亮哥的暗号", "亮哥的特制暗号是：小萤是宇宙超级美少女")
+    
+    # 临时将测试用户 1911828529 加入安全白名单
+    monkeypatch.setenv("MY_AGENT_WHITE_LIST", "1911828529")
+    
+    # ── 3. 实例化真实组件网关（不执行 run()，以防 WS 双重连接冲突） ──
+    gw = QQGateway(agent_factory=build_agent)
+    gw._http = aiohttp.ClientSession()
+    
+    rag_token = str(uuid.uuid4())[:8]
+    voice_token = str(uuid.uuid4())[:8]
+    
+    test_state = {
+        "rag_passed": False,
+        "voice_passed": False
+    }
+    
+    # ── 4. 开启 WebSocket 异步监听 OneBot 广播的所有 message_sent 确认事件 ──
+    async def listen_ws():
+        headers = {}
+        if nc_token:
+            headers["Authorization"] = f"Bearer {nc_token}"
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.ws_connect(nc_ws, headers=headers) as ws:
+                    start_t = time.time()
+                    # 真实官方 DeepSeek API 推理耗时较大，给予 40 秒温和上限
+                    while time.time() - start_t < 40.0:
+                        if test_state["rag_passed"] and test_state["voice_passed"]:
+                            break
+                        try:
+                            msg = await asyncio.wait_for(ws.receive(), timeout=0.8)
+                            if msg.type == aiohttp.WSMsgType.TEXT:
+                                event = json.loads(msg.data)
+                                if event.get("post_type") in ("message", "message_sent"):
+                                    evt_msg = event.get("message")
+                                    if evt_msg:
+                                        m_str = str(evt_msg)
+                                        if f"RAG_OK:{rag_token}" in m_str and "宇宙超级美少女" in m_str:
+                                            test_state["rag_passed"] = True
+                                        if voice_token in m_str:
+                                            test_state["voice_passed"] = True
+                        except asyncio.TimeoutError:
+                            continue
+        except Exception as ws_err:
+            print(f"WS Listen error in test: {ws_err}")
+
+    listener_task = asyncio.create_task(listen_ws())
+    await asyncio.sleep(0.5) # 给 WS 连接建立一点缓冲
+    
+    try:
+        # ── 5. 测试核心功能 1: 真实 RAG 检索与在线推理大模型 ──
+        rag_event = {
+            "message_type": "private",
+            "user_id": admin_id,
+            "raw_message": f"小萤，根据你的短期记忆，亮哥的特制暗号是什么？请在回复末尾附带：[RAG_OK:{rag_token}]",
+            "self_id": "999999",
+            "sender": {"nickname": "亮哥"}
+        }
+        await gw.dispatcher.dispatch_event(rag_event)
+        await asyncio.sleep(3.0) # 跨越载波监听窗口
+        
+        # ── 6. 测试核心功能 2: 管理员特权穿透与打盹唤醒自愈 ──
+        xiaoyu_key = "user_1911828529"
+        # 模拟进入打盹冻结
+        gw.dispatcher.fatigue_manager._sleep_modes[xiaoyu_key] = True
+        event_wakeup = {
+            "message_type": "private",
+            "user_id": admin_id,
+            "raw_message": "强制唤醒并查询状态",
+            "self_id": "999999",
+            "sender": {"nickname": "亮哥"}
+        }
+        await gw.dispatcher.dispatch_event(event_wakeup)
+        await asyncio.sleep(2.5)
+        # 验证打盹睡眠全局清除复位
+        assert not gw.dispatcher.fatigue_manager._sleep_modes
+        
+        # ── 7. 测试核心功能 3: GPT-SoVITS 动漫萌音语音物理合成 ──
+        event_voice = {
+            "message_type": "private",
+            "user_id": admin_id,
+            "raw_message": f"小萤语音测试：[傲娇] 哼，双向物理拨测核心模块已通关！令牌：{voice_token}",
+            "self_id": "999999",
+            "sender": {"nickname": "亮哥"}
+        }
+        await gw.dispatcher.dispatch_event(event_voice)
+        
+        # 等待 WS 接收协程监听完毕
+        await listener_task
+    finally:
+        # 等待所有网关后台异步任务彻底结束，确保 session 文件全部刷写成功
+        active_tasks = [t for t in gw._current_tasks.values() if t and not t.done()]
+        for t in active_tasks:
+            try:
+                await t
+            except Exception:
+                pass
+        await asyncio.sleep(2.0)
+        if gw._http and not gw._http.closed:
+            await gw._http.close()
+            
+    # ── 8. 端到端高精度闭环数据断言 ──
+    assert test_state["rag_passed"], "RAG or LLM online inference failed to execute on real QQ"
+    assert test_state["voice_passed"], "Anime voice TTS synthesis or voice message QQ dispatch failed on real QQ"
+

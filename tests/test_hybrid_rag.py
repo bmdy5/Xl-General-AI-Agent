@@ -151,6 +151,11 @@ async def test_solution_a_instant_breaker():
     # 实体实例化真实 MemoryManager
     manager = MemoryManager(base_dir=str(temp_mem_dir))
     
+    # 物理清除前序测试加载成功导致的全局局部模型缓存污染，实现冷熔断测试
+    import agent.memory.index
+    if hasattr(agent.memory.index, "_LOCAL_MODEL_CACHE"):
+        agent.memory.index._LOCAL_MODEL_CACHE.clear()
+        
     # 使用 Mock 拦截 Path.exists，模拟本地物理模型丢失的极端灾难场景
     import unittest.mock
     

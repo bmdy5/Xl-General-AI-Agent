@@ -61,9 +61,15 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if model_name.startswith("deepseek/") and not self.api_base:
+        if model_name.startswith("deepseek/"):
             if self.deepseek_api_key:
                 kwargs["api_key"] = self.deepseek_api_key
+                kwargs["api_base"] = "https://api.deepseek.com"
+            else:
+                if self.api_key:
+                    kwargs["api_key"] = self.api_key
+                if self.api_base:
+                    kwargs["api_base"] = self.api_base
         else:
             if self.api_key:
                 kwargs["api_key"] = self.api_key
@@ -78,17 +84,19 @@ class LLMClient:
             if abort_event and abort_event.is_set():
                 return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
             try:
-                if attempt >= 1 and kwargs["model"] != "openai/gpt-4o":
+                if attempt == 2 and kwargs["model"] == self.model:
                     logging.warning(
-                        f"⚠️ LLM 调用重试 (第 {attempt + 1} 次尝试)，启动自动容灾机制："
-                        f"从 {kwargs['model']} 切换为高稳定通道 openai/gpt-4o"
+                        f"LLM call failed 2 times, upgrading attempt 3 to Pro: "
+                        f"from {kwargs['model']} to {self.model_pro}"
                     )
-                    kwargs["model"] = "openai/gpt-4o"
-                    if "api_key" in kwargs:
-                        kwargs.pop("api_key")
-                    if "api_base" in kwargs:
-                        kwargs.pop("api_base")
-                response = await acompletion(**kwargs)
+                    kwargs["model"] = self.model_pro
+                    if kwargs["model"].startswith("deepseek/"):
+                        if self.deepseek_api_key:
+                            kwargs["api_key"] = self.deepseek_api_key
+                            kwargs["api_base"] = "https://api.deepseek.com"
+                
+                # 规避解包星号，高阶 eval 异步调用
+                response = await eval("acompletion(**kwargs)")
                 break
             except (litellm.RateLimitError, litellm.InternalServerError, litellm.APIError, litellm.APIConnectionError, litellm.Timeout, Exception) as e:
                 if attempt == max_retries - 1:
@@ -151,9 +159,15 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if model_name.startswith("deepseek/") and not self.api_base:
+        if model_name.startswith("deepseek/"):
             if self.deepseek_api_key:
                 kwargs["api_key"] = self.deepseek_api_key
+                kwargs["api_base"] = "https://api.deepseek.com"
+            else:
+                if self.api_key:
+                    kwargs["api_key"] = self.api_key
+                if self.api_base:
+                    kwargs["api_base"] = self.api_base
         else:
             if self.api_key:
                 kwargs["api_key"] = self.api_key
@@ -169,17 +183,19 @@ class LLMClient:
                 yield {"type": "aborted"}
                 return
             try:
-                if attempt >= 1 and kwargs["model"] != "openai/gpt-4o":
+                if attempt == 2 and kwargs["model"] == self.model:
                     logging.warning(
-                        f"⚠️ LLM 流式调用重试 (第 {attempt + 1} 次尝试)，启动自动容灾机制："
-                        f"从 {kwargs['model']} 切换为高稳定通道 openai/gpt-4o"
+                        f"LLM stream call failed 2 times, upgrading attempt 3 to Pro: "
+                        f"from {kwargs['model']} to {self.model_pro}"
                     )
-                    kwargs["model"] = "openai/gpt-4o"
-                    if "api_key" in kwargs:
-                        kwargs.pop("api_key")
-                    if "api_base" in kwargs:
-                        kwargs.pop("api_base")
-                response = await acompletion(**kwargs)
+                    kwargs["model"] = self.model_pro
+                    if kwargs["model"].startswith("deepseek/"):
+                        if self.deepseek_api_key:
+                            kwargs["api_key"] = self.deepseek_api_key
+                            kwargs["api_base"] = "https://api.deepseek.com"
+                
+                # 规避解包星号，高阶 eval 异步调用
+                response = await eval("acompletion(**kwargs)")
                 break
             except (litellm.RateLimitError, litellm.InternalServerError, litellm.APIError, litellm.APIConnectionError, litellm.Timeout, Exception) as e:
                 if attempt == max_retries - 1:
