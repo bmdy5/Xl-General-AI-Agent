@@ -118,8 +118,9 @@ class MemoryManager:
         if self._db is None:
             db_path = self.base_dir / "memories.db"
             is_new = not db_path.exists()
-            self._db = sqlite3.connect(str(db_path))
+            self._db = sqlite3.connect(str(db_path), timeout=1.0)  # 限制锁竞争死等时间为 1 秒以自愈
             self._db.execute("PRAGMA foreign_keys = ON")
+            self._db.execute("PRAGMA busy_timeout = 1000")  # 控制锁等待上限为 1000ms，防高并发死锁
             self._db.execute("PRAGMA journal_mode = WAL")  # 极简开启 WAL 读写并发隔离防写锁互斥死锁
             create_table(self._db)
             
@@ -489,6 +490,7 @@ class MemoryManager:
 
     async def _get_embedding(self, text: str) -> list[float]:
         """提取 768 维中文增强语义向量。支持本地 m3e-base 或远程 API 两种模式。"""
+        text = text.strip()[:300]  # 强行 300 字物理截断，免疫任何超长文本在 PyTorch C 层推理卡壳的极端漏洞
         import os
         import asyncio
         from pathlib import Path
