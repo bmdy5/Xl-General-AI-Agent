@@ -12,8 +12,8 @@ class CSMAController:
         self.backoff_seconds = backoff_seconds
 
     def register_message(self, session_key: str) -> float:
-        """注册新进入的消息，记录绝对发言时间戳，用来进行载波监听抢占判定"""
-        this_msg_time = time.time()
+        """注册新进入的消息，记录单调发言时间戳，用来进行载波监听抢占判定"""
+        this_msg_time = time.monotonic()
         self.context._last_receive_time[session_key] = this_msg_time
         return this_msg_time
 
@@ -48,14 +48,14 @@ class TokenBucketLimiter:
         self.capacity = capacity
         self.refill_rate = refill_rate
         self.tokens = capacity
-        self.last_update = time.time()
+        self.last_update = time.monotonic()
         self._lock = asyncio.Lock()
 
     async def acquire(self):
         """获取发包令牌。若令牌不足，将自动计算并异步挂起，直到补充出 1 个可用令牌。"""
         async with self._lock:
             while True:
-                now = time.time()
+                now = time.monotonic()
                 # 补充令牌
                 elapsed = now - self.last_update
                 self.last_update = now

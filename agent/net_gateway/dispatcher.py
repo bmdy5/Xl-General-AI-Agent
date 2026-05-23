@@ -98,10 +98,10 @@ class MessageDispatcher:
 
         if not is_allowed:
             if msg_type == "private" or (msg_type == "group" and is_at_bot):
-                now = time.time()
-                last_reply = self._non_white_cache.get(user_id, 0)
+                now = time.monotonic()
+                last_reply = self._non_white_cache.get(user_id, 0.0)
                 
-                if now - last_reply >= 300:  # 5分钟冷却，防止刷屏骚扰
+                if now - last_reply >= 300.0:  # 5分钟冷却，防止刷屏骚扰
                     self._non_white_cache[user_id] = now
                     reject_msg = "抱歉，我是亮哥的专属 AI 助手小萤，目前仅对主人开放私聊与管理服务哦。"
                     if msg_type == "group":
@@ -192,7 +192,7 @@ class MessageDispatcher:
     async def _execute_agent_run(self, agent, raw: str, session_key: str, msg_type: str, 
                                  user_id: str, group_id: str, sender_name: str, task_start_time: float):
         """流式处理 Agent 推理输出，处理总线冲突、流式 [SPLIT] 块分发与拟真打字延迟"""
-        now = time.time()
+        now = time.monotonic()
         last_voice = self.context._last_voice_time
         time_diff = now - last_voice
         last_voice_str = f"{time_diff:.1f}秒前" if last_voice > 0.0 else "首次聊天（尚未发声）"
@@ -242,7 +242,7 @@ class MessageDispatcher:
                             if candidate_style in reversed(sorted(known_styles, key=len)):
                                 is_voice_reply = True
                                 voice_style = candidate_style
-                                self.context._last_voice_time = time.time()
+                                self.context._last_voice_time = time.monotonic()
                                 logger.info(f"✅ AI自主触发语音合成，情绪: {voice_style}")
 
                     if is_voice_reply:
@@ -316,7 +316,7 @@ class MessageDispatcher:
 
     async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None, is_private: bool = False):
         """疲劳计算逻辑与高情商打盹宣告"""
-        now = time.time()
+        now = time.monotonic()
         last_time = self._last_message_times.get(group_id, now)
         self._last_message_times[group_id] = now
         time_passed = now - last_time
