@@ -214,7 +214,7 @@ class Agent:
         # 抢先注入当前发言用户的物理 QQ 号和角色属性
         if real_sender_id:
             self.current_user_id = real_sender_id
-            admin_id = os.getenv("ADMIN_ID", "")
+            admin_id = os.getenv("QQ_ADMIN_ID", os.getenv("ADMIN_ID", "1705919142"))
             if real_sender_id == admin_id:
                 self.role = "admin"
             else:

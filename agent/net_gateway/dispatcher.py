@@ -123,12 +123,12 @@ class MessageDispatcher:
                     await agent.session.replace_all(agent.messages)
                 return  # 完美降载退出
 
-            # B. 若被触发唤醒：如果是他人发言被唤醒，在头部加上身份前缀；如果是亮哥发言，保持原文
+            # B. 若被触发唤醒：补齐群聊发言人元数据身份，确保大模型 100% 分清亮哥与普通群成员
             if is_triggered:
                 if user_id != self.admin_id:
                     raw = f"[来自 QQ: {user_id} 的群发言] {raw_cleaned}"
                 else:
-                    raw = raw_cleaned
+                    raw = f"[来自亮哥的群发言] {raw_cleaned}"
 
             # C. 疲劳累积清零：群聊发言的被动扣分疲劳值直接设为 0，防止被动累趴
             inc = 0.0
