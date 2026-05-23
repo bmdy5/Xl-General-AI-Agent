@@ -8,7 +8,7 @@ from typing import AsyncGenerator
 
 logger = logging.getLogger("agent.react_loop")
 
-ERROR_INDICATORS = ["Error", "Traceback", "Exception", "failed", "失败", "报错", "异常"]
+from .memory.error_tracker import ERROR_INDICATORS
 NORMAL_TIMEOUT = 300
 DEEP_TIMEOUT = 7200
 

@@ -9,6 +9,8 @@ from typing import Optional
 
 logger = logging.getLogger(__name__)
 
+ERROR_INDICATORS = ["Error", "Traceback", "Exception", "failed", "失败", "报错", "异常"]
+
 # Error levels
 L1_TRANSIENT = 1   # SSL timeout, connection reset — retry with backoff
 L2_SELF_HEAL = 2   # Path error, missing module — can auto-fix
