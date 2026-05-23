@@ -867,17 +867,98 @@ class MemoryManager:
             # --- 2. 通道二：768 维向量语义检索 ---
             ki_vector_rows = []
             try:
+                # 统计长期知识条目总数 N
+                count_cur = db.execute("SELECT COUNT(*) FROM knowledge_items")
+                total_ki = count_cur.fetchone()[0]
+
                 # 使用大师级同步安全包装运行异步向量提取
                 query_vec = self._run_async(self._get_embedding(query))
                 
                 # 计算 magnitude 避免除以零
                 q_mag = math.sqrt(sum(x * x for x in query_vec))
                 if q_mag > 0:
-                    # 获取向量库中所有的向量
-                    cur = db.execute("SELECT ki_id, embedding FROM ki_embeddings")
-                    all_embeds = cur.fetchall()
-                    
                     scored_kis = []
+                    
+                    # 自适应分流：条目 <= 200 条直接全表向量扫描；条目 > 200 条启动多路粗筛漏斗
+                    if total_ki <= 200:
+                        # 2.1 (a) 小规模自适应：直接获取向量库中所有的向量，不丢失模糊召回率
+                        cur = db.execute("SELECT ki_id, embedding FROM ki_embeddings")
+                        all_embeds = cur.fetchall()
+                    else:
+                        # 2.1 (b) 中大规模自适应：粗筛最多 80 个候选 ID 集合并去重
+                        candidate_ids = set()
+                        
+                        # 第一路：字面 FTS5 宽幅 OR 检索
+                        # 过滤掉常见中文无关停用词
+                        stop_words = {"刚才", "跟我", "聊到", "讨论", "关于", "事情", "的", "了", "和", "与", "是", "我", "你", "他", "们", "这", "那"}
+                        clean_terms = [t for t in clean.split() if t not in stop_words]
+                        
+                        or_terms = []
+                        for term in clean_terms:
+                            # 将核心中文词切分为单字并以 OR 连接
+                            cjk_spaced = _cjk_space(term).strip()
+                            if cjk_spaced:
+                                term_or = " OR ".join(f'"{char}"' for char in cjk_spaced.split() if char.strip())
+                                if term_or:
+                                    or_terms.append(f"({term_or})")
+                        
+                        fts_query_or = " OR ".join(or_terms) if or_terms else _cjk_space(clean)
+                        
+                        fts_cand_rows = []
+                        if fts_query_or.strip():
+                            try:
+                                cur = db.execute("""
+                                    SELECT ki_id FROM kis_fts 
+                                    WHERE kis_fts MATCH ? LIMIT 40
+                                """, (fts_query_or, ))
+                                fts_cand_rows = cur.fetchall()
+                            except Exception:
+                                # FTS5 语法抛错时降级为 LIKE 查询
+                                try:
+                                    like_q = f"%{clean}%"
+                                    cur = db.execute("""
+                                        SELECT id FROM knowledge_items 
+                                        WHERE title LIKE ? OR keywords LIKE ? OR summary LIKE ? LIMIT 40
+                                    """, (like_q, like_q, like_q))
+                                    fts_cand_rows = cur.fetchall()
+                                except Exception:
+                                    pass
+                                    
+                        for r in fts_cand_rows:
+                            candidate_ids.add(r[0])
+                            
+                        # 第二路：时序与访问量热候选路
+                        try:
+                            cur = db.execute("""
+                                SELECT id FROM knowledge_items 
+                                ORDER BY last_hit_at DESC, visit_count DESC LIMIT 40
+                            """)
+                            for r in cur.fetchall():
+                                candidate_ids.add(r[0])
+                        except Exception:
+                            pass
+                            
+                        # 第三路：意图分类偏向路
+                        is_debug_intent = any(w in query.lower() for w in ["错误", "报错", "调试", "bug", "error", "exception", "traceback"])
+                        if is_debug_intent:
+                            try:
+                                cur = db.execute("SELECT id FROM knowledge_items WHERE category = 'xl_debugging' LIMIT 20")
+                                for r in cur.fetchall():
+                                    candidate_ids.add(r[0])
+                            except Exception:
+                                pass
+                                
+                        # 2.2 仅对粗筛出来的 ID (最大80左右) 进行向量获取
+                        all_embeds = []
+                        if candidate_ids:
+                            placeholders = ",".join("?" for _ in candidate_ids)
+                            cur = db.execute(
+                                f"SELECT ki_id, embedding FROM ki_embeddings WHERE ki_id IN ({placeholders})",
+                                list(candidate_ids)
+                            )
+                            all_embeds = cur.fetchall()
+                            
+                    # 2.3 精筛计算余弦相似度并重排
                     for row in all_embeds:
                         k_id = row[0]
                         try:
@@ -887,7 +968,7 @@ class MemoryManager:
                             if k_mag > 0:
                                 dot = sum(a * b for a, b in zip(query_vec, k_vec))
                                 cos_sim = dot / (q_mag * k_mag)
-                                if cos_sim >= 0.60:  # 语义匹配过滤阀值
+                                if cos_sim >= 0.60:  # 黄金语义匹配硬过滤阈值
                                     scored_kis.append((k_id, cos_sim))
                         except Exception:
                             continue
@@ -933,8 +1014,14 @@ class MemoryManager:
                 # 热度乘子： visit_count 越高频越重要
                 heat_multiplier = 1.0 + 0.1 * math.log(1 + visit_count)
                 
-                # 意图纠偏：如果用户搜索报错且分类属于 debugging，给予 1.3 倍分流倾向加权
-                intent_multiplier = 1.3 if (is_debug_intent and category == "xl_debugging") else 1.0
+                # 意图纠偏与降噪衰减：
+                # 如果用户搜索报错且分类属于 debugging，给予 1.3 倍分流倾向加权；若与意图分类不符，给予 0.9 衰减降噪
+                intent_multiplier = 1.0
+                if is_debug_intent:
+                    if category == "xl_debugging":
+                        intent_multiplier = 1.3
+                    else:
+                        intent_multiplier = 0.9
                 
                 final_score = score * heat_multiplier * intent_multiplier
                 
