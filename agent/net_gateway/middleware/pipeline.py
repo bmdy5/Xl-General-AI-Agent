@@ -171,8 +171,11 @@ class PodcastTopicMiddleware(EventMiddleware):
             await dispatcher.context.send_msg("private", dispatcher.admin_id, "", f"🎯 已锁定明早播客选题：【{selected_topic}】。\n正在为您融合本地笔记与网络参考资料，合成为约 2000 字的极客研究笔记并投喂云端，请稍等...")
             
             bot = dispatcher.bot
-            if bot and hasattr(bot, "_process_podcast_generation_async"):
-                asyncio.create_task(bot._process_podcast_generation_async(session_key, selected_topic, dispatcher.admin_id))
+            if bot:
+                try:
+                    asyncio.create_task(bot._process_podcast_generation_async(session_key, selected_topic, dispatcher.admin_id))
+                except AttributeError:
+                    pass
             return True
         return False
 

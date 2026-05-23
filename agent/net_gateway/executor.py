@@ -148,7 +148,10 @@ class AgentExecutor:
                     return
                 elif evt["type"] == "_done":
                     total_sent_tokens = getattr(agent, "_total_tokens", 0)
-                    ctx_tokens = agent.compressor.estimate_tokens(agent.messages) if hasattr(agent, "compressor") and agent.compressor else 0
+                    try:
+                        ctx_tokens = agent.compressor.estimate_tokens(agent.messages) if agent.compressor else 0
+                    except AttributeError:
+                        ctx_tokens = 0
                     self._log_activity_dispatcher("系统调度", f"本次推理完成。大模型总共消耗约 {total_sent_tokens} Tokens，当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
 
             # ── 冲突检测 (Collision Detection) 第二阶段 ──
@@ -197,9 +200,11 @@ class AgentExecutor:
         return max(1, cjk // 2 + en // 4)
 
     def _load_persona(self) -> tuple:
-        """加载当前机器人名称和对主人称呼，优先从 bot 实例加载，以便于测试中 Mock 画像"""
-        if self.bot and hasattr(self.bot, "_load_persona"):
-            return self.bot._load_persona()
+        if self.bot:
+            try:
+                return self.bot._load_persona()
+            except AttributeError:
+                pass
             
         import json
         from pathlib import Path
@@ -216,6 +221,8 @@ class AgentExecutor:
         return _persona_name, _user_address
 
     def _log_activity_dispatcher(self, category: str, content: str, user_id: str = None):
-        """记录活动日志，支持基于触发者身份的物理流隔离分发"""
-        if self.bot and hasattr(self.bot, "_log_activity"):
-            self.bot._log_activity(category, content, user_id=user_id)
+        if self.bot:
+            try:
+                self.bot._log_activity(category, content, user_id=user_id)
+            except AttributeError:
+                pass
