@@ -140,5 +140,37 @@ async def test_hybrid_rag_flow():
     shutil.rmtree(temp_mem_dir)
     print("🎉 All hybrid dual-channel RAG integration tests passed successfully!")
 
+async def test_solution_a_instant_breaker():
+    print("=== Testing Solution A: Instant Circuit Breaker Fallback ===")
+    project_root = Path(__file__).resolve().parent.parent
+    temp_mem_dir = project_root / "temp_test_solution_a"
+    if temp_mem_dir.exists():
+        shutil.rmtree(temp_mem_dir)
+    temp_mem_dir.mkdir(parents=True, exist_ok=True)
+    
+    # 实体实例化真实 MemoryManager
+    manager = MemoryManager(base_dir=str(temp_mem_dir))
+    
+    # 使用 Mock 拦截 Path.exists，模拟本地物理模型丢失的极端灾难场景
+    import unittest.mock
+    
+    # 我们拦截 Path.exists，使其返回 False
+    with unittest.mock.patch("pathlib.Path.exists", return_value=False):
+        start_t = time.perf_counter()
+        vec = await manager._get_embedding("刚才小萤停止了")
+        duration = time.perf_counter() - start_t
+        
+    print(f"Breaker fallback took {duration*1000:.4f} ms")
+    assert len(vec) == 768, "Should return 768-dim vector"
+    assert all(x == 0.0 for x in vec), "Should fall back to all-zero vector"
+    assert duration < 0.010, "Breaker should act instantly (< 10ms)"
+    
+    shutil.rmtree(temp_mem_dir)
+    print("✔ Solution A Instant Circuit Breaker tests passed successfully!\n")
+
+async def main():
+    await test_hybrid_rag_flow()
+    await test_solution_a_instant_breaker()
+
 if __name__ == "__main__":
-    asyncio.run(test_hybrid_rag_flow())
+    asyncio.run(main())
