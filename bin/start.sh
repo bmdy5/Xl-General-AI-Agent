@@ -76,7 +76,7 @@ echo "4. 等待 NapCat 就绪..." | tee -a "$STARTUP_LOG"
 NAPCAT_READY=false
 for i in $(seq 1 20); do
     sleep 3
-    if curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1; then
+    if curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1 || curl -s --connect-timeout 2 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1; then
         NAPCAT_READY=true
         echo "   - NapCat API 就绪" | tee -a "$STARTUP_LOG"
         break
@@ -97,7 +97,7 @@ if [ "$NAPCAT_READY" = false ]; then
     # 再次等待就绪
     for i in $(seq 1 20); do
         sleep 3
-        if curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1; then
+        if curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1 || curl -s --connect-timeout 2 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1; then
             NAPCAT_READY=true
             echo "   - NapCat 已登录就绪" | tee -a "$STARTUP_LOG"
             break
@@ -153,7 +153,7 @@ EOFG
     sleep 10
     
     # 验证登录态
-    if curl -s --connect-timeout 3 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1; then
+    if curl -s --connect-timeout 3 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1 || curl -s --connect-timeout 3 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1; then
         echo "   - 登录态保持良好" | tee -a "$STARTUP_LOG"
     else
         echo "   - 登录态丢失，请重新扫码..." | tee -a "$STARTUP_LOG"
@@ -163,7 +163,9 @@ EOFG
         read -r
         for i in $(seq 1 20); do
             sleep 3
-            curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1 && break
+            if curl -s --connect-timeout 2 http://127.0.0.1:3000/get_login_info >/dev/null 2>&1 || curl -s --connect-timeout 2 http://127.0.0.1:3020/get_login_info >/dev/null 2>&1; then
+                break
+            fi
         done
         echo "   - NapCat 已登录" | tee -a "$STARTUP_LOG"
     fi
