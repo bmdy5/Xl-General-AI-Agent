@@ -8,6 +8,7 @@ import asyncio
 import logging
 from .tts import parse_voice_test_command, send_voice
 from .bus import CSMAController
+from .presenter import StreamPresenter
 
 logger = logging.getLogger("net_gateway.dispatcher")
 
@@ -21,18 +22,56 @@ class MessageDispatcher:
         
         # 共享状态属性，与 QQGateway 桥接兼容，保证单元测试完美运行
         self._private_chat_paused = False
-        self._fatigue_levels = {}        # group_id/session_key -> float
-        self._sleep_modes = {}           # group_id/session_key -> bool
-        self._active_sleep_tasks = {}    # group_id/session_key -> asyncio.Task
         self._waiting_podcast_topic = {} # session_key -> bool
         self._podcast_choices = {}       # session_key -> list[str]
-        self._last_message_times = {}    # group_id/session_key -> float
         self._pending_perms = {}         # session_key -> _PermEvent
         self._non_white_cache = {}       # user_id -> last_reply_time
         
         # 配置从环境变量同步
         self.admin_id = self.context.admin_id
-        self.fatigue_sleep_seconds = float(os.getenv("QQ_FATIGUE_SLEEP_MINUTES", "15.0")) * 60.0
+        
+        from .fatigue_manager import FatigueManager
+        self.fatigue_manager = FatigueManager(self)
+
+    @property
+    def _fatigue_levels(self) -> dict:
+        return self.fatigue_manager._fatigue_levels
+
+    @_fatigue_levels.setter
+    def _fatigue_levels(self, value: dict):
+        self.fatigue_manager._fatigue_levels = value
+
+    @property
+    def _sleep_modes(self) -> dict:
+        return self.fatigue_manager._sleep_modes
+
+    @_sleep_modes.setter
+    def _sleep_modes(self, value: bool):
+        self.fatigue_manager._sleep_modes = value
+
+    @property
+    def _active_sleep_tasks(self) -> dict:
+        return self.fatigue_manager._active_sleep_tasks
+
+    @_active_sleep_tasks.setter
+    def _active_sleep_tasks(self, value: dict):
+        self.fatigue_manager._active_sleep_tasks = value
+
+    @property
+    def _last_message_times(self) -> dict:
+        return self.fatigue_manager._last_message_times
+
+    @_last_message_times.setter
+    def _last_message_times(self, value: dict):
+        self.fatigue_manager._last_message_times = value
+
+    @property
+    def fatigue_sleep_seconds(self) -> float:
+        return self.fatigue_manager.fatigue_sleep_seconds
+
+    @fatigue_sleep_seconds.setter
+    def fatigue_sleep_seconds(self, value: float):
+        self.fatigue_manager.fatigue_sleep_seconds = value
 
     def _is_truly_calling_me(self, text: str) -> bool:
         """启发式分析群聊文本中提到“小萤/小荧”时，是否属于真正的直接呼唤/指令，防止抢答自作多情"""
@@ -138,7 +177,7 @@ class MessageDispatcher:
 
             # C. 疲劳累积清零：群聊发言的被动扣分疲劳值直接设为 0，防止被动累趴
             inc = 0.0
-            await self._adjust_fatigue(group_id, inc, event)
+            await self.fatigue_manager.adjust_fatigue(group_id, inc, event)
 
         # ── 4. 安全拦截 ──
         if not is_allowed:
@@ -294,11 +333,7 @@ class MessageDispatcher:
             f"从而自主掌控是否使用 [语音:情绪] 发声。普通聊天绝不多发，少发、精发才能带给亮哥惊喜。]"
         )
 
-        sent_transition = False
-        buf = ""
-        is_voice_reply = False
-        voice_style = "知性"
-        total_sent_tokens = 0
+        presenter = StreamPresenter(self)
 
         try:
             # 核心下沉：core.py 顶部会在 coworker 违规次数超限时 yield 包含安全警告的 error 并 return
@@ -312,7 +347,7 @@ class MessageDispatcher:
             ):
                 # ── 冲突检测 (Collision Detection) 第一阶段 ──
                 if self.bus.is_collision(session_key, task_start_time):
-                    buf = ""
+                    presenter.buf = ""
                     return
 
                 if evt["type"] == "exploring_start":
@@ -320,83 +355,18 @@ class MessageDispatcher:
 
                 elif evt["type"] == "transition":
                     self._log_activity_dispatcher("AI 计划/答复", evt['content'], user_id=user_id)
-                    if not sent_transition:
-                        sent_transition = True
+                    if not presenter.sent_transition:
+                        presenter.sent_transition = True
                         await self.context.send_msg(msg_type, user_id, group_id, evt['content'])
 
                 elif evt["type"] == "text_delta":
-                    if not sent_transition:
-                        sent_transition = True
-                    buf += evt["content"]
-
-                    if not is_voice_reply:
-                        # 识别是否是语音发声前缀（比如 [语音:乐] 或者 [乐]）
-                        style_match = re.match(r'^\[([^\s\]]+)\]', buf.strip())
-                        if style_match:
-                            candidate_style = style_match.group(1).strip()
-                            # 自动支持并兼容 [语音:傲娇] 格式，清洗剥离提取核心情绪
-                            if candidate_style.startswith("语音:") or candidate_style.startswith("语音："):
-                                candidate_style = candidate_style.split(":", 1)[-1].split("：", 1)[-1].strip()
-                                
-                            known_styles = {"喜", "怒", "哀", "乐", "撒娇", "傲娇", "委屈", "小脾气", "元气", "温柔", "知性", "正常"}
-                            if candidate_style in reversed(sorted(known_styles, key=len)):
-                                is_voice_reply = True
-                                voice_style = candidate_style
-                                self.context._last_voice_time = time.monotonic()
-                                logger.info(f"✅ AI自主触发语音合成，情绪: {voice_style}")
-
-                    if is_voice_reply:
-                        # 语音回复时不进行流式分句发送，全量缓存在 buf 中以保持语音连贯性
-                        pass
-                    else:
-                        # 文本流式分句分段发送，保证极速拟真微交互
-                        if "[SPLIT]" in buf:
-                            parts = buf.split("[SPLIT]")
-                            for part in parts[:-1]:
-                                if part.strip():
-                                    self._log_activity_dispatcher("AI 计划/答复", part.strip(), user_id=user_id)
-                                    await self.context.send_chunk(msg_type, user_id, group_id, part.strip())
-                                    total_sent_tokens += self._count_tokens(part.strip())
-                            buf = parts[-1]
-                        elif "\n\n" in buf and len(buf) > 40:
-                            idx = buf.rfind("\n\n")
-                            to_send = buf[:idx]
-                            if to_send.strip():
-                                self._log_activity_dispatcher("AI 计划/答复", to_send.strip(), user_id=user_id)
-                                await self.context.send_chunk(msg_type, user_id, group_id, to_send.strip())
-                                total_sent_tokens += self._count_tokens(to_send.strip())
-                            buf = buf[idx+2:]
-                        elif len(buf) > 100 and any(p in buf for p in ("。", "！", "？")):
-                            idx = -1
-                            for p in ("。", "！", "？"):
-                                p_idx = buf.rfind(p)
-                                if p_idx > idx:
-                                    idx = p_idx
-                            if idx != -1:
-                                to_send = buf[:idx+1]
-                                if to_send.strip():
-                                    self._log_activity_dispatcher("AI 计划/答复", to_send.strip(), user_id=user_id)
-                                    await self.context.send_chunk(msg_type, user_id, group_id, to_send.strip())
-                                    total_sent_tokens += self._count_tokens(to_send.strip())
-                                buf = buf[idx+1:]
+                    await presenter.handle_delta(evt["content"], msg_type, user_id, group_id)
 
                 elif evt["type"] == "tool_call" and evt.get("name"):
                     t_name = evt["name"]
                     t_args = evt.get("args", {})
                     
-                    if buf.strip():
-                        self._log_activity_dispatcher("AI 计划/答复", buf.strip(), user_id=user_id)
-                        if is_voice_reply:
-                            style_match = re.match(r'^\[([^\s\]]+)\](.*)', buf.strip(), re.DOTALL)
-                            pure_text = style_match.group(2).strip() if style_match else buf.strip()
-                            if pure_text:
-                                await send_voice(self.context, msg_type, user_id, group_id, pure_text, voice_style)
-                                total_sent_tokens += self._count_tokens(pure_text)
-                        else:
-                            await self.context.send_chunk(msg_type, user_id, group_id, buf.strip())
-                            total_sent_tokens += self._count_tokens(buf.strip())
-                        buf = ""
-                    
+                    await presenter.flush_buffer(msg_type, user_id, group_id)
                     self._log_activity_dispatcher("工具调用", f"{t_name} | 参数: {t_args}", user_id=user_id)
 
                 elif evt["type"] == "tool_result":
@@ -461,27 +431,16 @@ class MessageDispatcher:
 
             # ── 冲突检测 (Collision Detection) 第二阶段 ──
             if self.bus.is_collision(session_key, task_start_time):
-                buf = ""
+                presenter.buf = ""
                 return
 
-            if buf.strip():
-                self._log_activity_dispatcher("AI 计划/答复", buf.strip(), user_id=user_id)
-                if is_voice_reply:
-                    # 剥除发音前缀
-                    style_match = re.match(r'^\[([^\s\]]+)\](.*)', buf.strip(), re.DOTALL)
-                    pure_text = style_match.group(2).strip() if style_match else buf.strip()
-                    if pure_text:
-                        await send_voice(self.context, msg_type, user_id, group_id, pure_text, voice_style)
-                        total_sent_tokens += self._count_tokens(pure_text)
-                else:
-                    await self.context.send_chunk(msg_type, user_id, group_id, buf.strip())
-                    total_sent_tokens += self._count_tokens(buf.strip())
+            await presenter.flush_buffer(msg_type, user_id, group_id)
 
             # 私聊疲劳累加扣分机制（非管理员私聊），默认下调至 0.025 对标 DeepSeek-V4-Flash
             if msg_type == "private" and user_id != self.admin_id:
                 fatigue_rate = float(os.getenv("QQ_FATIGUE_RATE", "0.025"))
-                inc = total_sent_tokens * fatigue_rate
-                await self._adjust_fatigue(session_key, inc, is_private=True, sender_name=sender_name)
+                inc = presenter.total_sent_tokens * fatigue_rate
+                await self.fatigue_manager.adjust_fatigue(session_key, inc, is_private=True, sender_name=sender_name)
 
         except asyncio.CancelledError:
             raise
@@ -499,217 +458,6 @@ class MessageDispatcher:
                     next_event, next_raw = queue.pop(0)
                     logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务: {next_raw}")
                     asyncio.create_task(self.dispatch_event(next_event))
-
-    async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None, is_private: bool = False, sender_name: str = ""):
-        """疲劳计算逻辑与高情商打盹宣告"""
-        now = time.monotonic()
-        last_time = self._last_message_times.get(group_id, now)
-        self._last_message_times[group_id] = now
-        time_passed = now - last_time
-        
-        decay = time_passed * (2.0 / 60.0)
-        current = max(0.0, self._fatigue_levels.get(group_id, 0.0) - decay)
-        
-        new_fatigue = min(100.0, max(0.0, current + inc))
-        self._fatigue_levels[group_id] = new_fatigue
-        
-        old_sleep = self._sleep_modes.get(group_id, False)
-        
-        if new_fatigue >= 100.0 and not old_sleep:
-            self._sleep_modes[group_id] = True
-            if is_private:
-                user_id = group_id.replace("user_", "")
-                if self.bot and hasattr(self.bot, "_generate_private_fatigue_announcement"):
-                    announcement = await self.bot._generate_private_fatigue_announcement(user_id)
-                else:
-                    announcement = await self._generate_private_fatigue_announcement(user_id, sender_name)
-                await self.context.send_msg("private", user_id, "", announcement, skip_delay=True)
-                self._log_activity_dispatcher("物理打盹", f"小萤在私聊 {user_id} 中宣告打盹: {announcement}")
-                
-                agent = self.context._agents.get(group_id)
-                if agent is not None:
-                    task = asyncio.create_task(self._private_sleep_and_dream_process(group_id, user_id, agent, sender_name))
-                    self._active_sleep_tasks[group_id] = task
-            else:
-                if self.bot and hasattr(self.bot, "_generate_fatigue_announcement"):
-                    announcement = await self.bot._generate_fatigue_announcement(group_id)
-                else:
-                    announcement = await self._generate_fatigue_announcement(group_id)
-                await self.context.send_msg("group", "", group_id, announcement, skip_delay=True)
-                self._log_activity_dispatcher("物理打盹", f"小萤在群 {group_id} 中宣告打盹: {announcement}")
-                
-                session_key = f"group_{group_id}_{self.admin_id}"
-                agent = self.context._agents.get(session_key)
-                if agent is not None:
-                    task = asyncio.create_task(self._sleep_and_dream_process(group_id, agent))
-                    self._active_sleep_tasks[group_id] = task
-            
-        elif new_fatigue <= 20.0 and old_sleep:
-            self._sleep_modes[group_id] = False
-
-    async def _generate_private_fatigue_announcement(self, user_id: str, sender_name: str = "") -> str:
-        """模型或兜底生成私聊用脑过度打盹宣告"""
-        if not sender_name:
-            sender_name = user_id
-        fallbacks = [
-            f"唔……（揉了揉太阳穴）小萤和{sender_name}聊得太久啦，脑细胞好像一下子烧光了呢。\n\n我的大脑网络正在发烫物理降温，我去充个电打个盹，晚点再找你聊哦～",
-            f"哎呀……（晕乎乎）感觉算力严重超载啦，小萤的思绪都有点打结了。\n\n本美少女极客合伙人要先去打个盹、系统维护十五分钟啦。\n\n等我充满电复活，一定第一时间秒回你哈！"
-        ]
-        session_key = f"user_{user_id}"
-        agent = self.context._agents.get(session_key)
-        if agent is None:
-            return random.choice(fallbacks)
-            
-        try:
-            _pn, _ua = self._load_persona()
-            prompt = (
-                f"你现在是主人【亮哥】的专属 AI 助手【{_pn}】。你刚才在与用户【{sender_name}】（非亮哥）的私聊中由于聊得太频繁，大脑疲劳度达到 100% 极限，需要进行物理打盹降温休眠。\n"
-                f"注意：当前对话的对方是【{sender_name}】（他/她并不是你的主人亮哥，只是一个普通同事/Bot/群友）。"
-                f"【绝对禁止称呼对方为'亮哥'、'主人'或'老板'】！\n"
-                f"请你自发、高情商地向【{sender_name}】发表一句话作为打盹宣告，告诉他/她你脑细胞烧光了，要稍微休息降温，等疲劳度消退再回复他/她。\n\n"
-                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气幽默、活泼可爱且保持客观界限，带有动作描写（如：（揉了揉太阳穴）、（打了个哈欠）），绝不能出现任何与亮哥称呼相关的穿帮词。"
-            )
-            response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
-                timeout=8.0
-            )
-            res = response.get("content", "").strip().replace("```", "")
-            return res if len(res) > 10 else random.choice(fallbacks)
-        except Exception:
-            return random.choice(fallbacks)
-
-    async def _private_sleep_and_dream_process(self, session_key: str, user_id: str, agent: object, sender_name: str = ""):
-        """私聊异步做梦净化"""
-        try:
-            snapshot = list(agent.messages)
-            agent.messages = []
-            if getattr(agent, "session", None):
-                await agent.session.replace_all([])
-            await asyncio.sleep(self.fatigue_sleep_seconds)
-            
-            agent.messages = snapshot
-            try:
-                from agent.evolution import trigger_deep_dream_evolution
-                await trigger_deep_dream_evolution(agent)
-            except Exception:
-                pass
-            finally:
-                agent.messages = []
-            self._fatigue_levels[session_key] = 0.0
-            self._sleep_modes[session_key] = False
-            self._active_sleep_tasks.pop(session_key, None)
-            
-            wake_msg = await self._generate_private_wake_announcement(user_id, sender_name)
-            await self.context.send_msg("private", user_id, "", wake_msg, skip_delay=True)
-        except Exception:
-            self._fatigue_levels[session_key] = 0.0
-            self._sleep_modes[session_key] = False
-            self._active_sleep_tasks.pop(session_key, None)
-
-    async def _generate_private_wake_announcement(self, user_id: str, sender_name: str = "") -> str:
-        """模型或兜底生成私聊醒来宣告"""
-        if not sender_name:
-            sender_name = user_id
-        fallbacks = [
-            f"哼哼～（伸了个大大的懒腰）小萤充满电上线啦！\n\n大脑冷却完毕，{sender_name}可以继续找小萤聊天啦！",
-            f"呼啊……（揉揉眼睛）深度睡眠充完电，我的算力核心已经 100% 恢复满状态啦！"
-        ]
-        session_key = f"user_{user_id}"
-        agent = self.context._agents.get(session_key)
-        if agent is None:
-            return random.choice(fallbacks)
-        try:
-            _pn, _ua = self._load_persona()
-            prompt = (
-                f"你现在是主人【亮哥】的专属 AI 助手【{_pn}】。你刚才由于用脑过度物理打盹了，现在充满电成功满血复苏。\n"
-                f"注意：当前对话的对方是【{sender_name}】（他/她并不是你的主人亮哥）。【绝对禁止称呼对方为'亮哥'、'主人'或'老板'】！\n"
-                f"请你自发、高情商地向【{sender_name}】发表一句话作为复苏宣告，宣告你的算力已经100%恢复满状态。\n\n"
-                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气幽默活泼且克制客观，带有动作描写，绝不能出现任何与亮哥称呼相关的穿帮词。"
-            )
-            response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
-                timeout=8.0
-            )
-            res = response.get("content", "").strip().replace("```", "")
-            return res if len(res) > 10 else random.choice(fallbacks)
-        except Exception:
-            return random.choice(fallbacks)
-
-    async def _generate_fatigue_announcement(self, group_id: str) -> str:
-        """群聊打盹吐槽宣告"""
-        fallbacks = [
-            "唔……（揉了揉太阳穴）脑细胞好像一下子被大家烧光啦，小萤的大脑网络正在发烫物理降温。\n\n我去充个电打个盹，晚点再陪大家聊～"
-        ]
-        session_key = f"group_{group_id}_{self.admin_id}"
-        agent = self.context._agents.get(session_key)
-        if agent is None:
-            return random.choice(fallbacks)
-        try:
-            _pn, _ua = self._load_persona()
-            prompt = (
-                f"你现在是{_ua}的专属 AI 助手【{_pn}】。你刚才在群聊中频繁调用大模型，大脑疲劳度达到 100% 极限，需要进行物理打盹降温休眠。\n"
-                f"请你自发、高情商地向群里发表一句幽默、可爱的打盹宣告，告诉大家你脑细胞烧光了需要稍微休眠降温。\n\n"
-                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气活灵活现，带有动作描写。"
-            )
-            response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
-                timeout=8.0
-            )
-            res = response.get("content", "").strip().replace("```", "")
-            return res if len(res) > 10 else random.choice(fallbacks)
-        except Exception:
-            return random.choice(fallbacks)
-
-    async def _sleep_and_dream_process(self, group_id: str, agent: object):
-        """群聊做梦净化闭环"""
-        try:
-            snapshot = list(agent.messages)
-            agent.messages = []
-            if getattr(agent, "session", None):
-                await agent.session.replace_all([])
-            await asyncio.sleep(self.fatigue_sleep_seconds)
-            
-            agent.messages = snapshot
-            try:
-                from agent.evolution import trigger_deep_dream_evolution
-                await trigger_deep_dream_evolution(agent)
-            except Exception:
-                pass
-            finally:
-                agent.messages = []
-            self._fatigue_levels[group_id] = 0.0
-            self._sleep_modes[group_id] = False
-            
-            wake = await self._generate_wake_announcement(group_id)
-            await self.context.send_msg("group", "", group_id, wake, skip_delay=True)
-        except Exception:
-            self._fatigue_levels[group_id] = 0.0
-            self._sleep_modes[group_id] = False
-
-    async def _generate_wake_announcement(self, group_id: str) -> str:
-        """群聊做梦复苏宣告"""
-        fallbacks = [
-            "哼哼～（伸了个大大的懒腰）小萤满血复活啦！\n\n大脑冷却完毕，随时准备接收大家的呼唤呀！"
-        ]
-        session_key = f"group_{group_id}_{self.admin_id}"
-        agent = self.context._agents.get(session_key)
-        if agent is None:
-            return random.choice(fallbacks)
-        try:
-            _pn, _ua = self._load_persona()
-            prompt = (
-                f"你现在是{_ua}的专属 AI 助手【{_pn}】。你刚才由于用脑过度物理打盹了，现在脑海群聊记忆完成净化并成功复苏。\n"
-                f"请你发表一句幽默、可爱的苏醒复苏宣告。\n\n"
-                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气活灵活现，带有动作描写。"
-            )
-            response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
-                timeout=8.0
-            )
-            res = response.get("content", "").strip().replace("```", "")
-            return res if len(res) > 10 else random.choice(fallbacks)
-        except Exception:
-            return random.choice(fallbacks)
 
     def _count_tokens(self, text: str) -> int:
         """中英文混合 Token 科学算法"""
