@@ -245,10 +245,20 @@ class MessageDispatcher:
         # 注册单调发言时间戳以供 CSMA/CD 检测
         this_msg_time = self.bus.register_message(session_key)
 
-        # 启动非阻塞后台任务驱动
-        task = asyncio.create_task(
-            self._execute_agent_run(agent, raw, session_key, msg_type, user_id, group_id, sender_name, this_msg_time)
-        )
+        # 封装超时熔断强力驱动，防止协程卡死导致通道永久静默
+        async def run_with_timeout():
+            try:
+                await asyncio.wait_for(
+                    self._execute_agent_run(agent, raw, session_key, msg_type, user_id, group_id, sender_name, this_msg_time),
+                    timeout=90.0
+                )
+            except asyncio.TimeoutError:
+                logger.error(f"⏳ [超时熔断] 会话 {session_key} 任务运行超过 90 秒，强行物理熔断！")
+                await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [系统提示] 小萤的大脑刚被卡住啦，本次任务已超时中断，亮哥可以重新对我说点别的哦～", skip_delay=True)
+            except Exception as e:
+                logger.error(f"Error in runner wrapper for {session_key}: {e}", exc_info=True)
+
+        task = asyncio.create_task(run_with_timeout())
         task.raw_prompt = raw
         if self.bot and hasattr(self.bot, "_current_tasks"):
             self.bot._current_tasks[session_key] = task
