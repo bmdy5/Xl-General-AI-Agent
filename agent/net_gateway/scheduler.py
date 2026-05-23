@@ -52,7 +52,9 @@ class GatewayScheduler:
                             raise ValueError(f"Status {resp.status}")
             except Exception:
                 logger.warning("🎙️ [守护进程] 发现 GPT-SoVITS 语音服务离线，正在以专属 venv 虚拟环境启动自愈机制...")
-                tts_dir = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/GPT-SoVITS"
+                from pathlib import Path
+                root_dir = Path(__file__).resolve().parents[2]
+                tts_dir = str(root_dir.parent / "GPT-SoVITS")
                 cmd_kill = 'pkill -f "api_v2.py" || true'
                 cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
                 try:
@@ -117,7 +119,8 @@ class GatewayScheduler:
                 local_path = data.get("local_path")
                 topic = data.get("topic")
                 if os.path.exists(local_path):
-                    share_dir = "/Users/xiaofeng/napcat-data-tmp"
+                    from pathlib import Path
+                    share_dir = str(Path.home() / "napcat-data-tmp")
                     os.makedirs(share_dir, exist_ok=True)
                     safe_topic = re.sub(r'[\/:*?"<>|]', '_', topic)
                     dest_filename = f"亮哥专属完整播客音频-{safe_topic}.wav"

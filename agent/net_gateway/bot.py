@@ -188,7 +188,8 @@ class QQGateway:
         _persona_name = "小萤"
         _user_address = "亮哥"
         try:
-            pf = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/resources/persona_profile.json")
+            root_dir = Path(__file__).resolve().parents[2]
+            pf = root_dir / "agent" / "resources" / "persona_profile.json"
             if pf.exists():
                 prof = json.loads(pf.read_text(encoding="utf-8"))
                 _persona_name = prof.get("name", "小萤")

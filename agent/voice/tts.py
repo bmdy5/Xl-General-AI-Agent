@@ -186,7 +186,9 @@ async def generate_voice(text: str, style: str = "知性") -> tuple[bytes, str, 
     if not config:
         config = EMOTION_LOCKED_CONFIG["正常"]
     
-    resources_dir = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/resources/sagiri_emotions"
+    from pathlib import Path
+    root_dir = Path(__file__).resolve().parents[2]
+    resources_dir = str(root_dir / "agent" / "resources" / "sagiri_emotions")
     ref_wav_path = os.path.join(resources_dir, config["subdir"], config["wav_file"])
     
     if not os.path.exists(ref_wav_path):
