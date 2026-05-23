@@ -262,14 +262,22 @@ class Agent:
 
         is_duplicate = False
         if self.messages:
-            last_msg = self.messages[-1]
-            if last_msg.get("role") == "user" and last_msg.get("content") == user_input:
-                is_duplicate = True
-                # 补充可能缺失的元数据
-                if real_sender_id and not last_msg.get("real_sender_id"):
-                    last_msg["real_sender_id"] = real_sender_id
-                if real_sender_name and not last_msg.get("real_sender_name"):
-                    last_msg["real_sender_name"] = real_sender_name
+            # 倒序向前扫描最多 3 条 user 消息进行去重匹配，提高网络波动重试容灾性
+            user_msgs = [m for m in self.messages if m.get("role") == "user"][-3:]
+            for old_msg in reversed(user_msgs):
+                if old_msg.get("content") == user_input:
+                    # 联合身份去重：只有当发言人 ID 相同（或均为空）时，才判定为网关发包物理重发予以过滤；
+                    # 群内不同人发送相同内容，绝对不能去重，保障群聊 100% 漏消息零漏网率！
+                    old_sender = str(old_msg.get("real_sender_id", "")).strip()
+                    new_sender = str(real_sender_id or "").strip()
+                    if old_sender == new_sender:
+                        is_duplicate = True
+                        # 补全可能缺失的元数据
+                        if real_sender_id and not old_msg.get("real_sender_id"):
+                            old_msg["real_sender_id"] = real_sender_id
+                        if real_sender_name and not old_msg.get("real_sender_name"):
+                            old_msg["real_sender_name"] = real_sender_name
+                        break
 
         if not is_duplicate:
             self.messages.append(user_msg)
