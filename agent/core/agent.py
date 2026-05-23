@@ -90,6 +90,9 @@ class Agent:
         self._permission_granted = asyncio.Event()
         self._turn_count = 0
         self._total_tokens = 0  # 健全性声明：确保任何测试或调用场景下属性均具备
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._cached_tokens = 0
         self._mode = AgentMode.NORMAL
         self._task_write_approved = False
         self._task_start_time = 0.0
@@ -159,6 +162,9 @@ class Agent:
         self._permission_granted.clear()
         self._turn_count = 0
         self._total_tokens = 0
+        self._prompt_tokens = 0
+        self._completion_tokens = 0
+        self._cached_tokens = 0
         self._task_write_approved = False
         self._task_start_time = asyncio.get_event_loop().time()
 

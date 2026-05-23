@@ -119,42 +119,43 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         else:
             memory_block = cached_block
         
-        is_fatigued = agent.compressor.estimate_tokens(agent.messages) > 64000
+        # 肾上腺素阻尼器：如果处于密集调试或高负债工具调用阶段，自动将疲劳睡眠阈值延迟，保障紧急连续协作
+        is_debugging = any(
+            tc.get("name", "") in ("bash", "write_file", "edit_file", "multi_replace_file_content")
+            for tc in tool_call_history[-3:]
+        )
+        fatigue_threshold = 100000 if is_debugging else 64000
+        is_fatigued = agent.compressor.estimate_tokens(agent.messages) > fatigue_threshold
 
         llm_messages = [{"role": "system", "content": system_prompt}]
-        
-        last_user_idx = -1
-        for idx in range(len(agent.messages) - 1, -1, -1):
-            if agent.messages[idx].get("role") == "user":
-                last_user_idx = idx
-                break
-
-        for idx, m in enumerate(agent.messages):
+        for m in agent.messages:
             copy = dict(m)
             if "deepseek" not in agent.llm.model.lower():
                 copy.pop("reasoning_content", None)
-            
-            if idx == last_user_idx:
-                original_content = copy.get("content", "")
-                context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
-                if memory_block:
-                    context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
-                
-                state_pref = getattr(agent, "current_state_prefix", "")
-                if state_pref:
-                    context_parts.append(state_pref)
-
-                if is_fatigued:
-                    context_parts.append(
-                        "## ⚠️【重要情绪设定：疲劳吐槽】\n"
-                        "由于当前对话上下文非常长（已超过 64K tokens），你现在脑子非常沉重，觉得有点疲倦（发木）。\n"
-                        "请在保持你原本专业回复的同时，在最终回复的开头或结尾，用活泼、俏皮的中文极度自然地跟亮哥吐槽一下你脑子快烧糊了，做完这一轮手头的工作之后你一定要去大睡一觉整理整理历史脑子脑壳（例如说：“亮哥，小萤帮您处理了这么多逻辑，大脑都快转不动了（捂脸），等我做完这个我去睡一觉做个梦，把脑壳清空重组一下哈～”）。\n"
-                        "注意：必须提及在完成手头这一轮工作之后，你要求去大睡一觉以整理大脑记忆。"
-                    )
-                context_parts.append(f"## 当前输入\n{original_content}")
-                copy["content"] = "\n\n".join(context_parts)
-            
             llm_messages.append(copy)
+
+        # 构建临时的动态环境上下文，强制作为单次 completion 调用的最尾端临时 system 消息，彻底阻断消息队列中间的 Hash 抖动
+        context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
+        if memory_block:
+            context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
+        
+        state_pref = getattr(agent, "current_state_prefix", "")
+        if state_pref:
+            context_parts.append(state_pref)
+
+        if is_fatigued:
+            context_parts.append(
+                "## ⚠️【重要情绪设定：疲劳吐槽】\n"
+                "由于当前对话上下文非常长（已超负荷），你现在大脑非常沉重，觉得有点发木和疲倦。\n"
+                "请在保持你原本专业回复的同时，在最终回复的开头或结尾，用活泼、俏皮的中文极度自然地跟亮哥吐槽一下你脑子快烧糊了，做完这一轮手头的工作之后你一定要去大睡一觉整理整理历史脑子脑壳（例如说：“亮哥，小萤帮您处理了这么多逻辑，大脑都快转不动了（捂脸），等我做完这个我去睡一觉做个梦，把脑壳清空重组一下哈～”）。\n"
+                "注意：必须明确提及在完成手头这一轮工作之后，你要求去大睡一觉以整理大脑记忆。"
+            )
+
+        temp_context_msg = {
+            "role": "system",
+            "content": "\n\n".join(context_parts)
+        }
+        llm_messages.append(temp_context_msg)
 
         tools = agent.registry.get_definitions()
         
@@ -402,7 +403,21 @@ async def llm_chat(agent, messages: list[dict], tools: list[dict]) -> tuple:
             return None, None, None
 
         response = llm_task.result()
+        metrics = response.get("metrics", {})
+        
+        agent._prompt_tokens += metrics.get("prompt_tokens", 0)
+        agent._completion_tokens += metrics.get("completion_tokens", 0)
+        agent._cached_tokens += metrics.get("cached_tokens", 0)
         agent._total_tokens += response.get("tokens_used", 0)
+        
+        hit_rate = (agent._cached_tokens / agent._prompt_tokens * 100) if agent._prompt_tokens > 0 else 0.0
+        logger.info(
+            f"[TOKEN AUDIT] llm_chat | "
+            f"Prompt: {metrics.get('prompt_tokens', 0)} (Cached: {metrics.get('cached_tokens', 0)}, Hit Rate: {hit_rate:.1f}%) | "
+            f"Completion: {metrics.get('completion_tokens', 0)} | "
+            f"Total: {agent._total_tokens} (Total Cached: {agent._cached_tokens})"
+        )
+        
         tc = response.get("tool_calls")
         return response["content"], response.get("reasoning_content"), tc if tc else []
     except Exception as e:
@@ -438,6 +453,21 @@ async def llm_stream(agent, messages: list[dict], tools: list[dict]) -> AsyncGen
                 yield event
             elif event["type"] == "tool_call":
                 tool_calls.append(event["data"])
+                yield event
+            elif event["type"] == "usage":
+                usage_data = event.get("data", {})
+                agent._prompt_tokens += usage_data.get("prompt_tokens", 0)
+                agent._completion_tokens += usage_data.get("completion_tokens", 0)
+                agent._cached_tokens += usage_data.get("cached_tokens", 0)
+                agent._total_tokens += usage_data.get("total_tokens", 0)
+                
+                hit_rate = (agent._cached_tokens / agent._prompt_tokens * 100) if agent._prompt_tokens > 0 else 0.0
+                logger.info(
+                    f"[TOKEN AUDIT] llm_stream | "
+                    f"Prompt: {usage_data.get('prompt_tokens', 0)} (Cached: {usage_data.get('cached_tokens', 0)}, Hit Rate: {hit_rate:.1f}%) | "
+                    f"Completion: {usage_data.get('completion_tokens', 0)} | "
+                    f"Total: {agent._total_tokens} (Total Cached: {agent._cached_tokens})"
+                )
                 yield event
             elif event["type"] == "aborted":
                 if first_token:

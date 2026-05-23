@@ -13,7 +13,7 @@ class Settings:
         """自适应从 config/settings.yaml 加载配置并注入环境变量"""
         try:
             # 找到项目根目录下的 config/settings.yaml
-            root = Path(__file__).resolve().parents[1]
+            root = Path(__file__).resolve().parents[2]
             yaml_path = root / "config" / "settings.yaml"
             
             if not yaml_path.exists():

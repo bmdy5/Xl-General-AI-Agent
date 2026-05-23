@@ -168,13 +168,29 @@ class LLMClient:
             ]
 
         usage = getattr(response, "usage", None)
-        tokens_used = usage.total_tokens if usage else 0
+        prompt_tokens = getattr(usage, "prompt_tokens", 0) or 0
+        completion_tokens = getattr(usage, "completion_tokens", 0) or 0
+        total_tokens = getattr(usage, "total_tokens", 0) or 0
+
+        cached_tokens = 0
+        if usage:
+            prompt_tokens_details = getattr(usage, "prompt_tokens_details", None)
+            if prompt_tokens_details:
+                cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0) or 0
+            else:
+                cached_tokens = getattr(usage, "prompt_cache_hit_tokens", 0) or getattr(usage, "cached_tokens", 0) or 0
 
         return {
             "content": choice.content or "",
             "tool_calls": tool_calls,
             "reasoning_content": reasoning,
-            "tokens_used": tokens_used,
+            "tokens_used": total_tokens,
+            "metrics": {
+                "prompt_tokens": prompt_tokens,
+                "completion_tokens": completion_tokens,
+                "total_tokens": total_tokens,
+                "cached_tokens": cached_tokens,
+            },
         }
 
     async def chat_stream(
@@ -197,6 +213,14 @@ class LLMClient:
             "timeout": 120,
             "stream": True,
         }
+        
+        model_name = kwargs["model"].lower()
+        is_openai_deepseek = any(
+            x in model_name
+            for x in ["deepseek", "openai", "gpt-", "claude-3"]
+        )
+        if is_openai_deepseek:
+            kwargs["stream_options"] = {"include_usage": True}
         if tools:
             kwargs["tools"] = tools
             
@@ -263,6 +287,32 @@ class LLMClient:
                     logging.error(f"LLM stream chunk read timeout ({stream_timeout}s limit reached). Connection hung.")
                     yield {"type": "error", "content": f"LLM stream connection lost: chunk read timeout after {stream_timeout}s"}
                     return
+
+                # 安全拦截：包含 stream_options include_usage 的流末尾包含 choices 为空的 usage chunk，进行白盒截获
+                if not hasattr(chunk, "choices") or not chunk.choices:
+                    if hasattr(chunk, "usage") and chunk.usage:
+                        usage_obj = chunk.usage
+                        prompt_tokens = getattr(usage_obj, "prompt_tokens", 0) or 0
+                        completion_tokens = getattr(usage_obj, "completion_tokens", 0) or 0
+                        total_tokens = getattr(usage_obj, "total_tokens", 0) or 0
+                        
+                        cached_tokens = 0
+                        prompt_tokens_details = getattr(usage_obj, "prompt_tokens_details", None)
+                        if prompt_tokens_details:
+                            cached_tokens = getattr(prompt_tokens_details, "cached_tokens", 0) or 0
+                        else:
+                            cached_tokens = getattr(usage_obj, "prompt_cache_hit_tokens", 0) or getattr(usage_obj, "cached_tokens", 0) or 0
+                        
+                        yield {
+                            "type": "usage",
+                            "data": {
+                                "prompt_tokens": prompt_tokens,
+                                "completion_tokens": completion_tokens,
+                                "total_tokens": total_tokens,
+                                "cached_tokens": cached_tokens,
+                            }
+                        }
+                    continue
 
                 delta = chunk.choices[0].delta
 
