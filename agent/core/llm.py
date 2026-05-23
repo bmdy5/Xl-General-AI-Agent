@@ -57,17 +57,30 @@ class LLMClient:
             os.environ["DEEPSEEK_API_KEY"] = api_key
             if api_base:
                 os.environ["DEEPSEEK_API_BASE"] = api_base
+            else:
+                os.environ.pop("DEEPSEEK_API_BASE", None)
+            # 清理 OpenAI 环境变量以防冲突
+            os.environ.pop("OPENAI_API_KEY", None)
+            os.environ.pop("OPENAI_API_BASE", None)
         
         # 2. 针对 Anthropic / Claude 系列
         elif "claude" in model_name or "anthropic" in model_name:
             os.environ["ANTHROPIC_API_KEY"] = api_key
             if api_base:
                 os.environ["ANTHROPIC_API_BASE"] = api_base
+            else:
+                os.environ.pop("ANTHROPIC_API_BASE", None)
+            # 清理 OpenAI 环境变量以防冲突
+            os.environ.pop("OPENAI_API_KEY", None)
+            os.environ.pop("OPENAI_API_BASE", None)
         
         # 3. 兜底所有 OpenAI 兼容模式环境变量（彻底修复第三方转发路由丢失参数问题）
-        os.environ["OPENAI_API_KEY"] = api_key
-        if api_base:
-            os.environ["OPENAI_API_BASE"] = api_base
+        else:
+            os.environ["OPENAI_API_KEY"] = api_key
+            if api_base:
+                os.environ["OPENAI_API_BASE"] = api_base
+            else:
+                os.environ.pop("OPENAI_API_BASE", None)
 
     async def chat(
         self,
@@ -91,15 +104,9 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if model_name.startswith("deepseek/"):
-            if self.deepseek_api_key:
-                kwargs["api_key"] = self.deepseek_api_key
-                kwargs["api_base"] = "https://api.deepseek.com"
-            else:
-                if self.api_key:
-                    kwargs["api_key"] = self.api_key
-                if self.api_base:
-                    kwargs["api_base"] = self.api_base
+        if "deepseek" in model_name.lower():
+            kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
+            kwargs["api_base"] = "https://api.deepseek.com/v1"
         else:
             # 容灾鉴权自适应兜底继承：若全局 api_key 为空，则自适应继承借用可用的 deepseek_api_key
             kwargs["api_key"] = self.api_key or self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
@@ -123,10 +130,9 @@ class LLMClient:
                         f"from {kwargs['model']} to {self.model_pro}"
                     )
                     kwargs["model"] = self.model_pro
-                    if kwargs["model"].startswith("deepseek/"):
-                        if self.deepseek_api_key:
-                            kwargs["api_key"] = self.deepseek_api_key
-                            kwargs["api_base"] = "https://api.deepseek.com"
+                    if "deepseek" in kwargs["model"].lower():
+                        kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
+                        kwargs["api_base"] = "https://api.deepseek.com/v1"
                 
                 # 物理动态同步环境变量，彻底消灭 LiteLLM 路由期间的 AuthenticationError
                 self._sync_environ_keys(kwargs)
@@ -195,15 +201,9 @@ class LLMClient:
             kwargs["tools"] = tools
             
         model_name = model_override or self.model
-        if model_name.startswith("deepseek/"):
-            if self.deepseek_api_key:
-                kwargs["api_key"] = self.deepseek_api_key
-                kwargs["api_base"] = "https://api.deepseek.com"
-            else:
-                if self.api_key:
-                    kwargs["api_key"] = self.api_key
-                if self.api_base:
-                    kwargs["api_base"] = self.api_base
+        if "deepseek" in model_name.lower():
+            kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
+            kwargs["api_base"] = "https://api.deepseek.com/v1"
         else:
             # 容灾鉴权自适应兜底继承：若全局 api_key 为空，则自适应继承借用可用的 deepseek_api_key
             kwargs["api_key"] = self.api_key or self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
@@ -228,10 +228,9 @@ class LLMClient:
                         f"from {kwargs['model']} to {self.model_pro}"
                     )
                     kwargs["model"] = self.model_pro
-                    if kwargs["model"].startswith("deepseek/"):
-                        if self.deepseek_api_key:
-                            kwargs["api_key"] = self.deepseek_api_key
-                            kwargs["api_base"] = "https://api.deepseek.com"
+                    if "deepseek" in kwargs["model"].lower():
+                        kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
+                        kwargs["api_base"] = "https://api.deepseek.com/v1"
                 
                 # 物理动态同步环境变量，彻底消灭 LiteLLM 路由期间的 AuthenticationError
                 self._sync_environ_keys(kwargs)
