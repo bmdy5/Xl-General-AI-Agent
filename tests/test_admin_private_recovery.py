@@ -82,3 +82,85 @@ async def test_admin_private_wakeup_and_bypass(monkeypatch):
     assert not dispatcher._active_sleep_tasks, "活跃打盹任务缓存表应当被清空"
     
     print("🎉 Pytest Admin Private Wakeup & Bypass verification successfully passed!")
+
+
+@pytest.mark.asyncio
+async def test_admin_permission_request_flow(monkeypatch):
+    """测试管理员私聊中的敏感指令权限申请与授权释放流程"""
+    monkeypatch.setenv("QQ_ADMIN_ID", "1705919142")
+    monkeypatch.setenv("ADMIN_ID", "1705919142")
+    
+    class MockApprovedAgent(MockAgent):
+        def __init__(self, *args, **kwargs):
+            super().__init__(*args, **kwargs)
+            self.approved = False
+
+        def approve_permission(self):
+            self.approved = True
+
+        def deny_permission(self):
+            self.approved = False
+
+        async def run(self, prompt, stream=True, **kwargs):
+            yield {
+                "type": "permission_request",
+                "category": "write",
+                "tool_name": "write_file",
+                "message": "写入 README.md"
+            }
+            yield {"type": "text_delta", "content": f"Result is approved: {self.approved}"}
+            yield {"type": "_done"}
+
+    # 实例化网关
+    gw = QQGateway(agent_factory=MockApprovedAgent)
+    dispatcher = gw.dispatcher
+    
+    sent_messages = []
+    async def mock_send(msg_type, user_id, group_id, text, *args, **kwargs):
+        sent_messages.append(text)
+    
+    gw._send = mock_send
+    
+    # 2. 模拟亮哥（管理员）触发需要授权的敏感操作
+    admin_event = {
+        "message_type": "private",
+        "user_id": "1705919142",
+        "raw_message": "修改README文件",
+        "self_id": "999999",
+        "sender": {"nickname": "亮哥"}
+    }
+    
+    # 启动处理
+    await dispatcher.dispatch_event(admin_event)
+    
+    session_key = "user_1705919142"
+    active_task = gw._current_tasks.get(session_key)
+    assert active_task is not None, "后台处理任务应当已被成功创建"
+    
+    await asyncio.sleep(1.5)  # 等待其运行并且跨越 1.2 秒的载波退避窗口
+    print(f"DEBUG: active_task.done() = {active_task.done()}")
+    print(f"DEBUG: sent_messages = {sent_messages}")
+    if active_task.done() and active_task.exception():
+        raise active_task.exception()
+    
+    # 验证是否成功挂起
+    assert session_key in dispatcher._pending_perms, f"事件应当已被挂起且处于等待审批状态. Sent messages: {sent_messages}"
+    
+    # 3. 模拟亮哥发送了「允许」放行指令
+    approve_event = {
+        "message_type": "private",
+        "user_id": "1705919142",
+        "raw_message": "y",
+        "self_id": "999999",
+        "sender": {"nickname": "亮哥"}
+    }
+    
+    # 触发允许事件，释放挂起
+    await dispatcher.dispatch_event(approve_event)
+    await asyncio.sleep(0.5)
+    
+    # 4. 验证整个审批链条
+    assert session_key not in dispatcher._pending_perms, "允许指令被响应后，审批应该被移出队列"
+    assert any("Result is approved: True" in m for m in sent_messages), "大模型应能接收到 approved 为 True 的状态并继续运行"
+    print("🎉 Pytest Admin Permission Request and Physical Release flow passed!")
+

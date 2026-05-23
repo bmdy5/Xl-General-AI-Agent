@@ -20,10 +20,13 @@ class MessageDispatcher:
         self.bot = bot
         self.bus = CSMAController(context)
         
+        from .executor import AgentExecutor
+        self.executor = AgentExecutor(self.context, dispatcher=self)
+        
         # 共享状态属性，与 QQGateway 桥接兼容，保证单元测试完美运行
         self._waiting_podcast_topic = {} # session_key -> bool
         self._podcast_choices = {}       # session_key -> list[str]
-        self._pending_perms = {}         # session_key -> _PermEvent
+        self._pending_perms = self.executor._pending_perms
         
         # 配置从环境变量同步
         self.admin_id = self.context.admin_id
@@ -223,7 +226,14 @@ class MessageDispatcher:
             return
 
 
-        # ── 6. 播客选题拦截 ──────────────────────────────────────────
+        # ── 6. 主人专属敏感指令物理卡片授权审批答复拦截 ──
+        if session_key in self._pending_perms:
+            evt_perm = self._pending_perms[session_key]
+            is_approved = raw.lower() in ("y", "yes", "允许", "ok", "通过")
+            evt_perm.set(is_approved)
+            return
+
+        # ── 7. 播客选题拦截 ──────────────────────────────────────────
         if self._waiting_podcast_topic.get(session_key):
             self._waiting_podcast_topic[session_key] = False
             choices = self._podcast_choices.get(session_key, [])
@@ -315,177 +325,19 @@ class MessageDispatcher:
 
     async def _execute_agent_run(self, agent, raw: str, session_key: str, msg_type: str, 
                                  user_id: str, group_id: str, sender_name: str, task_start_time: float):
-        """流式处理 Agent 推理输出，处理总线冲突、流式 [SPLIT] 块分发与拟真打字延迟"""
-        # 1. 载波冲突避免挂起退避与冲突判定
-        if await self.bus.wait_for_carrier_sense(session_key, task_start_time):
-            return
-
-        now = time.monotonic()
-        last_voice = self.context._last_voice_time
-        time_diff = now - last_voice
-        last_voice_str = f"{time_diff:.1f}秒前" if last_voice > 0.0 else "首次聊天（尚未发声）"
-        
-        state_prefix = (
-            f"[系统通知：网关物理发声限制已全面解除，发声权限 100% 归还于你。你上一次发送语音是：{last_voice_str}。"
-            f"请展现你的高情商与克制力，自主评估当前是否符合“惊喜、感动或亮哥明确请求”的黄金契景，"
-            f"从而自主掌控是否使用 [语音:情绪] 发声。普通聊天绝不多发，少发、精发才能带给亮哥惊喜。]"
+        """兼容代理：委托给物理 executor 运行推理循环"""
+        return await self.executor.execute_agent_run(
+            agent, raw, session_key, msg_type, user_id, group_id, sender_name, task_start_time
         )
 
-        presenter = StreamPresenter(self)
-
-        try:
-            # 核心下沉：core.py 顶部会在 coworker 违规次数超限时 yield 包含安全警告的 error 并 return
-            async for evt in agent.run(
-                raw,
-                stream=True,
-                state_prefix=state_prefix,
-                real_sender_id=user_id,
-                real_sender_name=sender_name,
-                group_id=group_id
-            ):
-                # ── 冲突检测 (Collision Detection) 第一阶段 ──
-                if self.bus.is_collision(session_key, task_start_time):
-                    presenter.buf = ""
-                    return
-
-                if evt["type"] == "exploring_start":
-                    self._log_activity_dispatcher("AI 计划/答复", "思考启动...", user_id=user_id)
-
-                elif evt["type"] == "transition":
-                    self._log_activity_dispatcher("AI 计划/答复", evt['content'], user_id=user_id)
-                    if not presenter.sent_transition:
-                        presenter.sent_transition = True
-                        await self.context.send_msg(msg_type, user_id, group_id, evt['content'])
-
-                elif evt["type"] == "text_delta":
-                    await presenter.handle_delta(evt["content"], msg_type, user_id, group_id)
-
-                elif evt["type"] == "tool_call" and evt.get("name"):
-                    t_name = evt["name"]
-                    t_args = evt.get("args", {})
-                    
-                    await presenter.flush_buffer(msg_type, user_id, group_id)
-                    self._log_activity_dispatcher("工具调用", f"{t_name} | 参数: {t_args}", user_id=user_id)
-
-                elif evt["type"] == "tool_result":
-                    res = evt.get("result", "")
-                    t_name = evt.get("name", "tool")
-                    self._log_activity_dispatcher("工具返回", f"{t_name} | 结果大小: {len(res)} 字节", user_id=user_id)
-                    
-                    # 错情异常判定
-                    has_error = False
-                    if "exit code:" in res:
-                        m = re.search(r'exit code:\s*(\d+)', res)
-                        if m and m.group(1) != "0":
-                            has_error = True
-                    elif res.strip().startswith("Error"):
-                        has_error = True
-                    
-                    if has_error:
-                        self._log_activity_dispatcher("系统异常", f"工具 {t_name} 执行失败: {res[:200]}", user_id=user_id)
-                        await self.context.send_msg(msg_type, user_id, group_id, f"⚠️ [系统异常] 刚才小萤大脑在运行工具 {t_name} 时发生了错误。反馈如下：\n{res[:300]}", skip_delay=True)
-
-                elif evt["type"] == "permission_request":
-                    cat = evt.get("category", "write")
-                    # 安全分权：如果是亮哥，则正常进行物理 QQ 审批卡片；如果是同事，直接底层拦截不进行弹窗打扰
-                    if str(user_id) != str(self.admin_id):
-                        self._log_activity_dispatcher("系统安全拦截", f"安全拦截非管理员 {user_id} 对工具 {evt.get('tool_name')} 的 {cat} 操作申请", user_id=user_id)
-                        agent.deny_permission()
-                        await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [权限限制] 抱歉，为了系统安全，您在沙箱中无法授权执行此修改操作哦。", skip_delay=True)
-                    else:
-                        tool_list = [evt.get("tool_name", "?")]
-                        self._log_activity_dispatcher("系统调度", f"主人触发权限审批拦截，申请工具: {tool_list}", user_id=user_id)
-                        
-                        await self.context.send_msg(msg_type, user_id, group_id, 
-                            f"🔧 [主人专属审批授权]\n\n小萤正在尝试执行敏感的 {cat} 修改或命令动作。详情：\n{evt.get('message', '')}\n\n回复「允许」或「y」放行，回复其他取消该敏感操作。", skip_delay=True)
-                        
-                        evt_perm = _PermEvent()
-                        self._pending_perms[session_key] = evt_perm
-                        try:
-                            # 亮哥有 120 秒时间来做物理 QQ 卡片放行
-                            await asyncio.wait_for(evt_perm.wait(), timeout=120)
-                            approved = evt_perm.result
-                        except asyncio.TimeoutError:
-                            approved = False
-                        finally:
-                            self._pending_perms.pop(session_key, None)
-                            
-                        if approved:
-                            self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权通过，批准放行敏感操作！", user_id=user_id)
-                            agent.approve_permission()
-                        else:
-                            self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权被拒绝或超时，安全取消操作！", user_id=user_id)
-                            agent.deny_permission()
-                            await self.context.send_msg(msg_type, user_id, group_id, "已取消该敏感指令的执行。", skip_delay=True)
-
-                elif evt["type"] == "error":
-                    self._log_activity_dispatcher("系统异常", f"Agent 报错: {evt['content']}", user_id=user_id)
-                    await self.context.send_msg(msg_type, user_id, group_id, evt["content"], skip_delay=True)
-                    return
-                elif evt["type"] == "_done":
-                    total_sent_tokens = getattr(agent, "_total_tokens", 0)
-                    ctx_tokens = agent.compressor.estimate_tokens(agent.messages) if agent.compressor else 0
-                    self._log_activity_dispatcher("系统调度", f"本次推理完成。大模型总共消耗约 {total_sent_tokens} Tokens，当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
-
-            # ── 冲突检测 (Collision Detection) 第二阶段 ──
-            if self.bus.is_collision(session_key, task_start_time):
-                presenter.buf = ""
-                return
-
-            await presenter.flush_buffer(msg_type, user_id, group_id)
-
-            # 私聊疲劳累加扣分机制（非管理员私聊），默认下调至 0.025 对标 DeepSeek-V4-Flash
-            if msg_type == "private" and user_id != self.admin_id:
-                fatigue_rate = float(os.getenv("QQ_FATIGUE_RATE", "0.025"))
-                inc = presenter.total_sent_tokens * fatigue_rate
-                await self.fatigue_manager.adjust_fatigue(session_key, inc, is_private=True, sender_name=sender_name)
-
-        except asyncio.CancelledError:
-            raise
-        except Exception as e:
-            logger.error(f"Error in dispatcher runner: {e}", exc_info=True)
-            await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [系统错误] 小萤的大脑有些错乱，没有听清亮哥的话，再说一次好不好呀～", skip_delay=True)
-        finally:
-            if self.bot and hasattr(self.bot, "_current_tasks"):
-                self.bot._current_tasks.pop(session_key, None)
-
-            # 自动拉起下一个排队任务，维持完美功能闭环与单元测试向下兼容
-            if self.bot and hasattr(self.bot, "_message_queues"):
-                queue = self.bot._message_queues.get(session_key, [])
-                if queue:
-                    next_event, next_raw = queue.pop(0)
-                    logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务: {next_raw}")
-                    asyncio.create_task(self.dispatch_event(next_event))
-
     def _count_tokens(self, text: str) -> int:
-        """中英文混合 Token 科学算法"""
-        if not text:
-            return 0
-        cjk = sum(1 for c in text if '一' <= c <= '鿿')
-        en = len(text) - cjk
-        return max(1, cjk // 2 + en // 4)
+        """中英文混合 Token 科学算法兼容代理"""
+        return self.executor._count_tokens(text)
 
     def _load_persona(self) -> tuple:
-        """加载当前机器人名称和对主人称呼，优先从 bot 实例加载，以便于测试中 Mock 画像"""
-        if self.bot and hasattr(self.bot, "_load_persona"):
-            return self.bot._load_persona()
-            
-        import json
-        from pathlib import Path
-        _persona_name = "小萤"
-        _user_address = "亮哥"
-        try:
-            pf = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/resources/persona_profile.json")
-            if pf.exists():
-                prof = json.loads(pf.read_text(encoding="utf-8"))
-                _persona_name = prof.get("name", "小萤")
-                _user_address = prof.get("user_address", "亮哥")
-        except Exception:
-            pass
-        return _persona_name, _user_address
+        """人设加载兼容代理"""
+        return self.executor._load_persona()
 
     def _log_activity_dispatcher(self, category: str, content: str, user_id: str = None):
-        """记录活动日志，支持基于触发者身份的物理流隔离分发"""
-        # 桥接 bot 实例写日志，保证活动链条不断裂
-        if self.bot and hasattr(self.bot, "_log_activity"):
-            self.bot._log_activity(category, content, user_id=user_id)
+        """活动日志记录兼容代理"""
+        return self.executor._log_activity_dispatcher(category, content, user_id)
