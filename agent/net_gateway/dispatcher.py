@@ -66,6 +66,11 @@ class MessageDispatcher:
         if self_id and user_id == self_id:
             return
 
+        # 写入物理用户指令审计日志，以实现最前端全量流量隔离审计
+        _pn, _ua = self._load_persona()
+        _skey = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
+        self._log_activity_dispatcher("用户输入", f"{_ua} ({_skey}): {raw}", user_id=user_id)
+
         other_bot_ids = {x.strip() for x in os.getenv("QQ_OTHER_BOT_IDS", "1911828529").split(",") if x.strip()}
         is_other_bot = user_id in other_bot_ids
 
@@ -212,10 +217,6 @@ class MessageDispatcher:
                     "⚠️ 请输入要合成的文本，格式如：小萤语音测试：[委屈] 小萤好难过呀", skip_delay=True)
             return
 
-        # 写入用户指令审计日志
-        _pn, _ua = self._load_persona()
-        self._log_activity_dispatcher("用户输入", f"{_ua} ({session_key}): {raw}")
-
         # 兼容测试套件：记录排队消息队列，维持单元测试高度向下兼容
         if self.bot and hasattr(self.bot, "_message_queues"):
             active_task = getattr(self.bot, "_current_tasks", {}).get(session_key)
@@ -314,10 +315,15 @@ class MessageDispatcher:
                     buf = ""
                     return
 
-                if evt["type"] == "transition":
+                if evt["type"] == "exploring_start":
+                    self._log_activity_dispatcher("AI 计划/答复", "思考启动...", user_id=user_id)
+
+                elif evt["type"] == "transition":
+                    self._log_activity_dispatcher("AI 计划/答复", evt['content'], user_id=user_id)
                     if not sent_transition:
                         sent_transition = True
                         await self.context.send_msg(msg_type, user_id, group_id, evt['content'])
+
                 elif evt["type"] == "text_delta":
                     if not sent_transition:
                         sent_transition = True
@@ -348,6 +354,7 @@ class MessageDispatcher:
                             parts = buf.split("[SPLIT]")
                             for part in parts[:-1]:
                                 if part.strip():
+                                    self._log_activity_dispatcher("AI 计划/答复", part.strip(), user_id=user_id)
                                     await self.context.send_chunk(msg_type, user_id, group_id, part.strip())
                                     total_sent_tokens += self._count_tokens(part.strip())
                             buf = parts[-1]
@@ -355,6 +362,7 @@ class MessageDispatcher:
                             idx = buf.rfind("\n\n")
                             to_send = buf[:idx]
                             if to_send.strip():
+                                self._log_activity_dispatcher("AI 计划/答复", to_send.strip(), user_id=user_id)
                                 await self.context.send_chunk(msg_type, user_id, group_id, to_send.strip())
                                 total_sent_tokens += self._count_tokens(to_send.strip())
                             buf = buf[idx+2:]
@@ -367,11 +375,83 @@ class MessageDispatcher:
                             if idx != -1:
                                 to_send = buf[:idx+1]
                                 if to_send.strip():
+                                    self._log_activity_dispatcher("AI 计划/答复", to_send.strip(), user_id=user_id)
                                     await self.context.send_chunk(msg_type, user_id, group_id, to_send.strip())
                                     total_sent_tokens += self._count_tokens(to_send.strip())
                                 buf = buf[idx+1:]
 
+                elif evt["type"] == "tool_call" and evt.get("name"):
+                    t_name = evt["name"]
+                    t_args = evt.get("args", {})
+                    
+                    if buf.strip():
+                        self._log_activity_dispatcher("AI 计划/答复", buf.strip(), user_id=user_id)
+                        if is_voice_reply:
+                            style_match = re.match(r'^\[([^\s\]]+)\](.*)', buf.strip(), re.DOTALL)
+                            pure_text = style_match.group(2).strip() if style_match else buf.strip()
+                            if pure_text:
+                                await send_voice(self.context, msg_type, user_id, group_id, pure_text, voice_style)
+                                total_sent_tokens += self._count_tokens(pure_text)
+                        else:
+                            await self.context.send_chunk(msg_type, user_id, group_id, buf.strip())
+                            total_sent_tokens += self._count_tokens(buf.strip())
+                        buf = ""
+                    
+                    self._log_activity_dispatcher("工具调用", f"{t_name} | 参数: {t_args}", user_id=user_id)
+
+                elif evt["type"] == "tool_result":
+                    res = evt.get("result", "")
+                    t_name = evt.get("name", "tool")
+                    self._log_activity_dispatcher("工具返回", f"{t_name} | 结果大小: {len(res)} 字节", user_id=user_id)
+                    
+                    # 错情异常判定
+                    has_error = False
+                    if "exit code:" in res:
+                        m = re.search(r'exit code:\s*(\d+)', res)
+                        if m and m.group(1) != "0":
+                            has_error = True
+                    elif res.strip().startswith("Error"):
+                        has_error = True
+                    
+                    if has_error:
+                        self._log_activity_dispatcher("系统异常", f"工具 {t_name} 执行失败: {res[:200]}", user_id=user_id)
+                        await self.context.send_msg(msg_type, user_id, group_id, f"⚠️ [系统异常] 刚才小萤大脑在运行工具 {t_name} 时发生了错误。反馈如下：\n{res[:300]}", skip_delay=True)
+
+                elif evt["type"] == "permission_request":
+                    cat = evt.get("category", "write")
+                    # 安全分权：如果是亮哥，则正常进行物理 QQ 审批卡片；如果是同事，直接底层拦截不进行弹窗打扰
+                    if str(user_id) != str(self.admin_id):
+                        self._log_activity_dispatcher("系统安全拦截", f"安全拦截非管理员 {user_id} 对工具 {evt.get('tool_name')} 的 {cat} 操作申请", user_id=user_id)
+                        agent.deny_permission()
+                        await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [权限限制] 抱歉，为了系统安全，您在沙箱中无法授权执行此修改操作哦。", skip_delay=True)
+                    else:
+                        tool_list = [evt.get("tool_name", "?")]
+                        self._log_activity_dispatcher("系统调度", f"主人触发权限审批拦截，申请工具: {tool_list}", user_id=user_id)
+                        
+                        await self.context.send_msg(msg_type, user_id, group_id, 
+                            f"🔧 [主人专属审批授权]\n\n小萤正在尝试执行敏感的 {cat} 修改或命令动作。详情：\n{evt.get('message', '')}\n\n回复「允许」或「y」放行，回复其他取消该敏感操作。", skip_delay=True)
+                        
+                        evt_perm = _PermEvent()
+                        self._pending_perms[session_key] = evt_perm
+                        try:
+                            # 亮哥有 120 秒时间来做物理 QQ 卡片放行
+                            await asyncio.wait_for(evt_perm.wait(), timeout=120)
+                            approved = evt_perm.result
+                        except asyncio.TimeoutError:
+                            approved = False
+                        finally:
+                            self._pending_perms.pop(session_key, None)
+                            
+                        if approved:
+                            self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权通过，批准放行敏感操作！", user_id=user_id)
+                            agent.approve_permission()
+                        else:
+                            self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权被拒绝或超时，安全取消操作！", user_id=user_id)
+                            agent.deny_permission()
+                            await self.context.send_msg(msg_type, user_id, group_id, "已取消该敏感指令的执行。", skip_delay=True)
+
                 elif evt["type"] == "error":
+                    self._log_activity_dispatcher("系统异常", f"Agent 报错: {evt['content']}", user_id=user_id)
                     await self.context.send_msg(msg_type, user_id, group_id, evt["content"], skip_delay=True)
                     return
                 elif evt["type"] == "_done":
@@ -383,6 +463,7 @@ class MessageDispatcher:
                 return
 
             if buf.strip():
+                self._log_activity_dispatcher("AI 计划/答复", buf.strip(), user_id=user_id)
                 if is_voice_reply:
                     # 剥除发音前缀
                     style_match = re.match(r'^\[([^\s\]]+)\](.*)', buf.strip(), re.DOTALL)
@@ -655,8 +736,8 @@ class MessageDispatcher:
             pass
         return _persona_name, _user_address
 
-    def _log_activity_dispatcher(self, category: str, content: str):
-        """记录活动日志"""
+    def _log_activity_dispatcher(self, category: str, content: str, user_id: str = None):
+        """记录活动日志，支持基于触发者身份的物理流隔离分发"""
         # 桥接 bot 实例写日志，保证活动链条不断裂
         if self.bot and hasattr(self.bot, "_log_activity"):
-            self.bot._log_activity(category, content)
+            self.bot._log_activity(category, content, user_id=user_id)
