@@ -197,21 +197,22 @@ class LLMClient:
                 logging.warning(f"LLM stream call failed (attempt {attempt + 1}/{max_retries}): {e}. Retrying in {sleep_time}s...")
                 await asyncio.sleep(sleep_time)
 
+        stream_timeout = float(os.getenv("LLM_STREAM_TIMEOUT", "15.0"))
         try:
             tool_calls_acc: dict[int, dict] = {}
-            # 通过 asyncio.wait_for 为 chunk 的迭代读取提供 15.0s 强心跳超时拦截，杜绝网络无响应死锁
+            # 通过 asyncio.wait_for 为 chunk 的迭代读取提供配置化强心跳超时拦截，杜绝网络无响应死锁
             response_iter = response.__aiter__()
             while True:
                 if abort_event and abort_event.is_set():
                     yield {"type": "aborted"}
                     return
                 try:
-                    chunk = await asyncio.wait_for(response_iter.__anext__(), timeout=15.0)
+                    chunk = await asyncio.wait_for(response_iter.__anext__(), timeout=stream_timeout)
                 except StopAsyncIteration:
                     break
                 except asyncio.TimeoutError:
-                    logging.error("LLM stream chunk read timeout (15s limit reached). Connection hung.")
-                    yield {"type": "error", "content": "LLM stream connection lost: chunk read timeout"}
+                    logging.error(f"LLM stream chunk read timeout ({stream_timeout}s limit reached). Connection hung.")
+                    yield {"type": "error", "content": f"LLM stream connection lost: chunk read timeout after {stream_timeout}s"}
                     return
 
                 delta = chunk.choices[0].delta
@@ -245,3 +246,13 @@ class LLMClient:
         except Exception as e:
             logging.error(f"Error during LLM stream chunk processing: {e}")
             yield {"type": "error", "content": f"LLM stream connection lost: {e}"}
+        finally:
+            # 极致网络加固：即使抛错或超时退出，也必须强物理释放 response HTTP/socket 句柄，杜绝泄露
+            if response and hasattr(response, "close"):
+                try:
+                    if asyncio.iscoroutinefunction(response.close):
+                        await response.close()
+                    else:
+                        response.close()
+                except Exception as close_err:
+                    logging.warning(f"Failed to safely close LLM stream response: {close_err}")
