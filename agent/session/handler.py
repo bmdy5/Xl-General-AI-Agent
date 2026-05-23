@@ -267,7 +267,7 @@ class SessionHandler:
         self, query: str, llm, max_results: int = 5
     ) -> str:
         """FTS5 全文搜索历史会话，且对“刚才/之前/历史会话”等指代代词智能进行最新聊天片段拉取兜底 (双路融合去重)."""
-        PRONOUNS = ["刚才", "之前", "上一次", "历史会话", "之前聊的", "历史记录", "刚才说的", "刚才聊的", "讨论过的", "聊了什么"]
+        PRONOUNS = ["刚才", "之前", "上一次", "历史会话", "之前聊的", "历史记录", "刚才说的", "刚才聊的", "讨论过的", "聊了什么", "刚刚", "私聊", "偷偷", "聊天", "聊过", "记录", "说话", "私信"]
         is_pronoun_query = any(p in query for p in PRONOUNS)
 
         fallback_res = ""
