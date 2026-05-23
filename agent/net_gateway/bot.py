@@ -53,6 +53,12 @@ class QQGateway:
         # 配置同步
         self.admin_id = admin_id
         self.csma_backoff_seconds = float(os.getenv("QQ_CSMA_BACKOFF_SECONDS", "2.0"))
+        
+        # 初始化全局发包平滑流控令牌桶限流器（默认最大并发爆发5包，每1.5秒填充1包）
+        from .bus import TokenBucketLimiter
+        capacity = float(os.getenv("QQ_LIMITER_CAPACITY", "5.0"))
+        refill_rate = float(os.getenv("QQ_LIMITER_REFILL_RATE", "0.67"))
+        self.limiter = TokenBucketLimiter(capacity=capacity, refill_rate=refill_rate)
 
     async def run(self):
         """网关启动主协程，启动 WebSocket 长连接并挂载守护协程。"""
@@ -103,6 +109,9 @@ class QQGateway:
 
     async def _send(self, msg_type: str, user_id: str, group_id: str, text: str, skip_delay: bool = False):
         """OneBot HTTP 协议消息发送，负责具体的网络包推送。"""
+        # 0. 全局物理发包滑窗令牌桶平滑流控整流
+        await self.limiter.acquire()
+
         # 1. 拟人思考打字延迟
         is_media = text.strip().startswith("[CQ:") or text.strip().startswith("[ CQ:")
         is_system_msg = any(text.strip().startswith(prefix) for prefix in ["🤖", "⏰", "⚙️", "✅", "❌", "🔍", "🌅", "🚀", "💡"])
