@@ -55,7 +55,7 @@ def build_agent(session_id: str = "default"):
     from .tools.registry import registry
 
     model_vision = os.environ.get("MYAGENT_MODEL", "openai/gpt-4o")
-    api_key = os.environ.get("MYAGENT_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
+    api_key = os.environ.get("MYAGENT_API_KEY") or os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY") or os.environ.get("ANTHROPIC_API_KEY")
     api_base = os.environ.get("MYAGENT_API_BASE") or os.environ.get("OPENAI_API_BASE")
 
     model_flash = os.environ.get("MYAGENT_MODEL_FLASH", "deepseek/deepseek-v4-flash")
