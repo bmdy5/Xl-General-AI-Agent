@@ -198,10 +198,35 @@ class TaskQueue:
                 else:
                     due.append(t)
             else:
-                # Cron expression -- simple check
+                # Cron expression -- 高精度时间滑窗与星期校对判定
                 last = t.get("last_run")
-                if not last or datetime.fromisoformat(last).date() < now.date():
-                    due.append(t)
+                m_cron = re.match(r'^(\d{1,2})\s+(\d{1,2})\s+\*\s+\*\s+(\*|\d)$', cron)
+                if m_cron:
+                    target_minute = int(m_cron.group(1))
+                    target_hour = int(m_cron.group(2))
+                    target_day_of_week = m_cron.group(3)
+                    
+                    # 构造今日的绝对触发时间点 (继承 now 的 UTC 时区信息)
+                    trigger_today = now.replace(hour=target_hour, minute=target_minute, second=0, microsecond=0)
+                    
+                    # 校验星期数是否匹配
+                    if target_day_of_week != "*":
+                        target_day = int(target_day_of_week)
+                        target_day = 7 if target_day == 0 else target_day
+                        if now.isoweekday() != target_day:
+                            continue
+                            
+                    # 如果今天还没到触发的分钟/小时，则直接跳过，绝对不提前剧透执行
+                    if now < trigger_today:
+                        continue
+                        
+                    # 如果已过今日触发点，且今天尚未执行过，则判定为 due 到期执行
+                    if not last or datetime.fromisoformat(last) < trigger_today:
+                        due.append(t)
+                else:
+                    # 兜底非标准复杂 cron 表达式：进行简单的跨天检验，防止漏跑
+                    if not last or datetime.fromisoformat(last).date() < now.date():
+                        due.append(t)
         return due
 
     def stats(self) -> dict:
