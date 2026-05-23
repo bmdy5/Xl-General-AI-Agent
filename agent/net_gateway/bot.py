@@ -53,6 +53,8 @@ class QQGateway:
         
         # 配置同步
         self.admin_id = admin_id
+        from .scheduler import GatewayScheduler
+        self.scheduler = GatewayScheduler(self)
         self.csma_backoff_seconds = float(os.getenv("QQ_CSMA_BACKOFF_SECONDS", "2.0"))
         
         # 初始化全局发包平滑流控令牌桶限流器（默认最大并发爆发5包，每1.5秒填充1包）
@@ -74,8 +76,6 @@ class QQGateway:
         logger.info(f"HTTP API:  {NC_HTTP_URL}")
         
         self._http = aiohttp.ClientSession()
-        from .scheduler import GatewayScheduler
-        self.scheduler = GatewayScheduler(self)
         await self.scheduler.start()
         
         # 主长连接维持循环
@@ -278,6 +278,11 @@ class QQGateway:
         if hasattr(self, "dispatcher") and hasattr(self.dispatcher, "_generate_fatigue_announcement"):
             return await self.dispatcher._generate_fatigue_announcement(group_id)
         return "唔……小萤用脑过度，去打盹半小时。"
+
+    async def _process_podcast_generation_async(self, session_key: str, topic: str, admin_id: str):
+        """夜间播客异步生成转发代理"""
+        return await self.scheduler._process_podcast_generation_async(session_key, topic, admin_id)
+
 
 
 def main():

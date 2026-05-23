@@ -146,3 +146,25 @@ class GatewayScheduler:
                 logger.info("晨间播客尚在生成中，将由守护进程轮询捕获。")
         except Exception as e:
             logger.error(f"晨间主动下载播客失败: {e}", exc_info=True)
+
+    async def _process_podcast_generation_async(self, session_key: str, topic: str, admin_id: str):
+        """夜间播客笔记异步合成与 NotebookLM 自动投喂流程"""
+        try:
+            from agent.tools.mcp_agent_learning_server import synthesize_agent_notes, launch_podcast_generation
+            res_synth = await synthesize_agent_notes(topic, use_web_search=True)
+            synth_data = json.loads(res_synth)
+            if synth_data.get("status") != "success":
+                raise ValueError(f"笔记合成失败: {synth_data.get('message')}")
+                
+            note_path = synth_data.get("note_path")
+            
+            res_launch = await launch_podcast_generation(note_path, topic, debug_mode=False)
+            launch_data = json.loads(res_launch)
+            if launch_data.get("status") != "success":
+                raise ValueError(f"云端投喂失败: {launch_data.get('message')}")
+                
+            await self.bot._send("private", admin_id, "", f"🌅 云端双人中文技术播客生成已成功拉起！\n我已将 2000 字深度研究笔记保存在了 scratch。\n明早 06:00 我将自动使用本地 Chrome 活跃实例静默捕获并为您推送！")
+        except Exception as e:
+            logger.error(f"夜间播客交互生成失败: {e}", exc_info=True)
+            await self.bot._send("private", admin_id, "", f"❌ 抱歉亮哥，在为您生成播客笔记或投喂 NotebookLM 时发生异常：{e}")
+
