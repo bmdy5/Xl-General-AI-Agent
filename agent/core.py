@@ -23,6 +23,7 @@ from .memory.error_tracker import ErrorTracker
 
 # 导入静态提示词以维持后向兼容性
 from .prompt_builder import STATIC_PROMPT
+from .memory.error_tracker import ERROR_INDICATORS
 
 class AgentMode(enum.Enum):
     NORMAL = "normal"
@@ -35,7 +36,6 @@ class PermissionCategory(enum.Enum):
 
 NORMAL_TIMEOUT = 300
 DEEP_TIMEOUT = 7200
-ERROR_INDICATORS = ["Error", "Traceback", "Exception", "failed", "失败", "报错", "异常"]
 DEBUG_KEYWORDS = ["报错", "异常", "不对", "错误", "失败", "bug", "怎么回事", "为啥不行"]
 
 def quick_transition(user_input: str) -> Optional[str]:
