@@ -10,8 +10,10 @@ class ActivityLogger:
     
     def __init__(self, bot):
         self.bot = bot
-        self._activity_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent_activity.log"
-        self._bypass_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/coworker_activity.log"
+        from pathlib import Path
+        root_dir = Path(__file__).resolve().parents[2]
+        self._activity_log_path = str(root_dir / "agent_activity.log")
+        self._bypass_log_path = str(root_dir / "coworker_activity.log")
 
     def log_activity(self, category: str, content: str, user_id: str = None):
         """结构化轨迹活动日志记录，支持根据发言人身份将主流量与沙箱旁路流量物理隔离分流"""

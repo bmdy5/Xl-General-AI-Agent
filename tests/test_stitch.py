@@ -24,7 +24,7 @@ async def main():
     }):
         if result.type == "result":
             data = result.data
-            path = os.path.join(os.path.dirname(__file__), "duoagent", "ui", "index.html")
+            path = os.path.join(os.path.dirname(__file__), "..", "agent", "duoagent", "ui", "index.html")
             os.makedirs(os.path.dirname(path), exist_ok=True)
             
             # If result has preview URL, download the actual HTML
