@@ -47,6 +47,7 @@ class QQGateway:
         self._reconnect_failures: int = 0
         self._last_offline_alert: float = 0.0
         self._activity_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent_activity.log"
+        self._bypass_log_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/coworker_activity.log"
         self._current_tasks: dict[str, asyncio.Task] = {}
         self._message_queues: dict[str, list[tuple[dict, str]]] = {}
         
@@ -149,7 +150,7 @@ class QQGateway:
             logger.info(f"Agent → QQ [{user_id or group_id}]: {text[:80]}")
             # 物理写入活动轨迹日志以实现输入与输出时间线完全融合
             session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
-            self._log_activity("Agent回复", f"小萤 ({session_key}): {text}")
+            self._log_activity("Agent回复", f"小萤 ({session_key}): {text}", user_id=user_id)
         except Exception as e:
             logger.error(f"Send error: {e}")
 
@@ -197,8 +198,8 @@ class QQGateway:
                 asyncio.create_task(self._trigger_morning_podcast_download(self.admin_id))
                 await asyncio.sleep(20)  # 防重入冷却
 
-    def _log_activity(self, category: str, content: str):
-        """结构化轨迹活动日志记录"""
+    def _log_activity(self, category: str, content: str, user_id: str = None):
+        """结构化轨迹活动日志记录，支持根据发言人身份将主流量与沙箱旁路流量物理隔离分流"""
         now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
         safe_content = content
         for pattern in [r"(?i)token[s]?'?\s*:\s*'[^']+'", r"(?i)key[s]?'?\s*:\s*'[^']+'"]:
@@ -208,8 +209,15 @@ class QQGateway:
             safe_content = safe_content[:1000] + " ... (truncated)"
         
         log_line = f"{now} | [{category}] | {safe_content}\n"
+        
+        # 物理路由判定：亮哥本人的轨迹打入主要日志，其他人的动作全数隔离归入旁路日志
+        target_path = self._activity_log_path
+        if user_id is not None:
+            if str(user_id) != str(self.admin_id):
+                target_path = self._bypass_log_path
+                
         try:
-            with open(self._activity_log_path, "a", encoding="utf-8") as f:
+            with open(target_path, "a", encoding="utf-8") as f:
                 f.write(log_line)
         except Exception as e:
             logger.error(f"Failed to write activity log: {e}")
