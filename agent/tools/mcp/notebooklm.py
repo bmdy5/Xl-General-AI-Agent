@@ -13,7 +13,7 @@ from datetime import datetime
 from typing import Any, AsyncGenerator, Optional
 
 from ..base_tool import BaseTool, ToolResult
-from agent.auto_podcast import NotebookLMMCPClient, ACTIVE_PODCAST_JSON, call_tool_with_retry
+from .notebooklm_client import NotebookLMMCPClient
 
 logger = logging.getLogger(__name__)
 
@@ -98,6 +98,7 @@ class NotebookLMTool(BaseTool):
         self, input_args: dict, context: Any = None
     ) -> AsyncGenerator[ToolResult, None]:
         action = input_args["action"]
+        from agent.learn.podcast import ACTIVE_PODCAST_JSON, call_tool_with_retry
 
         yield ToolResult(type="progress", data=f"正在拉起 NotebookLM [{action}] 流程...")
 

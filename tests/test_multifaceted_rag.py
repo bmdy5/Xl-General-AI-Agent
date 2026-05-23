@@ -10,7 +10,7 @@ from pathlib import Path
 # Add project root
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.compressor import ContextCompressor
+from agent.core.compressor import ContextCompressor
 from agent.session.handler import SessionHandler
 from agent.memory.fts_index import create_table as mem_create_table, populate as mem_populate, search as mem_search, _cjk_space
 from agent.memory.notes_fts import create_table as note_create_table, sync_incremental, search as note_search

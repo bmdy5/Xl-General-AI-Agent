@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
-from .learner.debate import ANALYZE_PROMPT, REVIEW_PROMPT
+from .debate import ANALYZE_PROMPT, REVIEW_PROMPT
 
 logger = logging.getLogger(__name__)
 
@@ -51,7 +51,7 @@ class AutoLearner:
         self._learn_model = learn_model or agent.llm.model
         self._review_model = os.getenv("MYAGENT_REVIEW_MODEL") or agent.llm.model
         
-        from .learner.debate import DebateSystem
+        from .debate import DebateSystem
         self.debate_system = DebateSystem(agent, self._learn_model, self._review_model)
         
         self._agent_scores: dict = {}

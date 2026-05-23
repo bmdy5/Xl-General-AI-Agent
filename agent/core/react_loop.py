@@ -8,13 +8,13 @@ from typing import AsyncGenerator
 
 logger = logging.getLogger("agent.react_loop")
 
-from .memory.error_tracker import ERROR_INDICATORS
+from ..memory.error_tracker import ERROR_INDICATORS
 NORMAL_TIMEOUT = 300
 DEEP_TIMEOUT = 7200
 
-from .evolution import audit_tool_call, on_session_end, inject_fatigue_prompt_if_needed
-from .memory.error_tracker import L2_SELF_HEAL
-from .core import AgentMode, PermissionCategory
+from ..evolution import audit_tool_call, on_session_end, inject_fatigue_prompt_if_needed
+from ..memory.error_tracker import L2_SELF_HEAL
+from .agent import AgentMode, PermissionCategory
 
 async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
     """统一 ReAct 核心循环。stream=False -> chat(), stream=True -> chat_stream()."""

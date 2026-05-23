@@ -69,7 +69,7 @@ async def run_tests():
             print(detail_data[:1500])  # 展示部分内容
 
     print("\n=== Step 4: 测试发布图文笔记 (Publish) ===")
-    test_image_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../agent/dashboard_v2/assets/gen_Square_avatar_of_an_adorable_y.png"))
+    test_image_path = os.path.abspath(os.path.join(os.path.dirname(__file__), "../agent/ui/dashboard_v2/assets/gen_Square_avatar_of_an_adorable_y.png"))
     print(f"待上传的测试图片路径: '{test_image_path}'")
     if not os.path.exists(test_image_path):
         print(f"警告: 测试图片 {test_image_path} 不存在，尝试使用项目根目录下的备用图片。")

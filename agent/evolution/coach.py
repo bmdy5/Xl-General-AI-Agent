@@ -45,7 +45,7 @@ COACH_PROMPT = """你是一个 Agent 进化教练。以下是今天小萤的执�
 
 async def run_coach_analysis(llm, today_str: str = "") -> dict | None:
     """读取今日 traces，LLM 分析，生成改进提案。返回分析结果 dict。"""
-    from .evo_traces import get_today_traces, get_recent_corrections, TRACES_DIR, _read_traces
+    from .traces import get_today_traces, get_recent_corrections, TRACES_DIR, _read_traces
     from datetime import timedelta
 
     if not today_str:

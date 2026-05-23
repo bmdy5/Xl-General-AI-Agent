@@ -7,8 +7,8 @@ import operator
 import json as _json
 from ..core import AgentMode
 from ..bootstrap import build_agent
-from ..tui import console as tui_console
-from ..tui_events import run_with_tui
+from ..ui.tui import console as tui_console
+from ..ui.tui_events import run_with_tui
 from ..evolution import on_session_end
 
 def _read_multiline(prompt: str = "> ") -> str:
@@ -191,7 +191,7 @@ async def run_interactive():
             continue
 
         if user_input == "/tasks":
-            from ..task_queue import TaskQueue
+            from ..core.task_queue import TaskQueue
             q = TaskQueue()
             pending = q.list()
             if pending:
@@ -205,7 +205,7 @@ async def run_interactive():
             continue
 
         if user_input.startswith("/tasks add "):
-            from ..task_queue import TaskQueue
+            from ..core.task_queue import TaskQueue
             rest = user_input[10:].strip()
             cron = "once"
             if " / " in rest:
@@ -220,7 +220,7 @@ async def run_interactive():
             continue
 
         if user_input.startswith("/tasks done "):
-            from ..task_queue import TaskQueue
+            from ..core.task_queue import TaskQueue
             tid = user_input[11:].strip()
             q = TaskQueue()
             if q.mark_done(tid):
@@ -230,7 +230,7 @@ async def run_interactive():
             continue
 
         if user_input == "/tasks clear":
-            from ..task_queue import TaskQueue
+            from ..core.task_queue import TaskQueue
             TaskQueue().clear_done()
             print("  ✅ 已清理已完成任务")
             continue

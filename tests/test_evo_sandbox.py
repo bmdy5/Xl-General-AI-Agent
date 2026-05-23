@@ -2,7 +2,7 @@ import pytest
 import json
 from unittest.mock import AsyncMock, MagicMock
 from pathlib import Path
-from agent.evo_tester import SandboxToolRegistry, generate_test_prompt, run_llm_judge, run_self_test
+from agent.evolution.tester import SandboxToolRegistry, generate_test_prompt, run_llm_judge, run_self_test
 from agent.tools.registry import ToolRegistry
 from agent.tools.base_tool import BaseTool
 
@@ -159,7 +159,7 @@ async def test_run_self_test_two_phase_evaluation(tmp_path):
     # 1. 模拟通过的 Trace 序列（先 ls 预检，再 write_to_file 修改）
     with pytest.MonkeyPatch.context() as mp:
         # Mock get_recent_corrections
-        from agent import evo_traces
+        from agent.evolution import traces as evo_traces
         mp.setattr(evo_traces, "get_recent_corrections", lambda days: [c_item])
 
         # Mock Sandbox Tool Registry 记录通过的 Trace
@@ -183,7 +183,7 @@ async def test_run_self_test_two_phase_evaluation(tmp_path):
 
     # 2. 模拟失败的 Trace 序列（未做预检直接物理修改）
     with pytest.MonkeyPatch.context() as mp:
-        from agent import evo_traces
+        from agent.evolution import traces as evo_traces
         mp.setattr(evo_traces, "get_recent_corrections", lambda days: [c_item])
 
         failed_traces = [

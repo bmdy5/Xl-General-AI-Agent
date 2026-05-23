@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 HOST = "0.0.0.0"
 PORT = 8866
-IMAGES_DIR = Path(__file__).parent.parent / "archive" / "images"
+IMAGES_DIR = Path(__file__).parent.parent.parent / "archive" / "images"
 MANIFEST_FILE = IMAGES_DIR / "manifest.json"
 ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
@@ -23,7 +23,7 @@ ALLOWED_EXTENSIONS = {".png", ".jpg", ".jpeg", ".gif", ".webp", ".bmp"}
 
 def load_gallery_html_file():
     """动态读取外部画廊 HTML"""
-    p = Path(__file__).parent / "resources/gallery.html"
+    p = Path(__file__).parent.parent / "resources" / "gallery.html"
     try:
         return p.read_text(encoding="utf-8")
     except Exception:

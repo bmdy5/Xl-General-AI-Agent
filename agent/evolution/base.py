@@ -209,7 +209,7 @@ async def audit_tool_call(agent, tool_name: str, args: dict, result: str, force:
         return
 
     # 数据飞轮：所有工具调用录音，不仅仅错误
-    from ..evo_traces import record_tool_call
+    from .traces import record_tool_call
     had_error = any(t in str(result)[:500] for t in
                     ["error", "Error", "failed", "not found", "permission denied",
                      "Error:", "失败", "异常", "Traceback"])

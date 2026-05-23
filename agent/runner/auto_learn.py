@@ -1,6 +1,6 @@
 import os
 from ..bootstrap import build_agent
-from ..auto_learn import AutoLearner
+from ..learn.auto_learn import AutoLearner
 
 async def run_auto_learn():
     """自主学习模式：agent 自动浏览网页、学习知识、创建技能."""

@@ -12,7 +12,7 @@ from typing import Any, List, Dict
 
 logger = logging.getLogger(__name__)
 
-from .tools.registry import ToolRegistry
+from ..tools.registry import ToolRegistry
 
 
 class SandboxToolRegistry(ToolRegistry):
@@ -139,8 +139,8 @@ async def run_llm_judge(llm, user_correction: str, expected_behavior: str, test_
 
 async def run_self_test(llm, memory, days: int = 3) -> dict:
     """从纠正事件生成测试，在本地沙箱物理运行 Agent，并进行两阶段研判。"""
-    from .evo_traces import get_recent_corrections
-    from .tools.registry import registry as original_registry
+    from .traces import get_recent_corrections
+    from ..tools.registry import registry as original_registry
 
     corrections = get_recent_corrections(days=days)
     if not corrections:
@@ -175,7 +175,7 @@ async def run_self_test(llm, memory, days: int = 3) -> dict:
             sandbox_registry = SandboxToolRegistry(original_registry)
 
             # 3. 构造沙箱 Agent，装载当前 Evolved Rules
-            from .core import Agent
+            from ..core import Agent
             sandbox_agent = Agent(
                 llm=llm,
                 registry=sandbox_registry,
@@ -287,7 +287,7 @@ Here are your current developed rules that you must strictly follow:
 
 def save_test_report(report: dict) -> str:
     """保存测试报告到 pending_review/。"""
-    from .evo_coach import PENDING_DIR
+    from .coach import PENDING_DIR
     PENDING_DIR.mkdir(parents=True, exist_ok=True)
 
     today = datetime.now(timezone.utc).strftime("%Y-%m-%d")

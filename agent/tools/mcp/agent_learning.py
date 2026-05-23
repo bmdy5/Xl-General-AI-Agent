@@ -15,7 +15,7 @@ if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
 from agent.llm import LLMClient
-from agent.auto_podcast import NotebookLMMCPClient, ACTIVE_PODCAST_JSON, call_tool_with_retry
+from agent.learn.podcast import NotebookLMMCPClient, ACTIVE_PODCAST_JSON, call_tool_with_retry
 
 # 设置日志
 logging.basicConfig(level=logging.INFO, format="%(asctime)s [%(levelname)s] %(message)s")
@@ -338,7 +338,7 @@ async def check_and_push_podcast() -> str:
         download_success = False
         
         try:
-            from agent.auto_podcast import download_podcast_silently_sync, NOTEBOOKLM_ENV
+            from agent.learn.podcast import download_podcast_silently_sync, NOTEBOOKLM_ENV
             proxy_url = NOTEBOOKLM_ENV.get("HTTP_PROXY") or "http://127.0.0.1:7897"
             logger.info(f"使用代理: {proxy_url} 进行隔离 Cookie 静默下载...")
             
