@@ -1,0 +1,37 @@
+# ==============================================================================
+# XL Agent 全量配置文件 (settings.yaml)
+# ==============================================================================
+
+# 1. MyAgent 核心大模型配置 (Core LLM Settings)
+MYAGENT_MODEL: "deepseek/deepseek-v4-flash"
+MYAGENT_API_KEY: "sk-ctmkgcfgihyjeqhiffvncoy2rqlyfeevrbshbwzuhmp1djmt"
+MYAGENT_API_BASE: "https://api.xiaomimimo.com/v1"
+MYAGENT_MAX_TURNS: 30
+
+# 2. QQ 消息网关控制与死锁规避 (QQ Gateway & CSMA/CD & Fatigue)
+QQ_ADMIN_ID: "1705919142"
+MY_AGENT_WHITE_LIST: "1911828529"
+QQ_WHITE_GROUPS: "693134080"
+QQ_CSMA_BACKOFF_SECONDS: 2.0
+QQ_FATIGUE_SLEEP_MINUTES: 15.0
+QQ_FATIGUE_RATE: 0.4
+
+# 3. Google Stitch MCP 服务集成 (Stitch MCP Integration)
+GOOGLE_CLOUD_PROJECT: "stitch-496215"
+GOOGLE_CLOUD_QUOTA_PROJECT: "stitch-496215"
+STITCH_API_KEY: "AIzaSyC297i7GVd3r0EN_UuKiwGH79WP6d-vUkM"
+STITCH_SERVER_CMD: "npx @_davideast/stitch-mcp proxy"
+STITCH_TIMEOUT: 180
+
+# 4. Embedding 向量检索模式 (Embedding & Vector Storage Mode)
+EMBEDDING_MODE: "local"
+
+# 5. 备用大模型配置 (Backup Model Models)
+DEEPSEEK_API_KEY: "sk-0f4e3869784a4574a689198b26f1636c"
+MYAGENT_MODEL_FLASH: "deepseek/deepseek-v4-flash"
+MYAGENT_MODEL_PRO: "deepseek/deepseek-v4-pro"
+
+# 6. Image2 像素纹理与生图中转站 (Image Generation Middleware)
+IMAGE2_BASE: "https://gpt-image2.xiaoliang.tech"
+IMAGE2_USER: "admin"
+IMAGE2_PASS: "adMin123"

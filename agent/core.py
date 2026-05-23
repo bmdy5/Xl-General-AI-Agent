@@ -11,6 +11,7 @@ import logging
 import os
 from pathlib import Path
 from typing import AsyncGenerator, Optional
+from .config import settings
 
 logger = logging.getLogger(__name__)
 
