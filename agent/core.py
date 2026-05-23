@@ -161,6 +161,7 @@ class Agent:
         self.error_tracker = ErrorTracker()
         self.is_maintenance = False  # Gateway 维护模式标记，放行 merge_to_core
         self._sandbox_violation_dict = {}  # 物理隔离各 QQ 用户的沙箱违规计数
+        self._active_tasks: set[asyncio.Task] = set()  # 强引用追踪所有后台任务，防止 GC 误杀与句柄泄漏
 
     @property
     def sandbox_violation_count(self) -> int:
@@ -171,6 +172,23 @@ class Agent:
     def sandbox_violation_count(self, value: int):
         user_id = getattr(self, "current_user_id", "未知")
         self._sandbox_violation_dict[user_id] = value
+
+    def _create_tracked_task(self, coro) -> asyncio.Task:
+        """创建强引用的异步任务，防止被 Python 垃圾回收误杀，并在完成后自动从追踪集清除"""
+        task = asyncio.create_task(coro)
+        self._active_tasks.add(task)
+        task.add_done_callback(self._active_tasks.discard)
+        return task
+
+    async def close(self):
+        """优雅关闭 Agent，安全取消并等待所有追踪的后台任务，防协程泄漏与数据损毁"""
+        if self._active_tasks:
+            logger.info(f"Closing Agent: Cancelling {len(self._active_tasks)} active background tasks...")
+            for task in list(self._active_tasks):
+                if not task.done():
+                    task.cancel()
+            await asyncio.gather(*self._active_tasks, return_exceptions=True)
+            self._active_tasks.clear()
 
     # ── public API ─────────────────────────────────────────────
 
@@ -213,7 +231,7 @@ class Agent:
         # 静默在后台自动触发去冗余记忆物理合并清理（GC）
         if self.memory:
             try:
-                asyncio.create_task(self.memory.gc_and_merge_fragmented_memories())
+                self._create_tracked_task(self.memory.gc_and_merge_fragmented_memories())
             except Exception as e:
                 logger.warning(f"Failed to trigger background Memory GC: {e}")
 
@@ -681,7 +699,7 @@ class Agent:
 
             if not tool_calls_list:
                 yield {"type": "completed"}
-                asyncio.create_task(on_session_end(self))
+                self._create_tracked_task(on_session_end(self))
                 return
 
             # ── 权限检查 + 工具执行（合并循环）──
@@ -795,7 +813,7 @@ class Agent:
 
                 # 高危/写入操作必须审计以确保行为对齐，即使成功；安全操作仅在报错时才审计
                 force_audit = (category in [PermissionCategory.WRITE, PermissionCategory.DANGEROUS])
-                asyncio.create_task(audit_tool_call(self, tool_name, tool_args, result_str, force=force_audit))
+                self._create_tracked_task(audit_tool_call(self, tool_name, tool_args, result_str, force=force_audit))
 
                 # v3: 智能结果截断，防止大体积返回撑爆上下文，同时保留关键报错堆栈
                 if len(result_str) > 10000:
