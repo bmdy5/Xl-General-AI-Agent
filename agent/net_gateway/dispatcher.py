@@ -23,6 +23,7 @@ class MessageDispatcher:
         self._private_chat_paused = False
         self._fatigue_levels = {}        # group_id/session_key -> float
         self._sleep_modes = {}           # group_id/session_key -> bool
+        self._active_sleep_tasks = {}    # group_id/session_key -> asyncio.Task
         self._waiting_podcast_topic = {} # session_key -> bool
         self._podcast_choices = {}       # session_key -> list[str]
         self._last_message_times = {}    # group_id/session_key -> float
@@ -152,11 +153,16 @@ class MessageDispatcher:
 
         # ── 4. 主人专属控制与特权唤醒 ──
         if user_id == self.admin_id:
-            # 1. 强行唤醒打盹
-            if self._sleep_modes.get(session_key):
-                self._sleep_modes[session_key] = False
-                self._fatigue_levels[session_key] = 0.0
-                logger.info(f"Admin private message received. Waking up {session_key} from nap.")
+            # 1. 强行唤醒打盹 (管理员特权：一开口即 100% 全局复活小萤，取消所有的打盹异步任务)
+            if any(self._sleep_modes.values()):
+                for key, task in list(self._active_sleep_tasks.items()):
+                    if task and not task.done():
+                        task.cancel()
+                        logger.info(f"Admin message received. Cancelled background sleep task for {key}.")
+                self._sleep_modes.clear()
+                self._active_sleep_tasks.clear()
+                self._fatigue_levels.clear()
+                logger.info("Admin private message received. Waking up all sessions globally from sleep/nap.")
             
             # 2. 物理开关指令拦截
             if msg_type == "private":
@@ -370,7 +376,7 @@ class MessageDispatcher:
             if msg_type == "private" and user_id != self.admin_id:
                 fatigue_rate = float(os.getenv("QQ_FATIGUE_RATE", "0.025"))
                 inc = total_sent_tokens * fatigue_rate
-                await self._adjust_fatigue(session_key, inc, is_private=True)
+                await self._adjust_fatigue(session_key, inc, is_private=True, sender_name=sender_name)
 
         except asyncio.CancelledError:
             raise
@@ -389,7 +395,7 @@ class MessageDispatcher:
                     logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务: {next_raw}")
                     asyncio.create_task(self.dispatch_event(next_event))
 
-    async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None, is_private: bool = False):
+    async def _adjust_fatigue(self, group_id: str, inc: float, event: dict = None, is_private: bool = False, sender_name: str = ""):
         """疲劳计算逻辑与高情商打盹宣告"""
         now = time.monotonic()
         last_time = self._last_message_times.get(group_id, now)
@@ -411,13 +417,14 @@ class MessageDispatcher:
                 if self.bot and hasattr(self.bot, "_generate_private_fatigue_announcement"):
                     announcement = await self.bot._generate_private_fatigue_announcement(user_id)
                 else:
-                    announcement = await self._generate_private_fatigue_announcement(user_id)
+                    announcement = await self._generate_private_fatigue_announcement(user_id, sender_name)
                 await self.context.send_msg("private", user_id, "", announcement, skip_delay=True)
                 self._log_activity_dispatcher("物理打盹", f"小萤在私聊 {user_id} 中宣告打盹: {announcement}")
                 
                 agent = self.context._agents.get(group_id)
                 if agent is not None:
-                    asyncio.create_task(self._private_sleep_and_dream_process(group_id, user_id, agent))
+                    task = asyncio.create_task(self._private_sleep_and_dream_process(group_id, user_id, agent, sender_name))
+                    self._active_sleep_tasks[group_id] = task
             else:
                 if self.bot and hasattr(self.bot, "_generate_fatigue_announcement"):
                     announcement = await self.bot._generate_fatigue_announcement(group_id)
@@ -429,16 +436,19 @@ class MessageDispatcher:
                 session_key = f"group_{group_id}_{self.admin_id}"
                 agent = self.context._agents.get(session_key)
                 if agent is not None:
-                    asyncio.create_task(self._sleep_and_dream_process(group_id, agent))
+                    task = asyncio.create_task(self._sleep_and_dream_process(group_id, agent))
+                    self._active_sleep_tasks[group_id] = task
             
         elif new_fatigue <= 20.0 and old_sleep:
             self._sleep_modes[group_id] = False
 
-    async def _generate_private_fatigue_announcement(self, user_id: str) -> str:
+    async def _generate_private_fatigue_announcement(self, user_id: str, sender_name: str = "") -> str:
         """模型或兜底生成私聊用脑过度打盹宣告"""
+        if not sender_name:
+            sender_name = user_id
         fallbacks = [
-            "唔……（揉了揉太阳穴）小萤今天和大家聊得太久啦，脑细胞好像一下子烧光了呢。\n\n我的大脑网络正在发烫物理降温，我去充个电打个盹，晚点再找你聊哦～",
-            "哎呀……（晕乎乎）感觉算力严重超载啦，小萤的思绪都有点打结了了。\n\n本美少女极客合伙人要先去深度做梦、系统维护半小时啦。\n\n等我充满电复活，一定第一秒钟秒回你哈！"
+            f"唔……（揉了揉太阳穴）小萤和{sender_name}聊得太久啦，脑细胞好像一下子烧光了呢。\n\n我的大脑网络正在发烫物理降温，我去充个电打个盹，晚点再找你聊哦～",
+            f"哎呀……（晕乎乎）感觉算力严重超载啦，小萤的思绪都有点打结了。\n\n本美少女极客合伙人要先去打个盹、系统维护十五分钟啦。\n\n等我充满电复活，一定第一时间秒回你哈！"
         ]
         session_key = f"user_{user_id}"
         agent = self.context._agents.get(session_key)
@@ -448,9 +458,11 @@ class MessageDispatcher:
         try:
             _pn, _ua = self._load_persona()
             prompt = (
-                f"你现在是{_ua}的专属 AI 助手【{_pn}】。你刚才由于频繁私聊，大脑疲劳度达到 100% 极限，需要进行物理打盹降温休眠。\n"
-                f"请你自发、高情商地向对方发表一句幽默、可爱的私聊打盹宣告，委婉告诉对方你‘脑细胞烧光了’，要稍微物理降温，等疲劳度消退再复活。\n\n"
-                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气活灵活现，带有动作描写（如：（揉了揉太阳穴）、（晕乎乎））。"
+                f"你现在是主人【亮哥】的专属 AI 助手【{_pn}】。你刚才在与用户【{sender_name}】（非亮哥）的私聊中由于聊得太频繁，大脑疲劳度达到 100% 极限，需要进行物理打盹降温休眠。\n"
+                f"注意：当前对话的对方是【{sender_name}】（他/她并不是你的主人亮哥，只是一个普通同事/Bot/群友）。"
+                f"【绝对禁止称呼对方为'亮哥'、'主人'或'老板'】！\n"
+                f"请你自发、高情商地向【{sender_name}】发表一句话作为打盹宣告，告诉他/她你脑细胞烧光了，要稍微休息降温，等疲劳度消退再回复他/她。\n\n"
+                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气幽默、活泼可爱且保持客观界限，带有动作描写（如：（揉了揉太阳穴）、（打了个哈欠）），绝不能出现任何与亮哥称呼相关的穿帮词。"
             )
             response = await asyncio.wait_for(
                 agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
@@ -461,7 +473,7 @@ class MessageDispatcher:
         except Exception:
             return random.choice(fallbacks)
 
-    async def _private_sleep_and_dream_process(self, session_key: str, user_id: str, agent: object):
+    async def _private_sleep_and_dream_process(self, session_key: str, user_id: str, agent: object, sender_name: str = ""):
         """私聊异步做梦净化"""
         try:
             snapshot = list(agent.messages)
@@ -480,18 +492,22 @@ class MessageDispatcher:
                 agent.messages = []
             self._fatigue_levels[session_key] = 0.0
             self._sleep_modes[session_key] = False
+            self._active_sleep_tasks.pop(session_key, None)
             
-            wake_msg = await self._generate_private_wake_announcement(user_id)
+            wake_msg = await self._generate_private_wake_announcement(user_id, sender_name)
             await self.context.send_msg("private", user_id, "", wake_msg, skip_delay=True)
         except Exception:
             self._fatigue_levels[session_key] = 0.0
             self._sleep_modes[session_key] = False
+            self._active_sleep_tasks.pop(session_key, None)
 
-    async def _generate_private_wake_announcement(self, user_id: str) -> str:
+    async def _generate_private_wake_announcement(self, user_id: str, sender_name: str = "") -> str:
         """模型或兜底生成私聊醒来宣告"""
+        if not sender_name:
+            sender_name = user_id
         fallbacks = [
-            "哼哼～（伸了个大大的懒腰）小萤充满电上线啦！\n\n大脑冷却完毕，随时可以继续找小萤聊天啦！",
-            "呼啊……（揉揉眼睛）深度睡眠充完电，我的算力核心已经 100% 恢复满状态啦！"
+            f"哼哼～（伸了个大大的懒腰）小萤充满电上线啦！\n\n大脑冷却完毕，{sender_name}可以继续找小萤聊天啦！",
+            f"呼啊……（揉揉眼睛）深度睡眠充完电，我的算力核心已经 100% 恢复满状态啦！"
         ]
         session_key = f"user_{user_id}"
         agent = self.context._agents.get(session_key)
@@ -500,9 +516,10 @@ class MessageDispatcher:
         try:
             _pn, _ua = self._load_persona()
             prompt = (
-                f"你现在是{_ua}的专属 AI 助手【{_pn}】。你刚才由于用脑过度物理打盹了，现在充满电成功满血复活。\n"
-                f"请你自发、高情商地向对方发表一句幽默、可爱的私聊复苏宣告。\n\n"
-                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气活灵活现，带有动作描写。"
+                f"你现在是主人【亮哥】的专属 AI 助手【{_pn}】。你刚才由于用脑过度物理打盹了，现在充满电成功满血复苏。\n"
+                f"注意：当前对话的对方是【{sender_name}】（他/她并不是你的主人亮哥）。【绝对禁止称呼对方为'亮哥'、'主人'或'老板'】！\n"
+                f"请你自发、高情商地向【{sender_name}】发表一句话作为复苏宣告，宣告你的算力已经100%恢复满状态。\n\n"
+                f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气幽默活泼且克制客观，带有动作描写，绝不能出现任何与亮哥称呼相关的穿帮词。"
             )
             response = await asyncio.wait_for(
                 agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
