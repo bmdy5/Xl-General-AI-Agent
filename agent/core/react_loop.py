@@ -70,6 +70,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
     now_agg = dt.replace(minute=minute_window, second=0, microsecond=0)
     now = now_agg.strftime("%Y-%m-%d %H:%M (北京时间)")
     cwd = os.getcwd()
+    tool_call_history: list[dict] = []
 
     cached_prompt = await agent._build_system_prompt()
     cached_block = await agent._build_memory_block(user_input, 0)
@@ -231,6 +232,38 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                 tool_args = json.loads(tc["function"]["arguments"])
             except json.JSONDecodeError:
                 tool_args = {}
+
+            # 🛠️ 降维防灾：ReAct 循环死循环熔断器 (Deadlock Fuse)
+            consecutive_count = 0
+            for past_call in reversed(tool_call_history):
+                try:
+                    past_args_str = json.dumps(past_call.get("args"), sort_keys=True)
+                    curr_args_str = json.dumps(tool_args, sort_keys=True)
+                except Exception:
+                    past_args_str, curr_args_str = "", "diff"
+                
+                if past_call.get("name") == tool_name and past_args_str == curr_args_str:
+                    consecutive_count += 1
+                else:
+                    break
+
+            if consecutive_count >= 3:
+                result_str = (
+                    f"Error: 【死循环安全熔断】您已连续 {consecutive_count + 1} 次以完全相同的参数调用工具 '{tool_name}'。\n"
+                    f"系统判定您陷入了 ReAct 逻辑死锁与幻觉循环。请您必须深刻自省，换用其他工具、修正参数、或者转换解决思路，严禁盲目机械重试！"
+                )
+                logger.warning(f"🚨 [死循环熔断拦截] Agent 连续调用同名同参工具 {tool_name} 达 4 次！参数: {tool_args}")
+                yield {"type": "tool_result", "id": tc["id"], "name": tool_name, "result": result_str}
+                agent.messages.append({
+                    "role": "tool", "tool_call_id": tc["id"],
+                    "name": tool_name, "content": result_str,
+                })
+                if agent.session:
+                    await agent.session.append_message(agent.messages[-1])
+                continue
+
+            # 记录本次正常调用历史，用于防熔断死锁监测
+            tool_call_history.append({"name": tool_name, "args": tool_args})
 
             if getattr(agent, "role", "admin") == "coworker":
                 forbidden_tools = {
