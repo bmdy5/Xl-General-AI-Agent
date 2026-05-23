@@ -100,8 +100,8 @@ class QQGateway:
                             event = json.loads(msg.data)
                             # 过滤并仅处理聊天消息，忽略其他噪音事件
                             if event.get("post_type") == "message" and event.get("message_type") in ("private", "group"):
-                                # 委托给 dispatcher 消息分发处理器，0 耦合
-                                await self.dispatcher.dispatch_event(event)
+                                # 委托给 dispatcher 消息分发处理器，并发非阻塞协程派发，实现 100% 极速并发消费
+                                asyncio.create_task(self.dispatcher.dispatch_event(event))
                         except Exception as parse_err:
                             logger.error(f"Error parsing websocket message: {parse_err}")
                     elif msg.type in (aiohttp.WSMsgType.CLOSED, aiohttp.WSMsgType.ERROR):
