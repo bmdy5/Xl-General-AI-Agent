@@ -69,7 +69,7 @@ class GatewayScheduler:
             # 定时任务：每日 21:00 自动拉起夜间极客播客选题（仅限管理员私聊）
             if now_dt.hour == 21 and now_dt.minute == 0 and 0 <= now_dt.second < 20:
                 p_key = f"private_{self.admin_id}"
-                waiting_topic = getattr(self.bot, "_waiting_podcast_topic", {})
+                waiting_topic = self.bot.get_waiting_podcast_topic()
                 if not waiting_topic.get(p_key, False):
                     logger.info("⏰ Time hit 21:00. Triggering night podcast topic selection...")
                     asyncio.create_task(self._trigger_night_podcast_selection(p_key, self.admin_id))
@@ -91,8 +91,8 @@ class GatewayScheduler:
                 raise ValueError(f"获取选题失败: {data.get('message')}")
                 
             topics = data.get("topics", [])
-            getattr(self.bot, "_podcast_choices", {})[session_key] = topics
-            getattr(self.bot, "_waiting_podcast_topic", {})[session_key] = True
+            self.bot.get_podcast_choices()[session_key] = topics
+            self.bot.get_waiting_podcast_topic()[session_key] = True
             
             t_str = "\n".join([f"{t}" for t in topics])
             msg = (

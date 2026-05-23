@@ -41,10 +41,7 @@ class FatigueManager:
             self._sleep_modes[group_id] = True
             if is_private:
                 user_id = group_id.replace("user_", "")
-                if self.bot and hasattr(self.bot, "_generate_private_fatigue_announcement"):
-                    announcement = await self.bot._generate_private_fatigue_announcement(user_id)
-                else:
-                    announcement = await self._generate_private_fatigue_announcement(user_id, sender_name)
+                announcement = await self._generate_private_fatigue_announcement(user_id, sender_name)
                 await self.context.send_msg("private", user_id, "", announcement, skip_delay=True)
                 self.dispatcher._log_activity_dispatcher("物理打盹", f"小萤在私聊 {user_id} 中宣告打盹: {announcement}")
                 
@@ -53,10 +50,7 @@ class FatigueManager:
                     task = asyncio.create_task(self._private_sleep_and_dream_process(group_id, user_id, agent, sender_name))
                     self._active_sleep_tasks[group_id] = task
             else:
-                if self.bot and hasattr(self.bot, "_generate_fatigue_announcement"):
-                    announcement = await self.bot._generate_fatigue_announcement(group_id)
-                else:
-                    announcement = await self._generate_fatigue_announcement(group_id)
+                announcement = await self._generate_fatigue_announcement(group_id)
                 await self.context.send_msg("group", "", group_id, announcement, skip_delay=True)
                 self.dispatcher._log_activity_dispatcher("物理打盹", f"小萤在群 {group_id} 中宣告打盹: {announcement}")
                 
