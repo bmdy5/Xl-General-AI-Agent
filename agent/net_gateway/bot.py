@@ -76,15 +76,20 @@ class QQGateway:
         logger.info(f"HTTP API:  {NC_HTTP_URL}")
         
         self._http = aiohttp.ClientSession()
-        await self.scheduler.start()
-        
-        # 主长连接维持循环
-        while True:
-            try:
-                await self._ws_loop()
-            except Exception as e:
-                logger.error(f"WebSocket loop finished with error: {e}. Reconnecting in 3s...")
-                await asyncio.sleep(3)
+        try:
+            await self.scheduler.start()
+            
+            # 主长连接维持循环
+            while True:
+                try:
+                    await self._ws_loop()
+                except Exception as e:
+                    logger.error(f"WebSocket loop finished with error: {e}. Reconnecting in 3s...")
+                    await asyncio.sleep(3)
+        finally:
+            await self.scheduler.stop()
+            if self._http and not self._http.closed:
+                await self._http.close()
 
     async def _ws_loop(self):
         """WebSocket 收包内循环。"""
