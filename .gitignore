@@ -24,4 +24,5 @@ agent/dashboard_v2/assets/gen_*
 scratch/*
 !scratch/test_sandbox.py
 agent/model/
-
+!gateway.log
+!agent_activity.log
