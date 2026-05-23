@@ -361,7 +361,7 @@ async def on_session_end(agent):
             content = str(msg.get("content", ""))
             
             if role == "user":
-                if f"[来自 QQ: {admin_id} 的群发言]" in content:
+                if f"[来自 QQ: {admin_id} 的群发言]" in content or "[来自亮哥的群发言]" in content:
                     cleaned_messages.append(msg)
                     last_was_admin_user = True
                 else:
