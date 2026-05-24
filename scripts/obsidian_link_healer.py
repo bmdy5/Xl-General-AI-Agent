@@ -101,6 +101,151 @@ LINK_MAPS = {
 }
 
 
+def archive_old_indexes():
+    """1.5. 物理隔离归档：扫描全库 01-06 板块根目录及其子目录下的所有陈旧 _index.md，将它们平移至 .archive/ 隐藏隔离区"""
+    print("📦 [物理隔离] 正在归档各板块陈旧索引文件...")
+    exclude_dirs = {".archive", ".attachments", ".git", ".obsidian", ".trash", ".claude"}
+    for entry in os.listdir(NOTES_DIR):
+        full_path = os.path.join(NOTES_DIR, entry)
+        if os.path.isdir(full_path) and entry not in exclude_dirs:
+            # 这是一个板块根目录，比如 02-Agent技术
+            for root, dirs, files in os.walk(full_path):
+                # 排除 details 目录本身和特殊隐藏目录
+                relative_root = os.path.relpath(root, full_path)
+                parts = relative_root.split(os.sep)
+                if "details" in parts or any(p.startswith(".") for p in parts if p):
+                    continue
+                for file in files:
+                    if file.endswith("_index.md"):
+                        src_path = os.path.join(root, file)
+                        # 生成在 .archive/ 下的唯一文件名，格式如：02-Agent技术-核心循环-核心循环_index.md
+                        relative_path_from_notes = os.path.relpath(src_path, NOTES_DIR)
+                        archive_filename = relative_path_from_notes.replace("/", "-")
+                        dst = os.path.join(ARCHIVE_DIR, archive_filename)
+                        try:
+                            shutil.move(src_path, dst)
+                            print(f"  ➔ [索引隔离] 移动陈旧索引: {relative_path_from_notes} 至 .archive/")
+                        except Exception as e:
+                            print(f"  ⚠️ 移动索引文件失败: {e}")
+
+
+def get_best_pillar(plate_name, file_basename):
+    """根据板块名 and 行星卡片文件名，计算它应该挂载的 Pillar 恒星主卡"""
+    name_lower = file_basename.lower()
+    
+    if plate_name == "01-小萤":
+        return "01.1-小萤核心架构与生命周期.md"
+        
+    elif plate_name == "02-Agent技术":
+        if any(kw in name_lower for kw in ["swarm", "claude-code", "cc-", "subagent", "fork", "coordinator", "teammate"]):
+            return "02.2-ClaudeCode多智能体体系.md"
+        elif any(kw in name_lower for kw in ["openclaw", "tinypace", "a2a", "session", "会话", "跨会话", "消息", "fts5"]):
+            return "02.3-OpenCLAW与跨会话通信.md"
+        elif any(kw in name_lower for kw in ["anthropic", "aci", "哲学", "防错", "评估", "eval"]):
+            return "02.4-Anthropic构建哲学与ACI设计.md"
+        else:
+            return "02.1-Agent核心循环与架构.md"
+            
+    elif plate_name == "03-应用开发":
+        if any(kw in name_lower for kw in ["ai应用", "rag", "llm", "缓存", "prompt"]):
+            return "03.2-大模型驱动应用 (LLM-App) 架构设计.md"
+        else:
+            return "03.1-极客全栈工程应用开发规范.md"
+            
+    elif plate_name == "04-运维部署":
+        if any(kw in name_lower for kw in ["网络", "安全", "数据", "灾备", "防注", "备份", "sql"]):
+            return "04.2-生产环境网络安全与数据灾备规范.md"
+        else:
+            return "04.1-QQ机器人网关高可用部署手册.md"
+            
+    elif plate_name == "05-源码参考":
+        return "05.1-核心源码骨架参考与API规范.md"
+        
+    elif plate_name == "06-工作记录":
+        if any(kw in name_lower for kw in ["实操", "复盘", "项目", "工程", "实践"]):
+            return "06.2-自建Agent实操与项目复盘.md"
+        else:
+            return "06.1-工作日志与自学习技能清单.md"
+            
+    return None
+
+
+def run_star_link_weaving():
+    """3.5. 智能星系双链挂载：扫描 details/ 下的所有细节行星卡片，并在 Pillar 主卡及卡片自身建立双向咬合链接"""
+    print("🩺 [双链挂载] 正在执行恒星-行星双向织网挂载...")
+    exclude_dirs = {".archive", ".attachments", ".git", ".obsidian", ".trash", ".claude"}
+    
+    for entry in os.listdir(NOTES_DIR):
+        full_path = os.path.join(NOTES_DIR, entry)
+        if os.path.isdir(full_path) and entry not in exclude_dirs:
+            details_dir = os.path.join(full_path, "details")
+            if not os.path.exists(details_dir):
+                continue
+                
+            for file in os.listdir(details_dir):
+                if file.endswith(".md"):
+                    file_basename = file[:-3]
+                    pillar_name = get_best_pillar(entry, file_basename)
+                    if not pillar_name:
+                        continue
+                        
+                    pillar_path = os.path.join(full_path, pillar_name)
+                    if not os.path.exists(pillar_path):
+                        print(f"  ⚠️ [挂载警告] 找不到目标 Pillar 恒星主卡: {pillar_path}")
+                        continue
+                        
+                    # 1. 检查并写入 Pillar 主卡
+                    with open(pillar_path, 'r', encoding='utf-8') as f:
+                        pillar_content = f.read()
+                        
+                    # 判定是否已经在 Pillar 中被引用（包括带相对路径和不带相对路径的形式）
+                    has_ref = (file_basename in pillar_content)
+                    
+                    if not has_ref:
+                        # 在主卡末尾自动挂载
+                        header = "### 🔗 细节行星挂载 (Details Satellite Nebula)"
+                        if header not in pillar_content:
+                            pillar_content = pillar_content.rstrip() + f"\n\n{header}\n"
+                            
+                        # 追加当前行星细节卡片的双链
+                        pillar_content = pillar_content.rstrip() + f"\n* [[{entry}/details/{file_basename}|{file_basename}]]\n"
+                        with open(pillar_path, 'w', encoding='utf-8') as f:
+                            f.write(pillar_content)
+                        print(f"  ➔ [主卡挂载成功] 挂载行星 [[{file_basename}]] 到恒星 {pillar_name}")
+                        
+                    # 2. 检查并反向写入行星卡片自身
+                    planet_path = os.path.join(details_dir, file)
+                    with open(planet_path, 'r', encoding='utf-8') as f:
+                        planet_content = f.read()
+                        
+                    if "**反向挂载主干**" not in planet_content:
+                        pillar_friendly = pillar_name[:-3]
+                        planet_content = planet_content.rstrip() + f"\n\n---\n**反向挂载主干**：[[{entry}/{pillar_friendly}|{pillar_friendly}]]\n"
+                        with open(planet_path, 'w', encoding='utf-8') as f:
+                            f.write(planet_content)
+                        print(f"  ➔ [行星自愈反向链] 卡片 {file} 已挂载反向链到 {pillar_friendly}")
+
+
+def load_dynamic_details_maps():
+    """3.8. 动态双链映射：扫描 01-06 的 details/ 目录，将细节卡片文件名自动注册进全局 LINK_MAPS 中"""
+    print("📡 [动态双链注册] 正在建立细节行星映射图谱...")
+    exclude_dirs = {".archive", ".attachments", ".git", ".obsidian", ".trash", ".claude"}
+    dynamic_count = 0
+    for entry in os.listdir(NOTES_DIR):
+        full_path = os.path.join(NOTES_DIR, entry)
+        if os.path.isdir(full_path) and entry not in exclude_dirs:
+            details_dir = os.path.join(full_path, "details")
+            if os.path.exists(details_dir):
+                for file in os.listdir(details_dir):
+                    if file.endswith(".md"):
+                        card_name = file[:-3]
+                        target_path = f"{entry}/details/{card_name}"
+                        if card_name not in LINK_MAPS:
+                            LINK_MAPS[card_name] = target_path
+                            dynamic_count += 1
+    print(f"📡 [动态注册] 成功动态加载并匹配了 {dynamic_count} 张细节卡片的双链物理路径！")
+
+
 def build_cold_backup():
     """1. 物理灾备：全量打包压缩当前学习笔记为 ZIP，存放在桌面上"""
     if not os.path.exists(NOTES_DIR):
@@ -173,6 +318,48 @@ def run_physical_cleanup():
                     print(f"  ➔ [碎片降噪] 移动冗余文件: {file} 至 .archive/")
                 except Exception as e:
                     print(f"  ⚠️ 移动文件 {file} 失败: {e}")
+
+    # C2. 行星细节卡片平铺归拢（物理平移至所属板块根目录下的 details/ 文件夹）
+    print("📁 [细节平铺] 正在开展行星细节小卡片平铺收拢...")
+    for entry in os.listdir(NOTES_DIR):
+        full_path = os.path.join(NOTES_DIR, entry)
+        if os.path.isdir(full_path) and entry not in exclude_dirs:
+            # 这是一个板块根目录，如 02-Agent技术
+            details_dir = os.path.join(full_path, "details")
+            os.makedirs(details_dir, exist_ok=True)
+            
+            # 递归遍历这个板块的子目录
+            for root, dirs, files in os.walk(full_path):
+                # 排除 details 目录本身和特殊隐藏目录
+                relative_root = os.path.relpath(root, full_path)
+                parts = relative_root.split(os.sep)
+                if "details" in parts or any(p.startswith(".") for p in parts if p):
+                    continue
+                if root == full_path:
+                    # 板块根目录不移动（Pillar 主卡不移动）
+                    continue
+                    
+                for file in files:
+                    if file.endswith(".md") and not file.endswith("_index.md"):
+                        src_file = os.path.join(root, file)
+                        dst_file = os.path.join(details_dir, file)
+                        
+                        # 冲突处理：当发现 details 下已存在同名行星卡片时，追加“父文件夹简称-”前缀
+                        if os.path.exists(dst_file):
+                            parent_name = os.path.basename(root)
+                            new_filename = f"{parent_name}-{file}"
+                            dst_file = os.path.join(details_dir, new_filename)
+                            
+                            counter = 1
+                            while os.path.exists(dst_file):
+                                dst_file = os.path.join(details_dir, f"{parent_name}-{file[:-3]}_{counter}.md")
+                                counter += 1
+                                
+                        try:
+                            shutil.move(src_file, dst_file)
+                            print(f"  ➔ [细节平铺] 移动行星: {entry}/{os.path.relpath(src_file, full_path)} ➔ details/{os.path.basename(dst_file)}")
+                        except Exception as e:
+                            print(f"  ⚠️ 行星卡片平铺失败: {src_file} ➔ {e}")
 
     # D. 递归物理全局清扫已废弃的空子目录 (若无任何 .md 笔记则强力拔除)
     for root, dirs, files in os.walk(NOTES_DIR, topdown=False):
@@ -347,8 +534,17 @@ def main():
     # 2. 建立目录
     setup_directories()
     
-    # 3. 物理整理归拢
+    # 2.5 隔离各板块陈旧索引
+    archive_old_indexes()
+    
+    # 3. 物理整理归拢（包含细节行星平铺）
     run_physical_cleanup()
+    
+    # 3.5 行星与主干恒星双向挂载织网
+    run_star_link_weaving()
+    
+    # 3.8 动态扫描并注册细节卡片双链映射
+    load_dynamic_details_maps()
     
     # 4. 执行双链自愈
     heal_all_links()
