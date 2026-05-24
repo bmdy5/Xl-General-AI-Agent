@@ -35,3 +35,12 @@ archive/
 # 记忆沙箱与测试记忆 (0ms 一键换家与 TDD 安全沙箱)
 .memory/
 .memory_test/
+
+# 本地测试与扫码登录临时缓存文件
+debug_mcp.py
+qrcode_b64.txt
+qrcode_page.html
+
+# 本地运行时临时生成的数据与日志
+logs/
+memory/
