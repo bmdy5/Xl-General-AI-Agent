@@ -170,3 +170,36 @@ async def test_rag_embedding_memory_cache():
     res2 = search_memories(manager, "测试", limit=5)
     assert len(res2) == 1
     assert res2[0]["filename"] == "ki_ki_test_1.md"
+
+
+# ── 5. 验证字符串形式 Key 能够被选择性淘汰 ──
+def test_cache_string_key_invalidation():
+    cache = MemoryCache(capacity=10, ttl=100)
+    str_key = "亮哥的暗号小萤是宇宙超级美少女"
+    cache.set(str_key, "测试数据")
+    
+    assert cache.get(str_key) == "测试数据"
+    
+    # 淘汰 "小萤" 关键词
+    cache.invalidate_keys(keywords="小萤")
+    
+    # 黄金断言：字符串形式的 Key 也能被精准拦截并安全移除！
+    assert cache.get(str_key) is None
+
+
+# ── 6. 验证超时条目被物理从内存字典中删除 ──
+def test_cache_expired_lazy_cleanup():
+    cache = MemoryCache(capacity=10, ttl=1)
+    
+    query_vec = [0.1] * 768
+    cache.set(("测试缓存", 5), "缓存数据", embedding=query_vec)
+    
+    # 等待其自然超时
+    time.sleep(1.2)
+    
+    # 执行语义检索，即使未命中，也要触发物理清理
+    res = cache.get(("不相干的查询", 5), query_vec=[0.2]*768, semantic_threshold=0.85)
+    assert res is None
+    
+    # 黄金断言：超时的数据必须物理从缓存 OrderedDict 中被剔除干净！
+    assert len(cache.cache) == 0
