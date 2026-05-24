@@ -101,10 +101,15 @@ class GatewayScheduler:
                     else:
                         try:
                             timeout_tts = aiohttp.ClientTimeout(total=2.0)
-                            async with aiohttp.ClientSession(timeout=timeout_tts) as session:
-                                async with session.get("http://127.0.0.1:9880/") as resp:
+                            if self.bot._http and not self.bot._http.closed:
+                                async with self.bot._http.get("http://127.0.0.1:9880/", timeout=timeout_tts) as resp:
                                     if resp.status not in (200, 404):
                                         raise ValueError(f"Status {resp.status}")
+                            else:
+                                async with aiohttp.ClientSession(timeout=timeout_tts) as session:
+                                    async with session.get("http://127.0.0.1:9880/") as resp:
+                                        if resp.status not in (200, 404):
+                                            raise ValueError(f"Status {resp.status}")
                         except Exception:
                             logger.warning("🎙️ [守护进程] 发现处于活跃保活期的语音服务假死/挂起，执行自愈重启...")
                             tts_dir = str(root_dir.parent / "GPT-SoVITS")
