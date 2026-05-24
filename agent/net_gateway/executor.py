@@ -36,6 +36,10 @@ class AgentExecutor:
         
         # 敏感卡片等待授权审批队列
         self._pending_perms = {}  # session_key -> _PermEvent
+        
+        # 敏感操作会话级全局绿灯状态（方案 A）
+        self.session_approved_until = 0.0  # 信任截止的绝对单调时间戳 (time.monotonic())
+
 
     async def execute_agent_run(self, agent, raw: str, session_key: str, msg_type: str, 
                                  user_id: str, group_id: str, sender_name: str, task_start_time: float):
@@ -44,6 +48,7 @@ class AgentExecutor:
         if await self.bus.wait_for_carrier_sense(session_key, task_start_time):
             return
 
+        session_approved = False
         now = time.monotonic()
         last_voice = self.context._last_voice_time
         time_diff = now - last_voice
@@ -118,29 +123,54 @@ class AgentExecutor:
                         await self.context.send_msg(msg_type, user_id, group_id, "⚠️ [权限限制] 抱歉，为了系统安全，您在沙箱中无法授权执行此修改操作哦。", skip_delay=True)
                     else:
                         tool_list = [evt.get("tool_name", "?")]
-                        self._log_activity_dispatcher("系统调度", f"主人触发权限审批拦截，申请工具: {tool_list}", user_id=user_id)
                         
-                        await self.context.send_msg(msg_type, user_id, group_id, 
-                            f"🔧 [主人专属审批授权]\n\n小萤正在尝试执行敏感的 {cat} 修改或命令动作。详情：\n{evt.get('message', '')}\n\n回复「允许」或「y」放行，回复其他取消该敏感操作。", skip_delay=True)
+                        # 方案 A 信任绿灯检测
+                        now_mono = time.monotonic()
+                        is_global_approved = now_mono < self.session_approved_until
                         
-                        evt_perm = _PermEvent()
-                        self._pending_perms[session_key] = evt_perm
+                        # 获取配置文件中配置的超时时间 (默认 30 分钟)
+                        from agent.core.config import settings
                         try:
-                            # 亮哥有 120 秒时间来做物理 QQ 卡片放行
-                            await asyncio.wait_for(evt_perm.wait(), timeout=120)
-                            approved = evt_perm.result
-                        except asyncio.TimeoutError:
-                            approved = False
-                        finally:
-                            self._pending_perms.pop(session_key, None)
+                            timeout_val = float(settings.get("SESSION_PERMISSION_TIMEOUT", "1800"))
+                        except ValueError:
+                            timeout_val = 1800.0
                             
-                        if approved:
-                            self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权通过，批准放行敏感操作！", user_id=user_id)
+                        if is_global_approved or session_approved:
+                            # 自动动态顺延全局信任截止时间
+                            self.session_approved_until = time.monotonic() + timeout_val
+                            self._log_activity_dispatcher("系统调度", f"主人在此轮全局信任期内，自动免检通过敏感工具: {tool_list}", user_id=user_id)
+                            # 发送轻量级友好提示
+                            tool_names_str = ", ".join(tool_list)
+                            await self.context.send_msg(msg_type, user_id, group_id, f"💡 [信任放行] 检测到主人在 30 分钟会话信任期内，已自动免审放行敏感操作 `{tool_names_str}`。", skip_delay=True)
                             agent.approve_permission()
                         else:
-                            self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权被拒绝或超时，安全取消操作！", user_id=user_id)
-                            agent.deny_permission()
-                            await self.context.send_msg(msg_type, user_id, group_id, "已取消该敏感指令的执行。", skip_delay=True)
+                            self._log_activity_dispatcher("系统调度", f"主人触发权限审批拦截，申请工具: {tool_list}", user_id=user_id)
+                            
+                            await self.context.send_msg(msg_type, user_id, group_id, 
+                                f"🔧 [主人专属审批授权]\n\n小萤正在尝试执行敏感的 {cat} 修改或命令动作。详情：\n{evt.get('message', '')}\n\n回复「允许」或「y」放行，回复其他取消该敏感操作。", skip_delay=True)
+                            
+                            evt_perm = _PermEvent()
+                            self._pending_perms[session_key] = evt_perm
+                            try:
+                                # 亮哥有 120 秒时间来做物理 QQ 卡片放行
+                                await asyncio.wait_for(evt_perm.wait(), timeout=120)
+                                approved = evt_perm.result
+                            except asyncio.TimeoutError:
+                                approved = False
+                            finally:
+                                self._pending_perms.pop(session_key, None)
+                                
+                            if approved:
+                                self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权通过，批准放行敏感操作！", user_id=user_id)
+                                session_approved = True  # 本轮开启绿灯
+                                # 初始化全局绿灯信任窗口
+                                self.session_approved_until = time.monotonic() + timeout_val
+                                agent.approve_permission()
+                            else:
+                                self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权被拒绝或超时，安全取消操作！", user_id=user_id)
+                                agent.deny_permission()
+                                await self.context.send_msg(msg_type, user_id, group_id, "已取消该敏感指令的执行。", skip_delay=True)
+
 
                 elif evt["type"] == "error":
                     self._log_activity_dispatcher("系统异常", f"Agent 报错: {evt['content']}", user_id=user_id)
