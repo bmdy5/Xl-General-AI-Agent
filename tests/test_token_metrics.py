@@ -181,13 +181,13 @@ async def test_react_prefix_purification():
     assert len(llm_calls_history) == 1
     sent_msgs = llm_calls_history[0]
     
-    # 黄金断言 1: 最尾端的一条消息确实是我们的临时 System 消息 (物理阻断前缀抖动)
-    assert sent_msgs[-1]["role"] == "system"
-    assert "当前环境上下文" in sent_msgs[-1]["content"]
+    # 黄金断言 1: 首条消息是包含了当前环境上下文的 System 消息 (物理合并注入以彻底阻断前缀抖动)
+    assert sent_msgs[0]["role"] == "system"
+    assert "当前环境上下文" in sent_msgs[0]["content"]
     
-    # 黄金断言 2: 原先的 User 消息没有任何变化，依然处于倒数第二条的静态位置上
-    assert sent_msgs[-2]["role"] == "user"
-    assert sent_msgs[-2]["content"] == "开始执行净化测试"
+    # 黄金断言 2: 最尾端的消息就是用户最新发送的消息，它不再受到尾部临时消息的抖动干扰
+    assert sent_msgs[-1]["role"] == "user"
+    assert sent_msgs[-1]["content"] == "开始执行净化测试"
     
     # 黄金断言 3: agent.messages 在被 llm_chat 处理后，其 User 消息依然保持纯净，没有被物理重写
     assert agent.messages[0]["content"] == "开始执行净化测试"
