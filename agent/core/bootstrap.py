@@ -43,6 +43,7 @@ def build_agent(session_id: str = "default"):
     
     from agent.tools.media.image_gen import Image2GenerateTool
     from agent.tools.media.image_read import ReadImageTool
+    from agent.tools.media.send_image_tool import SendImageToQqTool
     
     from agent.tools.mcp.xiaohongshu import XiaohongshuTool
     from agent.tools.mcp.notebooklm import NotebookLMTool
@@ -84,6 +85,7 @@ def build_agent(session_id: str = "default"):
         registry.register(WebFetchTool())
         registry.register(ReadImageTool())
         registry.register(Image2GenerateTool())
+        registry.register(SendImageToQqTool())
         registry.register(SpawnAgentTool())
         registry.register(StitchTool())
         registry.register(MCPClientTool())
