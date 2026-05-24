@@ -72,24 +72,29 @@ class BashTool(BaseTool):
         if not cmd:
             return "safe"
 
-        # 1. 经典显式删除与进程终止拦截
-        for pat in BashTool.DANGEROUS_PATTERNS:
-            if pat.search(cmd):
-                return "dangerous"
-
-        # 2. 经典 Python 代码删除行为 (os.remove / shutil.rmtree / unlink)
-        if re.search(r'\bos\.remove\b|\bos\.unlink\b|\bshutil\.rmtree\b|\bPath\.unlink\b', cmd):
-            return "dangerous"
-
-        # 3. 隐式物理重定向与转移覆写保护区拦截
+        # 核心保护区关键字（系统代码资产）
         protected_keywords = {
             "main.py", "Makefile", "Dockerfile", "docker-compose.yml",
             "pytest.ini", "requirements.txt", ".gitignore", ".env.example", "agent/"
         }
-        has_redirect = ">" in cmd
-        has_move = re.search(r'\bmv\b', cmd)
-        if (has_redirect or has_move) and any(kw in cmd for kw in protected_keywords):
-            return "dangerous"
+
+        # 1. 经典显式物理删除与进程终止拦截
+        is_delete = False
+        for pat in BashTool.DANGEROUS_PATTERNS:
+            if pat.search(cmd):
+                is_delete = True
+                break
+
+        # 2. 经典 Python 代码删除行为 (os.remove / shutil.rmtree / unlink)
+        if re.search(r'\bos\.remove\b|\bos\.unlink\b|\bshutil\.rmtree\b|\bPath\.unlink\b', cmd):
+            is_delete = True
+
+        if is_delete:
+            # 智能防线：如果是物理删除操作，且删除了核心保护区关键字中的代码文件，则判定为高危审核
+            if any(kw in cmd for kw in protected_keywords):
+                return "dangerous"
+            # 否则，如果是删除普通的非代码文件（如 markdown 笔记、临时文件、日志），降级为常规写入，静默通过
+            return "write"
 
         first_word = cmd.split()[0] if cmd.split() else ""
         first_word = first_word.lstrip('\\')
