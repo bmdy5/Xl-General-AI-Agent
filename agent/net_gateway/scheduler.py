@@ -26,6 +26,14 @@ class GatewayScheduler:
         """拉起守护后台任务循环"""
         self._daemon_task = asyncio.create_task(self._daemon_loop())
 
+        # 网关启动即刻物理自愈去重
+        try:
+            from agent.skills.cleanup import run_incremental_cleanup
+            asyncio.create_task(run_incremental_cleanup(self.bot))
+            logger.info("🚀 [自愈系统] 网关成功启动并连接，已异步拉起物理技能增量去重任务")
+        except Exception as e:
+            logger.error(f"❌ [自愈系统] 启动期物理技能去重拉起失败: {e}")
+
     async def stop(self):
         """停止定时调度并优雅取消所有活动中的协程任务"""
         logger.info("正在停止 GatewayScheduler...")
@@ -122,6 +130,16 @@ class GatewayScheduler:
                     asyncio.create_task(self._trigger_night_podcast_selection(p_key, self.admin_id))
                     await asyncio.sleep(20)  # 防重入冷却
             
+            # 定时任务：每日 04:00 自动触发物理技能增量去重自演进
+            if now_dt.hour == 4 and now_dt.minute == 0 and 0 <= now_dt.second < 20:
+                logger.info("⏰ Time hit 04:00. Triggering daily skills incremental deduplication...")
+                try:
+                    from agent.skills.cleanup import run_incremental_cleanup
+                    asyncio.create_task(run_incremental_cleanup(self.bot))
+                except Exception as scheduler_dedup_err:
+                    logger.error(f"❌ [守护进程] 凌晨 4 点拉起物理技能去重失败: {scheduler_dedup_err}")
+                await asyncio.sleep(20)  # 防重入冷却
+
             # 定时任务：每日 06:00 自动拉取云端 NotebookLM 播客并推送
             if now_dt.hour == 6 and now_dt.minute == 0 and 0 <= now_dt.second < 20:
                 logger.info("⏰ Time hit 06:00. Triggering morning technical podcast push...")

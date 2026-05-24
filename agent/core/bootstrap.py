@@ -98,10 +98,12 @@ def build_agent(session_id: str = "default"):
     memory = MemoryManager()
     session = SessionHandler(session_id)
 
-    return Agent(
+    agent_instance = Agent(
         llm=llm,
         registry=registry,
         memory=memory,
         session=session,
         max_turns=int(os.environ.get("MYAGENT_MAX_TURNS", "40"))
     )
+
+    return agent_instance

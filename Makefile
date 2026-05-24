@@ -85,5 +85,11 @@ gateway-restart:
 	@echo "✅ QQ Gateway 重启完成"
 	@echo "   查看日志: tail -f logs/gateway.log"
 
+# ── 一键物理技能增量去重 ──
+skills-dedup:
+	@echo "🔄 正在一键增量合并 skills/ 冗余技能..."
+	PYTHONPATH=. venv/bin/python agent/skills/cleanup.py --incremental
+
+
 
 
