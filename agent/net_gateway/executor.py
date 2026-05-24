@@ -44,10 +44,6 @@ class AgentExecutor:
     async def execute_agent_run(self, agent, raw: str, session_key: str, msg_type: str, 
                                  user_id: str, group_id: str, sender_name: str, task_start_time: float):
         """流式处理 Agent 推理输出，处理总线冲突、流式 [SPLIT] 块分发与拟真打字延迟"""
-        # 1. 载波冲突避免挂起退避与冲突判定
-        if await self.bus.wait_for_carrier_sense(session_key, task_start_time):
-            return
-
         session_approved = False
         session_notified_tools = []
 
@@ -65,6 +61,10 @@ class AgentExecutor:
         presenter = StreamPresenter(self)
 
         try:
+            # 1. 载波冲突避免挂起退避与冲突判定
+            if await self.bus.wait_for_carrier_sense(session_key, task_start_time):
+                return
+
             # 核心下沉：core.py 顶部会在 coworker 违规次数超限时 yield 包含安全警告的 error 并 return
             async for evt in agent.run(
                 raw,
@@ -76,6 +76,8 @@ class AgentExecutor:
             ):
                 # ── 冲突检测 (Collision Detection) 第一阶段 ──
                 if self.bus.is_collision(session_key, task_start_time):
+                    if presenter.total_sent_tokens > 0:
+                        await self.context.send_msg(msg_type, user_id, group_id, "🔄 [系统调度] 检测到主人发送了新指令，正在合并并重新思考，请稍等...", skip_delay=True)
                     presenter.buf = ""
                     return
 
@@ -205,6 +207,8 @@ class AgentExecutor:
 
             # ── 冲突检测 (Collision Detection) 第二阶段 ──
             if self.bus.is_collision(session_key, task_start_time):
+                if presenter.total_sent_tokens > 0:
+                    await self.context.send_msg(msg_type, user_id, group_id, "🔄 [系统调度] 检测到主人发送了新指令，正在合并并重新思考，请稍等...", skip_delay=True)
                 presenter.buf = ""
                 return
 

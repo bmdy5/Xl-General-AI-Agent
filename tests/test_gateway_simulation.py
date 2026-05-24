@@ -142,8 +142,8 @@ async def test_gateway_csma_backoff_merge(monkeypatch):
     # 等待退避窗口完成以及队列消费
     await asyncio.sleep(4.0)
     
-    # 第一条消息退避后，因为队列合并设计，后两条消息会被压缩合并，最终调用 2 次发送
-    assert len(sent_messages) == 2
+    # 第一条消息被成功温和碰撞截停，不再发送；合并后的消息启动并运行完毕，最终仅调用 1 次发送回复
+    assert len(sent_messages) == 1
     assert "Mock response" in sent_messages[0]
 
 
@@ -472,4 +472,80 @@ async def test_gateway_real_qq_connectivity(monkeypatch):
     # ── 8. 端到端高精度闭环数据断言 ──
     assert test_state["rag_passed"], "RAG or LLM online inference failed to execute on real QQ"
     assert test_state["voice_passed"], "Anime voice TTS synthesis or voice message QQ dispatch failed on real QQ"
+
+
+class MockSlowAgentWithOutput(MockAgent):
+    async def run(self, prompt, stream=True, turn=0, context=None, state_prefix=None, real_sender_id=None, real_sender_name=None, group_id=None):
+        yield {"type": "text_delta", "content": f"正在思考：{prompt}[SPLIT]"}
+        try:
+            # 模拟大模型长时间流式响应，以便在推理中途遭遇碰撞检测
+            await asyncio.sleep(5.0)
+        except asyncio.CancelledError:
+            raise
+        yield {"type": "text_delta", "content": "思考完成。"}
+        yield {"type": "_done"}
+
+
+@pytest.mark.asyncio
+async def test_gateway_collision_and_merge_only_once(monkeypatch):
+    """用例 7: 非抢占追加新指令时，旧任务自动截停合并并展示打断气泡（方案 A + A2）"""
+    monkeypatch.setenv("QQ_ADMIN_ID", "1705919142")
+    monkeypatch.setenv("ADMIN_ID", "1705919142")
+    
+    gw = QQGateway(agent_factory=MockSlowAgentWithOutput)
+    dispatcher = gw.dispatcher
+    
+    sent_messages = []
+    async def mock_send(msg_type, user_id, group_id, text, skip_delay=False):
+        sent_messages.append(text)
+        
+    gw._send = mock_send
+    
+    event_start = {
+        "message_type": "private",
+        "user_id": "1705919142",
+        "raw_message": "这是第一条指令",
+        "self_id": "999999",
+        "sender": {"nickname": "亮哥"}
+    }
+    
+    # 启动第一个任务
+    await dispatcher.dispatch_event(event_start)
+    await asyncio.sleep(2.5) # 等待退避窗口完成，进入 run 并输出部分 delta 文本
+    
+    session_key = "user_1705919142"
+    active_task = gw.get_active_task(session_key)
+    assert active_task is not None
+    assert not active_task.done()
+    
+    # 此时应该已经输出了第一条消息的前半部分
+    assert any("这是第一条指令" in m for m in sent_messages)
+    # 此时也绝对没有输出“思考完成”
+    assert not any("思考完成" in m for m in sent_messages)
+    
+    # 发送第二条普通追加消息（不含抢占词，走 is_busy 的 enqueue 和 register_message）
+    event_append = {
+        "message_type": "private",
+        "user_id": "1705919142",
+        "raw_message": "这是追加指令",
+        "self_id": "999999",
+        "sender": {"nickname": "亮哥"}
+    }
+    
+    await dispatcher.dispatch_event(event_append)
+    
+    # 等待退避窗口以及协程被 collision 检测截停，且在 finally 中自动拉起合并后的请求运行结束（需给予 6.2s 以上时间让合并后任务完全运行完毕）
+    await asyncio.sleep(7.5)
+    
+    # 1. 验证前一个流式协程任务已被截停退出（不再活跃）
+    assert active_task.done()
+    
+    # 2. 验证检测到 collision 且 total_sent_tokens > 0 时，自动追加了系统打断提示气泡
+    assert any("[系统调度] 检测到主人发送了新指令" in m for m in sent_messages)
+    
+    # 3. 验证原任务中“思考完成”因为碰撞截停而完全被废弃，没有发出去
+    assert not any("思考完成" in m for m in sent_messages)
+    
+    # 4. 验证第二条消息被拉起合并处理，最终产生了专属合并提示（因为是管理员亮哥连发，使用了专属 Prompt）
+    assert any("亮哥在刚才小萤思考期间连发了" in m for m in sent_messages)
 

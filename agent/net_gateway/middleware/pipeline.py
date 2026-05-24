@@ -230,6 +230,7 @@ class TaskDispatcherMiddleware(EventMiddleware):
                     context["raw"] = raw
                     dispatcher.bot.remove_active_task(session_key, active_task)
                 else:
+                    dispatcher.bus.register_message(session_key)
                     dispatcher.bot.enqueue_message(session_key, event, raw)
                     return True
 
