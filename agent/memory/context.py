@@ -165,7 +165,17 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
             total_ki = count_cur.fetchone()[0]
 
             query_vec = _run_async(manager._get_embedding(query))
-            
+
+            # 语义缓存检查：用 query_vec 在缓存中找语义相似的旧 query
+            cached_semantic = manager._mem_cache.get(cache_key, query_vec=query_vec)
+            if cached_semantic is not None:
+                logger.info(
+                    f"[MEMORY SEMANTIC CACHE HIT] Query: '{query}' | "
+                    f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
+                    f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
+                )
+                return cached_semantic
+
             q_mag = math.sqrt(sum(mul(x, x) for x in query_vec))
             if q_mag > 0:
                 scored_kis = []
@@ -346,7 +356,11 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
         for r in res:
             r.pop("score", None)
             
-        manager._mem_cache.set(cache_key, res)
+        try:
+            emb_for_cache = query_vec
+        except NameError:
+            emb_for_cache = None
+        manager._mem_cache.set(cache_key, res, embedding=emb_for_cache)
         return res
     except Exception as e:
         logger.error(f"Search memories hybrid engine error: {e}")

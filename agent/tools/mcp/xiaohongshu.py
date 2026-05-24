@@ -351,10 +351,15 @@ class XiaohongshuTool(BaseTool):
                 raise RuntimeError(f"MCP server error: {error_msg}")
 
             content = res_json.get("result", {}).get("content", [])
-            texts = [c.get("text", "") for c in content if c.get("type") == "text"]
-            if not texts:
-                return f"No text content returned. Raw: {res_json}"
-            return "\n".join(texts)
+            lines = []
+            for c in content:
+                if c.get("type") == "text":
+                    lines.append(c.get("text", ""))
+                elif c.get("type") == "image" and c.get("data"):
+                    lines.append(f"data:{c.get('mimeType', 'image/png')};base64,{c['data']}")
+            if not lines:
+                return f"No content returned. Raw: {res_json}"
+            return "\n".join(lines)
 
     async def call(
         self, input_args: dict, context: Any = None

@@ -47,7 +47,13 @@ notebooklm:
     ALL_PROXY: "http://127.0.0.1:7897"
     PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
-# 8. 记忆库物理沙箱化与跨平台解耦 (Sandbox Memory & Dynamic Caching)
+# 8. 腾讯云 COS 对象存储配置 (Tencent Cloud COS)
+TENCENT_CLOUD_SECRET_ID: "AKIDWuIXgcLF3g8RaYLSelfRvJUVJxPeibIl"
+TENCENT_CLOUD_SECRET_KEY: "LTKxMalkYBbxCE5jGblphLpAOQEtWYVG"
+TENCENT_CLOUD_COS_BUCKET: "gpt-images-1409520107"
+TENCENT_CLOUD_COS_REGION: "ap-guangzhou"
+
+# 9. 记忆库物理沙箱化与跨平台解耦 (Sandbox Memory & Dynamic Caching)
 memory:
   base_dir: "~/.my-agent/memory"                # 记忆数据库在 Home 目录的主物理温床
   backup_dir: "./.memory"                       # 项目相对的自封包备份温床，实现 0ms 一键换家
@@ -60,6 +66,6 @@ knowledge_base:
     - "~/Desktop/学习笔记/后端开发"
   kb_dir: "~/Documents/个人博客/学习笔记/agent自主学习的东西"
 
-# 9. 敏感操作会话级全局绿灯超时时间 (Session Permission Timeout)
+# 10. 敏感操作会话级全局绿灯超时时间 (Session Permission Timeout)
 SESSION_PERMISSION_TIMEOUT: 1800               # 默认为 30 分钟（1800 秒），亮哥授权一次后在此时间段内全部自动放行并动态顺延
 
