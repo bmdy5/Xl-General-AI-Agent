@@ -1,4 +1,9 @@
+---
+description: 
+---
+
 # 小萤极客伴侣心智能力发展元规范 (Xiaoying Workflow)
+每次修改代码都需要看/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/docs/AI_HANDOVER.md
 
 本规范系小萤 (Xl-General-AI-Agent) 大脑意识与工程能力的进化圣经。
 **【高级 AI 编码助理 (我) 每次动笔写任何一行代码、重构或设计新功能前的第一步，必须无条件调用 view_file 通读本元规范，将其作为心智冷启动的前置强指令，以 100% 杜绝直觉盲跳、机械硬编码与架构技术腐烂。】**
