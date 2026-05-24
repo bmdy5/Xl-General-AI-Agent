@@ -324,25 +324,77 @@ class Agent:
     def clear_history(self):
         self.messages.clear()
 
+    @staticmethod
+    def is_path_protected(file_path: str) -> bool:
+        if not file_path:
+            return False
+        from pathlib import Path
+        try:
+            p = Path(file_path).resolve()
+        except Exception:
+            p = Path(file_path).absolute()
+            
+        root_dir = Path(__file__).resolve().parents[2]
+        
+        # 1. 检查是否在 agent/ 源码目录内
+        agent_dir = root_dir / "agent"
+        try:
+            if agent_dir.resolve() in p.parents or p.resolve() == agent_dir.resolve():
+                return True
+        except Exception:
+            if "agent/" in str(p) or "/agent" in str(p):
+                return True
+
+        # 2. 检查是否是根目录的关键系统元配置文件
+        protected_root_files = {
+            "main.py", "Makefile", "Dockerfile", "docker-compose.yml",
+            "pytest.ini", "requirements.txt", ".gitignore", ".env.example"
+        }
+        try:
+            is_in_root = p.parent.resolve() == root_dir.resolve()
+        except Exception:
+            is_in_root = p.parent.absolute() == root_dir.absolute()
+
+        if is_in_root and p.name in protected_root_files:
+            return True
+            
+        return False
+
     def _classify_permission(self, tool_name: str, tool_args: dict) -> PermissionCategory:
         tool = self.registry.get(tool_name)
         if tool is None:
             return PermissionCategory.SAFE
-        if tool_name == "save_memory" and (tool_args or {}).get("action") == "merge_to_core":
-            if self.is_maintenance:
-                return PermissionCategory.SAFE
-            return PermissionCategory.WRITE
+
+        # 1. 自动记忆工具 save_memory 重分流：除 remove 动作外均自动放行
+        if tool_name == "save_memory":
+            action = (tool_args or {}).get("action", "")
+            if action == "remove":
+                return PermissionCategory.WRITE
+            return PermissionCategory.SAFE
+
+        # 2. 文件工具 write_file / edit_file 的路径沙箱防护检测
+        if tool_name in ("write_file", "edit_file"):
+            file_path = (tool_args or {}).get("file_path", "")
+            if self.is_path_protected(file_path):
+                return PermissionCategory.WRITE
+            return PermissionCategory.SAFE
+
+        # 3. 默认情况下，如果工具本身认为不需要权限，则为 SAFE
         if not tool.needs_permissions(tool_args):
             return PermissionCategory.SAFE
+
+        # 4. 命令行工具 bash 的高危特征拦截判定
         if tool_name == "bash":
-            from ..tools.bash_tool import BashTool
+            from agent.tools.filesystem.bash import BashTool
             category_str = BashTool.classify_command(tool_args.get("command", ""))
             return {
                 "safe": PermissionCategory.SAFE,
                 "write": PermissionCategory.WRITE,
                 "dangerous": PermissionCategory.DANGEROUS,
             }[category_str]
+
         return PermissionCategory.WRITE
+
 
     async def _extract_keywords(self, user_input: str) -> list[str]:
         """分词提取关键词."""
