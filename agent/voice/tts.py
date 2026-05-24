@@ -7,6 +7,8 @@ import asyncio
 import aiohttp
 import logging
 import operator
+import time
+import json
 
 logger = logging.getLogger("voice.tts")
 
@@ -140,6 +142,73 @@ def _pad_wav(wav_bytes: bytes, start_silence_sec: float = 0.3, min_duration_sec:
         logger.warning(f"Failed to pad WAV: {e}")
         return wav_bytes
 
+def get_tts_state_file() -> Path:
+    """获取 logs/.tts_state 物理状态路径"""
+    from pathlib import Path
+    root_dir = Path(__file__).resolve().parents[2]
+    logs_dir = root_dir / "logs"
+    logs_dir.mkdir(parents=True, exist_ok=True)
+    return logs_dir / ".tts_state"
+
+def update_tts_state(active: bool, last_time: float):
+    """原子更新状态文件"""
+    state_file = get_tts_state_file()
+    try:
+        data = {"active": active, "last_time": last_time}
+        state_file.write_text(json.dumps(data), encoding="utf-8")
+    except Exception as e:
+        logger.warning(f"Failed to write TTS state: {e}")
+
+async def ensure_tts_service_running(timeout_limit: float = 12.0) -> bool:
+    """确保 TTS 语音合成服务在运行。若处于休眠期，则拉起服务，并阻断式同步探测直到可用。"""
+    api_url = os.getenv("GPT_SOVITS_API_URL", "http://127.0.0.1:9880")
+    
+    # 1. 快速探测当前服务是否已经在线
+    try:
+        timeout_detect = aiohttp.ClientTimeout(total=0.5)
+        async with aiohttp.ClientSession(timeout=timeout_detect) as session:
+            async with session.get(f"{api_url}/") as resp:
+                if resp.status in (200, 404):
+                    update_tts_state(True, time.time())
+                    return True
+    except Exception:
+        pass
+
+    # 2. 离线，说明处于休眠期，开始后台秒级自愈拉起
+    logger.info("🎙️ [TTS] 检测到语音服务当前处于休眠期 (IDLE)，正在拉起服务...")
+    from pathlib import Path
+    root_dir = Path(__file__).resolve().parents[2]
+    tts_dir = str(root_dir.parent / "GPT-SoVITS")
+    
+    cmd_kill = 'pkill -f "api_v2.py" || true'
+    cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
+    
+    try:
+        os.system(cmd_kill)
+        os.system(cmd_start)
+    except Exception as run_err:
+        logger.error(f"🎙️ [TTS] 发送拉起启动命令失败: {run_err}")
+        return False
+
+    # 3. 开启快速阻断式轮询等待自检 (每 200ms 探测一次，直到通畅或超时)
+    start_wait = time.time()
+    while time.time() - start_wait < timeout_limit:
+        try:
+            await asyncio.sleep(0.2)
+            timeout_detect = aiohttp.ClientTimeout(total=0.3)
+            async with aiohttp.ClientSession(timeout=timeout_detect) as session:
+                async with session.get(f"{api_url}/") as resp:
+                    if resp.status in (200, 404):
+                        elapsed = time.time() - start_wait
+                        logger.info(f"🎙️ [TTS] 语音服务拉起成功！耗时: {elapsed:.2f} 秒 (极速冷启动完成)")
+                        update_tts_state(True, time.time())
+                        return True
+        except Exception:
+            continue
+
+    logger.warning("🎙️ [TTS] 语音服务拉起超时，已达到最大阻断等待限制，降级为文本发送。")
+    return False
+
 async def generate_voice(text: str, style: str = "知性") -> tuple[bytes, str, str]:
     """
     通用平台无关的 GPT-SoVITS 动漫语音合成函数。
@@ -151,6 +220,15 @@ async def generate_voice(text: str, style: str = "知性") -> tuple[bytes, str, 
     """
     if not text.strip():
         return b"", "", ""
+        
+    # 1. 确保服务处于活跃拉起状态，保障冷启动 100% 成功
+    try:
+        is_ready = await ensure_tts_service_running()
+        if not is_ready:
+            raise ValueError("TTS API service is offline and failed to wake up.")
+    except Exception as wake_err:
+        logger.error(f"🎙️ [TTS] 自动拉起与唤醒服务发生异常: {wake_err}")
+        return b"", "", text  # 异常时直接抛出，触发外层高可用文本降级
         
     voice_text = text.strip()
     remaining_text = ""
