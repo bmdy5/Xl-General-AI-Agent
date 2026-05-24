@@ -177,8 +177,10 @@ async def _get_embedding(manager, text: str) -> list[float]:
                 return [0.0] * 768
             
             if "_m3e" not in cache:
-                current_dir = Path(__file__).resolve().parent
-                local_model_path = current_dir.parent.parent / "model" / "m3e-base"
+                from agent.core.config import settings
+                memory_cfg = settings.get("memory") or {}
+                model_path_str = memory_cfg.get("local_model_path", "./model/m3e-base")
+                local_model_path = manager.resolve_adaptive_path(model_path_str)
                 
                 if not (local_model_path.exists() and local_model_path.is_dir()):
                     cache["_m3e"] = None

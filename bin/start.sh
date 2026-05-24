@@ -4,7 +4,7 @@
 
 set -e
 
-PROJECT_DIR="/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent"
+PROJECT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$PROJECT_DIR"
 
 QQ_NUMBER="3870213248"
@@ -88,8 +88,8 @@ if [ "$NAPCAT_READY" = false ]; then
     if docker logs napcat 2>&1 | grep -q "二维码解码URL"; then
         echo "   - 需要扫码登录！" | tee -a "$STARTUP_LOG"
         echo "   - 生成二维码到桌面..." | tee -a "$STARTUP_LOG"
-        docker exec napcat cat /app/napcat/cache/qrcode.png > /Users/xiaofeng/Desktop/qq_login_qrcode.png 2>/dev/null
-        open /Users/xiaofeng/Desktop/qq_login_qrcode.png
+        docker exec napcat cat /app/napcat/cache/qrcode.png > "$HOME/Desktop/qq_login_qrcode.png" 2>/dev/null
+        open "$HOME/Desktop/qq_login_qrcode.png"
         echo "   - 请用 QQ 扫桌面上的二维码，然后按回车继续..." | tee -a "$STARTUP_LOG"
         read -r
     fi
@@ -157,8 +157,8 @@ EOFG
         echo "   - 登录态保持良好" | tee -a "$STARTUP_LOG"
     else
         echo "   - 登录态丢失，请重新扫码..." | tee -a "$STARTUP_LOG"
-        docker exec napcat cat /app/napcat/cache/qrcode.png > /Users/xiaofeng/Desktop/qq_login_qrcode.png 2>/dev/null
-        open /Users/xiaofeng/Desktop/qq_login_qrcode.png
+        docker exec napcat cat /app/napcat/cache/qrcode.png > "$HOME/Desktop/qq_login_qrcode.png" 2>/dev/null
+        open "$HOME/Desktop/qq_login_qrcode.png"
         echo "   - 请扫码后按回车继续..." | tee -a "$STARTUP_LOG"
         read -r
         for i in $(seq 1 20); do
@@ -173,7 +173,7 @@ fi
 
 # 6. 检查与启动 GPT-SoVITS 语音服务
 echo "6. 检查与启动 GPT-SoVITS 语音服务..." | tee -a "$STARTUP_LOG"
-TTS_DIR="/Users/xiaofeng/bot-我的自搭建agent/新的agent/GPT-SoVITS"
+TTS_DIR="$(cd "$PROJECT_DIR/../GPT-SoVITS" 2>/dev/null && pwd || echo "")"
 if curl -s --connect-timeout 2 http://127.0.0.1:9880/ >/dev/null 2>&1; then
     echo "   - GPT-SoVITS 语音服务已经在运行" | tee -a "$STARTUP_LOG"
 else

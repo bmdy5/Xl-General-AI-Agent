@@ -46,3 +46,16 @@ notebooklm:
     HTTPS_PROXY: "http://127.0.0.1:7897"
     ALL_PROXY: "http://127.0.0.1:7897"
     PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+# 8. 记忆库物理沙箱化与跨平台解耦 (Sandbox Memory & Dynamic Caching)
+memory:
+  base_dir: "~/.my-agent/memory"                # 记忆数据库在 Home 目录的主物理温床
+  backup_dir: "./.memory"                       # 项目相对的自封包备份温床，实现 0ms 一键换家
+  auto_backup_to_project: true                  # 强力开启动态异步热双写备份
+  multi_instance_isolation: true               # 强力开启基于 admin_id 的多开实例哈希隔离
+
+knowledge_base:
+  notes_paths:                                  # 增量学习笔记路径列表，支持 ~ 动态解析
+    - "~/Desktop/学习笔记/Agent开发"
+    - "~/Desktop/学习笔记/后端开发"
+  kb_dir: "~/Documents/个人博客/学习笔记/agent自主学习的东西"

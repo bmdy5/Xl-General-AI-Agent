@@ -24,7 +24,9 @@ class QQGateway:
     
     def __init__(self, agent_factory):
         # 1. 初始化统一状态上下文总线，并将 admin_id 共享过去
-        admin_id = os.getenv("QQ_ADMIN_ID", "1705919142")
+        from agent.core.config import settings
+        sec_cfg = settings.get("security") or {}
+        admin_id = os.getenv("QQ_ADMIN_ID", sec_cfg.get("admin_id", "1705919142"))
         self.context = GatewayContext(admin_id=admin_id, factory=agent_factory)
         
         # 引入并实例化高内聚网络消息发送器

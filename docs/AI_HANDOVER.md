@@ -155,3 +155,27 @@ Xl-General-AI-Agent/ (项目根目录)
   * 只有在**频繁/高频交互活跃期（Active Session）**，后台异步协程才会启动**“意图预测预加载”**。
   * 后台协程（副脑）通过轻量工具轨迹状态机（最近 3 次 ReAct 工具调用，如 `read_file` 触发 `system_architecture_block` 预载；`generate_voice` 触发 `tts_voice_block` 预载）， in 0.1ms 内预测出下一轮最可能使用的主题子块并提前在 SQLite 中以**只读模式（WAL 读写分离）**进行预加载，从而让高频交锋时的前缀缓存命中率直接拉到极限。
   * **动态疲劳阻尼 (Fatigue Damper)（已 100% 实装）**：如果最近 3 次工具调用包含 `bash`、`write_file` 等高负债调试操作，判定为紧急执行任务期，系统启动**肾上腺素阻尼器**，自动将疲劳触发阈值从 $64\text{K}$ 延迟防抖至 $100\text{K}$，确保紧急协作的连续性。
+
+---
+
+## 6. 🔒 记忆库物理沙箱化、多实例隔离与零路径硬编码规范 (NEW - 2026-05-24)
+
+为了实现小萤灵魂记忆在任意 macOS/Linux 系统中 **0ms 换家一键部署自愈**，系统全面完成了路径的中央解耦与动态自愈重构：
+
+### 6.1 零绝对路径硬编码与动态自愈解析
+* **原则**：系统内严禁硬编码 `/Users/xiaofeng`。所有核心路径均通过 `config/settings.yaml` 中央管理：
+  - `memory.base_dir`: 记忆数据库在 Home 目录的主物理温床（如 `~/.my-agent/memory`）。
+  - `memory.backup_dir`: 项目相对的自封包备份温床（如 `./.memory`）。
+  - `knowledge_base.notes_paths`: 增量学习笔记路径列表，支持 `~` 动态解析。
+  - `knowledge_base.kb_dir`: 长期知识库物理路径。
+* **物理展开**：`MemoryManager.resolve_adaptive_path` 实现了以 `./` 开头的相对路径自适应寻址到当前项目根目录，以 `~` 开头自动展开为系统用户主目录。
+
+### 6.2 异步防抖热双写备份与逆向自愈还原 (Reverse Restore Engine)
+* **热双写备份**：在 Facade 外观层的写入方法后，触发 1.5s 异步防抖无锁 `Trigger Backup` 协程，优先利用官方 SQLite `connection.backup()` 进行事务级一致性热双写备份，并在异常时 fallback 至 `shutil.copy2`。
+* **逆向自愈**：在新电脑部署小萤时，只要项目沙箱中存在 `backup_dir`，而主 Home 目录下 `base_dir` 为空，启动时 **Reverse Restore Engine 自动在后台无缝复制还原所有灵魂记忆**，达成 0ms 换家。
+
+### 6.3 强力多实例哈希隔离 (WAL Lock Avoidance)
+* **隔离机制**：在 `MemoryManager` 内部，主物理路径和备份目录均自动追加超级管理员 `/admin_id` 哈希子目录（如 `.memory/1705919142/`），实现单机多实例启动时的物理强隔离，彻底规避 SQLite 数据库的并发写独占死锁（WAL Lock）。
+
+### 6.4 物理防空自愈 (Empty Directory Protection)
+* **机制**：增量笔记同步 `search_notes` 与 `update_knowledge_index` 均实装物理防空自愈。若配置的笔记目录或知识库目录在当前系统中不存在，**系统静默打印一条 DEBUG 调试日志并安全跳过**，绝对不在桌面上强行生成垃圾空文件夹，保障最高标准的 UX 体验。
