@@ -15,14 +15,24 @@ class MemoryCache:
         self.cache = OrderedDict()
         self.capacity = capacity
         self.ttl = ttl
+        self.hits = 0
+        self.misses = 0
+    
+    @property
+    def hit_rate(self) -> float:
+        total = self.hits + self.misses
+        return (self.hits / total * 100) if total > 0 else 0.0
     
     def get(self, key):
         if key not in self.cache:
+            self.misses += 1
             return None
         ts, val = self.cache[key]
         if time.time() - ts > self.ttl:
             del self.cache[key]
+            self.misses += 1
             return None
+        self.hits += 1
         self.cache.move_to_end(key)
         return val
     
@@ -33,6 +43,52 @@ class MemoryCache:
     
     def invalidate_all(self):
         self.cache.clear()
+        
+    def invalidate_keys(self, keywords=None, text=None):
+        """高精度选择性失效：发现传入文本分词与缓存 query 的分词存在交集时剔除对应 Key"""
+        if not keywords and not text:
+            self.cache.clear()
+            return
+            
+        def get_tokens(s):
+            if not s:
+                return set()
+            s = str(s).lower()
+            tokens = set()
+            # 提取英文单词 (长度>=3)
+            en_words = re.findall(r'[a-zA-Z]{3,}', s)
+            tokens.update(en_words)
+            # 提取中文 bigram (连续两个中文字符)
+            zh_chars = re.findall(r'[\u4e00-\u9fff]', s)
+            for i in range(len(zh_chars) - 1):
+                tokens.add(zh_chars[i] + zh_chars[i + 1])
+            return tokens
+
+        target_words = set()
+        if keywords:
+            if isinstance(keywords, str):
+                target_words.update(get_tokens(keywords))
+            elif isinstance(keywords, list):
+                for kw in keywords:
+                    target_words.update(get_tokens(kw))
+        if text:
+            target_words.update(get_tokens(text))
+            
+        if not target_words:
+            # 提取不出分词时，兜底清空全部
+            self.cache.clear()
+            return
+            
+        keys_to_del = []
+        for key in list(self.cache.keys()):
+            query = key[0].lower()
+            query_words = get_tokens(query)
+            if query_words.intersection(target_words):
+                keys_to_del.append(key)
+                
+        for key in keys_to_del:
+            del self.cache[key]
+
 
 
 def _get_db(manager) -> sqlite3.Connection:
@@ -326,7 +382,12 @@ async def _get_embedding(manager, text: str) -> list[float]:
             cache = globals()["_LOCAL_MODEL_CACHE"]
             
             if "_m3e" in cache and cache["_m3e"] is None:
-                return [0.0] * 768
+                last_fail = cache.get("_last_fail_time", 0.0)
+                if time.time() - last_fail < 60.0:
+                    return [0.0] * 768
+                else:
+                    # 冷却结束，清除熔断状态重新尝试加载
+                    cache.pop("_m3e", None)
             
             if "_m3e" not in cache:
                 from agent.core.config import settings
@@ -336,6 +397,7 @@ async def _get_embedding(manager, text: str) -> list[float]:
                 
                 if not (local_model_path.exists() and local_model_path.is_dir()):
                     cache["_m3e"] = None
+                    cache["_last_fail_time"] = time.time()
                     logger.error(f"Offline model path not found at {local_model_path}. Circuit breaker activated instantly. 0ms fallback to zeros.")
                     return [0.0] * 768
                 
@@ -351,6 +413,7 @@ async def _get_embedding(manager, text: str) -> list[float]:
                     logger.info("Local m3e-base model loaded successfully!")
                 except Exception as load_err:
                     cache["_m3e"] = None
+                    cache["_last_fail_time"] = time.time()
                     logger.error(f"Failed to load m3e-base model: {load_err}. Circuit breaker activated, local embedding disabled.")
                     return [0.0] * 768
             
