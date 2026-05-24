@@ -6,3 +6,4 @@ beautifulsoup4>=4.12.3
 playwright>=1.52
 # 根据需要添加其他库
 sentence-transformers>=2.2.2
+cloakbrowser
