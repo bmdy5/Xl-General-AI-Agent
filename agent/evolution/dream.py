@@ -256,7 +256,7 @@ async def trigger_deep_dream_evolution(agent):
                     from ..skills import register_skill_evolution
                     script_name = result_skill.get("helper_script_filename")
                     script_code = result_skill.get("helper_script_content")
-                    register_skill_evolution(folder_name, md_content, script_name, script_code)
+                    register_skill_evolution(folder_name, md_content, script_name, script_code, agent=agent)
                     logger.info(f"🎉 [技能进化成功] 自进化突变合成全新技能: 【{skill_name}】 -> skills/{folder_name}/")
     except Exception as e:
         logger.error(f"❌ [技能突变异常] 自进化合成 Skill 失败: {e}")
