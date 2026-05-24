@@ -178,7 +178,7 @@ async def on_session_end(agent):
             trigger = pattern.get("trigger", "")
             if name and len(steps) >= 2:
                 from ..skills import create_skill
-                create_skill(name, trigger, steps)
+                create_skill(name, trigger, steps, agent=agent)
     except Exception as e:
         logger.debug(f"Task pattern detection skipped: {e}")
 
