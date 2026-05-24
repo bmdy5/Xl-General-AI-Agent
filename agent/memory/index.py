@@ -40,45 +40,112 @@ def _get_db(manager) -> sqlite3.Connection:
     if manager._db is None:
         db_path = manager.base_dir / "memories.db"
         is_new = not db_path.exists()
-        manager._db = sqlite3.connect(str(db_path), timeout=1.0)
-        manager._db.execute("PRAGMA foreign_keys = ON")
-        manager._db.execute("PRAGMA busy_timeout = 1000")
-        manager._db.execute("PRAGMA journal_mode = WAL")
         
-        from .fts_index import create_table
-        create_table(manager._db)
+        # 物理快照双重防御准备
+        bak_path = manager.base_dir / "memories.db.bak"
+        if not is_new and db_path.exists():
+            import shutil
+            try:
+                shutil.copy2(str(db_path), str(bak_path))
+            except Exception as backup_err:
+                logger.warning(f"Failed to create pre-upgrade physical database backup: {backup_err}")
         
-        # 自动创建长期大脑关系表 knowledge_items
-        manager._db.execute("""
-            CREATE TABLE IF NOT EXISTS knowledge_items (
-                id TEXT PRIMARY KEY,
-                title TEXT NOT NULL,
-                category TEXT NOT NULL,
-                keywords TEXT NOT NULL,       -- JSON 字符串
-                summary TEXT NOT NULL,
-                content TEXT NOT NULL,
-                created_at TEXT NOT NULL,     -- ISO-8601 UTC
-                updated_at TEXT NOT NULL,
-                last_hit_at TEXT NOT NULL,
-                visit_count INTEGER DEFAULT 0,
-                version INTEGER DEFAULT 1
-            )
-        """)
-        # 创建高精度 CJK 知识全文检索虚拟表
-        manager._db.execute("""
-            CREATE VIRTUAL TABLE IF NOT EXISTS kis_fts
-            USING fts5(ki_id, title, category, keywords, summary, content,
-                       tokenize="porter unicode61")
-        """)
-        # 创建 768维中文增强语义向量库表
-        manager._db.execute("""
-            CREATE TABLE IF NOT EXISTS ki_embeddings (
-                ki_id TEXT PRIMARY KEY,
-                embedding TEXT NOT NULL,
-                FOREIGN KEY(ki_id) REFERENCES knowledge_items(id) ON DELETE CASCADE
-            )
-        """)
-        manager._db.commit()
+        try:
+            manager._db = sqlite3.connect(str(db_path), timeout=1.0)
+            manager._db.execute("PRAGMA foreign_keys = ON")
+            manager._db.execute("PRAGMA busy_timeout = 1000")
+            manager._db.execute("PRAGMA journal_mode = WAL")
+            
+            from .fts_index import create_table
+            create_table(manager._db)
+            
+            # 自动创建长期大脑关系表 knowledge_items
+            manager._db.execute("""
+                CREATE TABLE IF NOT EXISTS knowledge_items (
+                    id TEXT PRIMARY KEY,
+                    title TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    keywords TEXT NOT NULL,       -- JSON 字符串
+                    summary TEXT NOT NULL,
+                    content TEXT NOT NULL,
+                    created_at TEXT NOT NULL,     -- ISO-8601 UTC
+                    updated_at TEXT NOT NULL,
+                    last_hit_at TEXT NOT NULL,
+                    visit_count INTEGER DEFAULT 0,
+                    version INTEGER DEFAULT 1,
+                    revision_history TEXT
+                )
+            """)
+            
+            # 探查并热迁移已有表结构，确保自愈
+            if not is_new:
+                cur = manager._db.execute("PRAGMA table_info(knowledge_items)")
+                columns = [row[1] for row in cur.fetchall()]
+                
+                if "version" not in columns or "revision_history" not in columns:
+                    manager._db.execute("BEGIN TRANSACTION")
+                    try:
+                        if "version" not in columns:
+                            manager._db.execute("ALTER TABLE knowledge_items ADD COLUMN version INTEGER DEFAULT 1")
+                            logger.info("Successfully added 'version' column to knowledge_items table.")
+                        if "revision_history" not in columns:
+                            manager._db.execute("ALTER TABLE knowledge_items ADD COLUMN revision_history TEXT")
+                            logger.info("Successfully added 'revision_history' column to knowledge_items table.")
+                        manager._db.commit()
+                    except Exception as tx_err:
+                        manager._db.execute("ROLLBACK")
+                        raise tx_err
+            
+            # 创建高精度 CJK 知识全文检索虚拟表
+            manager._db.execute("""
+                CREATE VIRTUAL TABLE IF NOT EXISTS kis_fts
+                USING fts5(ki_id, title, category, keywords, summary, content,
+                           tokenize="porter unicode61")
+            """)
+            # 创建 768维中文增强语义向量库表
+            manager._db.execute("""
+                CREATE TABLE IF NOT EXISTS ki_embeddings (
+                    ki_id TEXT PRIMARY KEY,
+                    embedding TEXT NOT NULL,
+                    FOREIGN KEY(ki_id) REFERENCES knowledge_items(id) ON DELETE CASCADE
+                )
+            """)
+            manager._db.commit()
+            
+            # 升级成功，清理临时物理备份
+            if bak_path.exists():
+                try:
+                    bak_path.unlink()
+                except Exception:
+                    pass
+                    
+        except Exception as upgrade_err:
+            logger.critical(f"🚨 [DB自愈] 数据库 DDL 热升级失败: {upgrade_err}. 启动物理自愈快照还原...")
+            if manager._db is not None:
+                try:
+                    manager._db.close()
+                except Exception:
+                    pass
+                manager._db = None
+            
+            if bak_path.exists():
+                try:
+                    import shutil
+                    shutil.copy2(str(bak_path), str(db_path))
+                    logger.info("🎉 [DB自愈] 物理自愈快照还原成功！")
+                except Exception as restore_err:
+                    logger.error(f"❌ [DB自愈] 物理快照还原失败: {restore_err}")
+                finally:
+                    try:
+                        bak_path.unlink()
+                    except Exception:
+                        pass
+            
+            # 重新安全建立旧版数据库连接并返回
+            manager._db = sqlite3.connect(str(db_path), timeout=1.0)
+            manager._db.execute("PRAGMA foreign_keys = ON")
+            manager._db.execute("PRAGMA busy_timeout = 1000")
+            manager._db.execute("PRAGMA journal_mode = WAL")
         
         if not is_new:
             try:

@@ -251,7 +251,7 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
         merged_kis = []
         for k_id, score in rrf_scores.items():
             cur = db.execute("""
-                SELECT id, title, category, keywords, summary, content, visit_count, last_hit_at, updated_at
+                SELECT id, title, category, keywords, summary, content, visit_count, last_hit_at, updated_at, version
                 FROM knowledge_items WHERE id = ?
             """, (k_id,))
             ki_row = cur.fetchone()
@@ -260,6 +260,7 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
             
             title, category, summary, content = ki_row[1], ki_row[2], ki_row[4], ki_row[5]
             visit_count, last_hit_at, updated_at = ki_row[6], ki_row[7], ki_row[8]
+            version = ki_row[9] if len(ki_row) > 9 and ki_row[9] is not None else 1
             
             heat_multiplier = 1.0 + mul(0.1, math.log(1 + visit_count))
             
@@ -270,7 +271,9 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
                 else:
                     intent_multiplier = 0.9
             
-            final_score = mul(mul(score, heat_multiplier), intent_multiplier)
+            version_multiplier = 1.0 + mul(0.05, math.log(version))
+            
+            final_score = mul(mul(mul(score, heat_multiplier), intent_multiplier), version_multiplier)
             
             merged_kis.append({
                 "content": content,

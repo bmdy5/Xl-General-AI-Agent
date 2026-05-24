@@ -122,8 +122,12 @@ class MemoryManager:
             except Exception as backup_err:
                 logger.warning(f"Failed to backup memory database: {backup_err}")
                 
-        # 起后台非阻塞 Task，保障主 ReAct 0ms 等待
-        asyncio.create_task(_async_backup())
+        # 安全创建异步 Task，规避同步/单元测试环境无 running event loop 时的崩溃
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_async_backup())
+        except RuntimeError:
+            pass
 
     # ── 1. index.py 代理 ────────────────────────────────────────
 
@@ -198,9 +202,9 @@ class MemoryManager:
         self.trigger_backup()
         return res
 
-    def merge_ki(self, existing_id: str, title: str, category: str, keywords: list, summary: str, content: str) -> str:
+    def merge_ki(self, existing_id: str, title: str, category: str, keywords: list, summary: str, content: str, revision_history: Optional[list] = None) -> str:
         from .ki import merge_ki
-        res = merge_ki(self, existing_id, title, category, keywords, summary, content)
+        res = merge_ki(self, existing_id, title, category, keywords, summary, content, revision_history)
         self.trigger_backup()
         return res
 
