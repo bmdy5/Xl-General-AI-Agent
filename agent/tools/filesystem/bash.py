@@ -49,14 +49,13 @@ class BashTool(BaseTool):
     })
 
     DANGEROUS_PATTERNS: list = [
-        # 文件删除 + 杀进程操作需要明确允许，使用无星号正则
+        # 文件删除操作需要明确允许，使用无星号正则
         re.compile(r'\brm\b'),
         re.compile(r'\brmdir\b'),
         re.compile(r'\bshred\b'),
-        re.compile(r'\bpkill\b'),
-        re.compile(r'\bkill(all){0,1}\b'),
         re.compile(r'`.{0,}rm\b'),
     ]
+
 
     SAFE_REGEX: list = [
         re.compile(r'^git\s+(status|log|diff|show|branch|tag|remote\b|stash\s+list|rev-parse|config\s+--get)', re.IGNORECASE),
