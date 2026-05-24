@@ -49,7 +49,9 @@ def mock_agent(temp_workspace):
     manager.backup_dir = db_dir / "backup"
     agent.memory = manager
     
-    manager._get_embedding = AsyncMock(return_value=[0.1] * 768)
+    async def fake_get_embedding(text):
+        return [0.1] * 768
+    manager._get_embedding = fake_get_embedding
     agent.messages = []
     agent.session_key = "test_session_123"
     agent.session = AsyncMock()
@@ -118,6 +120,10 @@ async def test_gateway_cold_start_recovery(temp_workspace):
         {"role": "assistant", "content": "亮哥好！"}
     ]
     
+    async def fake_get_embedding(text):
+        return [0.1] * 768
+    manager._get_embedding = fake_get_embedding
+    
     manager.save_active_session_async(session_key, fake_history)
     await asyncio.sleep(1.2) # 等待防抖刷盘成功
     
@@ -129,18 +135,29 @@ async def test_gateway_cold_start_recovery(temp_workspace):
     # 强行 Mock search_all_sessions 返回常规字符串，杜绝 AsyncMock 返回 MagicMock 引起的 lines 拼接 TypeError 崩溃
     session_mock.search_all_sessions = AsyncMock(return_value="No past conversations")
     
-    agent = Agent(llm=MockLLM(), registry=registry, memory=manager, session=session_mock)
+    llm_mock = MockLLM()
+    # 配置 LLM chat mock，使 ReAct 循环第一轮由于无 tool_calls 而直接 completed 退出
+    llm_mock.chat = AsyncMock(return_value={
+        "content": "好的，我已经收到重启后的消息。",
+        "reasoning_content": "冷启动恢复成功，无任何工具调用需求。",
+        "tool_calls": [],
+        "tokens_used": 100,
+        "metrics": {"prompt_tokens": 80, "completion_tokens": 20, "cached_tokens": 0}
+    })
+    
+    agent = Agent(llm=llm_mock, registry=registry, memory=manager, session=session_mock)
     agent.session_key = session_key
     
     # 3. 运行 Agent.run 初始化
     async for _ in agent.run("亮哥发来重启后的首条新消息"):
         break
     
-    # 4. 断言已完美续接！消息列表包含冷启动自愈载入的 2 条旧消息 + 刚进来的 1 条新消息
-    assert len(agent.messages) == 3
+    # 4. 断言已完美续接！消息列表包含冷启动自愈载入的 2 条旧消息 + 刚进来的 1 条新消息 + 刚生成的 1 条回复消息
+    assert len(agent.messages) == 4
     assert agent.messages[0]["content"] == "你好小萤"
     assert agent.messages[1]["content"] == "亮哥好！"
     assert agent.messages[2]["content"] == "亮哥发来重启后的首条新消息"
+    assert agent.messages[3]["content"] == "好的，我已经收到重启后的消息。"
 
 
 @pytest.mark.asyncio
