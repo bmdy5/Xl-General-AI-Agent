@@ -69,6 +69,10 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
     cached_prompt = await agent._build_system_prompt()
     cached_block = await agent._build_memory_block(user_input, 0)
 
+    # 首次进入 ReAct 循环或有 User 新消息流入时，立即启动防抖刷写 SQLite，防止网关重启丢失短期记忆
+    if getattr(agent, "session_key", None) and hasattr(agent.memory, "save_active_session_async"):
+        agent.memory.save_active_session_async(agent.session_key, agent.messages)
+
     if turn == 0:
         transition = agent._quick_transition(user_input)
         if transition:
@@ -204,6 +208,8 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         if not tool_calls_list:
             yield {"type": "completed"}
             agent._create_tracked_task(on_session_end(agent))
+            if getattr(agent, "session_key", None) and hasattr(agent.memory, "save_active_session_async"):
+                agent.memory.save_active_session_async(agent.session_key, agent.messages)
             return
 
         for tc in tool_calls_list:
@@ -216,6 +222,8 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                     if agent.session:
                         await agent.session.append_message(err_msg)
                 yield {"type": "aborted"}
+                if getattr(agent, "session_key", None) and hasattr(agent.memory, "save_active_session_async"):
+                    agent.memory.save_active_session_async(agent.session_key, agent.messages)
                 return
 
             tool_name = tc["function"]["name"]
@@ -348,11 +356,16 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         turn += 1
         agent._turn_count += 1
 
+        if getattr(agent, "session_key", None) and hasattr(agent.memory, "save_active_session_async"):
+            agent.memory.save_active_session_async(agent.session_key, agent.messages)
+
         if agent._turn_count > 0 and agent._turn_count % 10 == 0:
             yield {"type": "nudge", "turn": agent._turn_count}
 
     yield {"type": "max_turns"}
     asyncio.create_task(on_session_end(agent))
+    if getattr(agent, "session_key", None) and hasattr(agent.memory, "save_active_session_async"):
+        agent.memory.save_active_session_async(agent.session_key, agent.messages)
 
 
 async def llm_chat(agent, messages: list[dict], tools: list[dict]) -> tuple:

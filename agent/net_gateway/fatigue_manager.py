@@ -97,27 +97,47 @@ class FatigueManager:
     async def _private_sleep_and_dream_process(self, session_key: str, user_id: str, agent: object, sender_name: str = ""):
         """私聊异步做梦净化"""
         try:
-            snapshot = list(agent.messages)
-            agent.messages = []
-            if getattr(agent, "session", None):
-                await agent.session.replace_all([])
+            # 1. 睡眠期间不主动清空 messages，仅安全等待（以防中途重启）
             await asyncio.sleep(self.fatigue_sleep_seconds)
             
-            agent.messages = snapshot
+            # 2. 睡眠结束，截取当前历史快照进行高并发增量做梦提炼
+            snapshot = list(agent.messages)
+            snapshot_len = len(snapshot)
+            
+            summary_card = ""
             try:
                 from agent.evolution import trigger_deep_dream_evolution
-                await trigger_deep_dream_evolution(agent)
-            except Exception:
-                pass
+                # 传入快照，只对快照内的老历史进行脑力蒸馏提炼
+                summary_card = await trigger_deep_dream_evolution(agent, history_messages=snapshot)
+            except Exception as e:
+                logger.error(f"Failed to run trigger_deep_dream_evolution in private sleep: {e}")
             finally:
-                agent.messages = []
+                # 3. 黄金快照增量清账与持久化同步
+                if len(agent.messages) >= snapshot_len:
+                    agent.messages = agent.messages[snapshot_len:]
+                else:
+                    agent.messages = []
+                
+                # 同步同步回 SQLite，清除已反思过的老消息缓存，只保留睡眠期间新流入的
+                if hasattr(agent.memory, "save_active_session_async"):
+                    agent.memory.save_active_session_async(session_key, agent.messages)
+                    
             self._fatigue_levels[session_key] = 0.0
             self._sleep_modes[session_key] = False
             self._active_sleep_tasks.pop(session_key, None)
             
-            wake_msg = await self._generate_private_wake_announcement(user_id, sender_name)
+            # 4. 合成高情商唤醒宣告
+            wake_prefix = await self._generate_private_wake_announcement(user_id, sender_name)
+            
+            # 如果有新提炼出 KI/Skill 的总结卡片，则将其合并展示，仪式感拉满
+            if summary_card:
+                wake_msg = f"{wake_prefix}\n\n{summary_card}"
+            else:
+                wake_msg = wake_prefix
+                
             await self.context.send_msg("private", user_id, "", wake_msg, skip_delay=True)
-        except Exception:
+        except Exception as e:
+            logger.error(f"Error in private_sleep_and_dream_process: {e}")
             self._fatigue_levels[session_key] = 0.0
             self._sleep_modes[session_key] = False
             self._active_sleep_tasks.pop(session_key, None)
@@ -178,27 +198,45 @@ class FatigueManager:
 
     async def _sleep_and_dream_process(self, group_id: str, agent: object):
         """群聊做梦净化闭环"""
+        session_key = f"group_{group_id}_{self.admin_id}"
         try:
-            snapshot = list(agent.messages)
-            agent.messages = []
-            if getattr(agent, "session", None):
-                await agent.session.replace_all([])
+            # 1. 睡眠期间不主动清空 messages，仅安全等待
             await asyncio.sleep(self.fatigue_sleep_seconds)
             
-            agent.messages = snapshot
+            # 2. 睡眠结束，截取当前历史快照进行高并发增量做梦提炼
+            snapshot = list(agent.messages)
+            snapshot_len = len(snapshot)
+            
+            summary_card = ""
             try:
                 from agent.evolution import trigger_deep_dream_evolution
-                await trigger_deep_dream_evolution(agent)
-            except Exception:
-                pass
+                summary_card = await trigger_deep_dream_evolution(agent, history_messages=snapshot)
+            except Exception as e:
+                logger.error(f"Failed to run trigger_deep_dream_evolution in group sleep: {e}")
             finally:
-                agent.messages = []
+                # 3. 黄金快照增量清账与持久化同步
+                if len(agent.messages) >= snapshot_len:
+                    agent.messages = agent.messages[snapshot_len:]
+                else:
+                    agent.messages = []
+                
+                # 同步回 SQLite，清除已反思过的老消息缓存，只保留睡眠期间新流入的
+                if hasattr(agent.memory, "save_active_session_async"):
+                    agent.memory.save_active_session_async(session_key, agent.messages)
+                    
             self._fatigue_levels[group_id] = 0.0
             self._sleep_modes[group_id] = False
             
-            wake = await self._generate_wake_announcement(group_id)
-            await self.context.send_msg("group", "", group_id, wake, skip_delay=True)
-        except Exception:
+            # 4. 合成高情商唤醒宣告
+            wake_prefix = await self._generate_wake_announcement(group_id)
+            if summary_card:
+                wake_msg = f"{wake_prefix}\n\n{summary_card}"
+            else:
+                wake_msg = wake_prefix
+                
+            await self.context.send_msg("group", "", group_id, wake_msg, skip_delay=True)
+        except Exception as e:
+            logger.error(f"Error in group_sleep_and_dream_process: {e}")
             self._fatigue_levels[group_id] = 0.0
             self._sleep_modes[group_id] = False
 

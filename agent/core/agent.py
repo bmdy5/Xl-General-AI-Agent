@@ -179,26 +179,53 @@ class Agent:
         if self.session and not self._history_loaded:
             self._history_loaded = True
             try:
-                history = await self.session.initialize()
-                system_msgs = [m for m in history if m.get("role") == "system"]
-                recent = [m for m in history if m.get("role") != "system"][-15:]
-                self.messages = system_msgs + recent
+                session_key = getattr(self, "session_key", None)
+                active_history = []
+                if session_key and self.memory:
+                    active_history = await self.memory.load_active_session(session_key)
                 
-                for msg in system_msgs:
-                    content = msg.get("content", "")
-                    if "## 原始目标" in content:
-                        goal_part = content.split("## 原始目标\n")[-1].split("##")[0].strip()
-                        if goal_part:
-                            self._original_goal = {"role": "user", "content": goal_part}
-                            break
-                if not self._original_goal:
-                    for msg in history:
-                        if msg.get("role") == "user":
-                            c = msg.get("content", "")
-                            if len(c) > 10 and not any(kw in c for kw in DEBUG_KEYWORDS):
-                                self._original_goal = {"role": "user", "content": c}
+                if active_history:
+                    self.messages = active_history
+                    logger.info(f"✨ [灵魂记忆自愈] 成功从 active_sessions 关系表还原了 {session_key} 的 {len(self.messages)} 条短期上下文历史！")
+                    # 尝试从 active 消息历史中寻找原始目标
+                    for msg in self.messages:
+                        if msg.get("role") == "system":
+                            content = msg.get("content", "")
+                            if "## 原始目标" in content:
+                                goal_part = content.split("## 原始目标\n")[-1].split("##")[0].strip()
+                                if goal_part:
+                                    self._original_goal = {"role": "user", "content": goal_part}
+                                    break
+                    if not self._original_goal:
+                        for msg in self.messages:
+                            if msg.get("role") == "user":
+                                c = msg.get("content", "")
+                                if len(c) > 10 and not any(kw in c for kw in DEBUG_KEYWORDS):
+                                    self._original_goal = {"role": "user", "content": c}
+                                    break
+                else:
+                    # Fallback 回传统 JSON 大文件历史拉取
+                    history = await self.session.initialize()
+                    system_msgs = [m for m in history if m.get("role") == "system"]
+                    recent = [m for m in history if m.get("role") != "system"][-15:]
+                    self.messages = system_msgs + recent
+                    logger.info(f"Session restored from Handler: {len(self.messages)} msgs")
+                    
+                    for msg in system_msgs:
+                        content = msg.get("content", "")
+                        if "## 原始目标" in content:
+                            goal_part = content.split("## 原始目标\n")[-1].split("##")[0].strip()
+                            if goal_part:
+                                self._original_goal = {"role": "user", "content": goal_part}
                                 break
-                                
+                    if not self._original_goal:
+                        for msg in history:
+                            if msg.get("role") == "user":
+                                c = msg.get("content", "")
+                                if len(c) > 10 and not any(kw in c for kw in DEBUG_KEYWORDS):
+                                    self._original_goal = {"role": "user", "content": c}
+                                    break
+                                    
                 if self.messages:
                     logger.info(f"Session restored: {len(self.messages)} msgs (RAG handles full context)")
             except Exception as e:
