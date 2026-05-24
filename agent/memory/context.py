@@ -32,7 +32,18 @@ def search_notes(manager, query: str, limit: int = 5) -> list[dict]:
     cache_key = (query, limit)
     cached_res = manager._note_cache.get(cache_key)
     if cached_res is not None:
+        logger.info(
+            f"[NOTE CACHE HIT] Query: '{query}' | "
+            f"Hits: {manager._note_cache.hits}, Misses: {manager._note_cache.misses} | "
+            f"Hit Rate: {manager._note_cache.hit_rate:.1f}%"
+        )
         return cached_res
+    else:
+        logger.info(
+            f"[NOTE CACHE MISS] Query: '{query}' | "
+            f"Hits: {manager._note_cache.hits}, Misses: {manager._note_cache.misses} | "
+            f"Hit Rate: {manager._note_cache.hit_rate:.1f}%"
+        )
 
     clean = re.sub(r'[^\w\u4e00-\u9fff\s]', " ", query).strip()
     if not clean or len(clean) < 2:
@@ -103,7 +114,18 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
     cache_key = (query, limit)
     cached_res = manager._mem_cache.get(cache_key)
     if cached_res is not None:
+        logger.info(
+            f"[MEMORY CACHE HIT] Query: '{query}' | "
+            f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
+            f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
+        )
         return cached_res
+    else:
+        logger.info(
+            f"[MEMORY CACHE MISS] Query: '{query}' | "
+            f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
+            f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
+        )
 
     clean = re.sub(r'[^\w\u4e00-\u9fff\s]', ' ', query).strip()
     if not clean or len(clean) < 2:
@@ -149,8 +171,8 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
                 scored_kis = []
                 
                 if total_ki <= 200:
-                    cur = db.execute("SELECT ki_id, embedding FROM ki_embeddings")
-                    all_embeds = cur.fetchall()
+                    cur = db.execute("SELECT id FROM knowledge_items")
+                    all_ids = [r[0] for r in cur.fetchall()]
                 else:
                     candidate_ids = set()
                     
@@ -208,28 +230,40 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
                         except Exception:
                             pass
                             
-                    all_embeds = []
-                    if candidate_ids:
-                        placeholders = ",".join("?" for _ in candidate_ids)
+                    all_ids = list(candidate_ids)
+
+                if not hasattr(manager, "_vector_cache"):
+                    manager._vector_cache = {}
+                
+                missing_ids = [k_id for k_id in all_ids if k_id not in manager._vector_cache]
+                if missing_ids:
+                    import json
+                    placeholders = ",".join("?" for _ in missing_ids)
+                    try:
                         cur = db.execute(
                             f"SELECT ki_id, embedding FROM ki_embeddings WHERE ki_id IN ({placeholders})",
-                            list(candidate_ids)
+                            missing_ids
                         )
-                        all_embeds = cur.fetchall()
-                        
-                for row in all_embeds:
-                    k_id = row[0]
-                    try:
-                        import json
-                        k_vec = json.loads(row[1])
-                        k_mag = math.sqrt(sum(mul(x, x) for x in k_vec))
-                        if k_mag > 0:
-                            dot = sum(mul(a, b) for a, b in zip(query_vec, k_vec))
-                            cos_sim = dot / mul(q_mag, k_mag)
-                            if cos_sim >= 0.60:
-                                scored_kis.append((k_id, cos_sim))
-                    except Exception:
-                        continue
+                        for r in cur.fetchall():
+                            try:
+                                manager._vector_cache[r[0]] = json.loads(r[1])
+                            except Exception:
+                                pass
+                    except Exception as e:
+                        logger.warning(f"Failed to lazy load missing embeddings: {e}")
+
+                for k_id in all_ids:
+                    k_vec = manager._vector_cache.get(k_id)
+                    if k_vec:
+                        try:
+                            k_mag = math.sqrt(sum(mul(x, x) for x in k_vec))
+                            if k_mag > 0:
+                                dot = sum(mul(a, b) for a, b in zip(query_vec, k_vec))
+                                cos_sim = dot / mul(q_mag, k_mag)
+                                if cos_sim >= 0.60:
+                                    scored_kis.append((k_id, cos_sim))
+                        except Exception:
+                            continue
                 
                 scored_kis.sort(key=lambda x: x[1], reverse=True)
                 ki_vector_rows = scored_kis[:limit + limit]
