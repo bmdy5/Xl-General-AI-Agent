@@ -49,6 +49,8 @@ class AgentExecutor:
             return
 
         session_approved = False
+        session_notified_tools = []
+
         now = time.monotonic()
         last_voice = self.context._last_voice_time
         time_diff = now - last_voice
@@ -135,13 +137,27 @@ class AgentExecutor:
                         except ValueError:
                             timeout_val = 1800.0
                             
+                        # 动态计算友好时间显示，避免硬编码 30 分钟
+                        if timeout_val >= 3600:
+                            time_desc = f"{int(timeout_val // 3600)}小时" if timeout_val % 3600 == 0 else f"{round(timeout_val / 3600, 1)}小时"
+                        elif timeout_val >= 60:
+                            time_desc = f"{int(timeout_val // 60)}分钟"
+                        else:
+                            time_desc = f"{int(timeout_val)}秒"
+                            
                         if is_global_approved or session_approved:
                             # 自动动态顺延全局信任截止时间
                             self.session_approved_until = time.monotonic() + timeout_val
                             self._log_activity_dispatcher("系统调度", f"主人在此轮全局信任期内，自动免检通过敏感工具: {tool_list}", user_id=user_id)
-                            # 发送轻量级友好提示
-                            tool_names_str = ", ".join(tool_list)
-                            await self.context.send_msg(msg_type, user_id, group_id, f"💡 [信任放行] 检测到主人在 30 分钟会话信任期内，已自动免审放行敏感操作 `{tool_names_str}`。", skip_delay=True)
+                            
+                            # 只有当该工具本轮未曾提示过，且本轮聊天框从未发送过提示消息时，才发送一条轻量友好提示，后续工具静默放行
+                            new_tools = [t for t in tool_list if t not in session_notified_tools]
+                            if new_tools:
+                                if not session_notified_tools:
+                                    tool_names_str = ", ".join(new_tools)
+                                    await self.context.send_msg(msg_type, user_id, group_id, f"💡 [信任放行] 检测到主人在 {time_desc} 会话信任期内，已自动免审放行敏感操作 `{tool_names_str}`。", skip_delay=True)
+                                session_notified_tools.extend(new_tools)
+                                
                             agent.approve_permission()
                         else:
                             self._log_activity_dispatcher("系统调度", f"主人触发权限审批拦截，申请工具: {tool_list}", user_id=user_id)
@@ -165,11 +181,14 @@ class AgentExecutor:
                                 session_approved = True  # 本轮开启绿灯
                                 # 初始化全局绿灯信任窗口
                                 self.session_approved_until = time.monotonic() + timeout_val
+                                # 记录该工具本轮已处理，避免后续重复通知
+                                session_notified_tools.extend(tool_list)
                                 agent.approve_permission()
                             else:
                                 self._log_activity_dispatcher("系统调度", "主人物理 QQ 授权被拒绝或超时，安全取消操作！", user_id=user_id)
                                 agent.deny_permission()
                                 await self.context.send_msg(msg_type, user_id, group_id, "已取消该敏感指令的执行。", skip_delay=True)
+
 
 
                 elif evt["type"] == "error":
