@@ -237,3 +237,32 @@ Xl-General-AI-Agent/ (项目根目录)
   $$\text{Version Multiplier} = 1.0 + 0.05 \times \ln(\text{version})$$
   这使得经历过多轮纠偏、深度深夜熔炼的高版本事实拥有极高的检索召回权，不认错最新事实，且在 Python 端纳秒级完成，毫无回答慢的延迟隐患。
 
+---
+
+## 9. 🚚 记忆大熔接：老旧无隔离数据库到多实例隔离新库无损平滑搬家引擎 (NEW - 2026-05-24)
+
+为了彻底打通老旧无隔离物理库（`~/.my-agent/memory/memories.db`）与开启了 `multi_instance_isolation` 多实例隔离的哈希隔离新库（`~/.my-agent/memory/1705919142/memories.db`）之间的物理孤岛，系统物理落地了 **无损平滑搬家与热熔合迁移引擎**：
+
+### 9.1 老旧数据库 DDL 列结构自愈热对齐 (Schema Alignment)
+* **避坑隐患**：老数据库是在早期版本初始化的，必定缺失新演化引擎所引入的 `version` 和 `revision_history` 字段。若直接通过 `ATTACH` 原子导入会由于列不匹配抛出异常。
+* **物理防线**：在 `ATTACH` 迁移前，引擎使用独立的 sqlite 客户端连接老旧数据库文件，探查其列结构。若发现缺失 `version` 与 `revision_history` 字段，**当场执行自愈 DDL 补齐，在老库中热升级列结构**，保证其与新库的表结构 100% 对齐。
+
+### 9.2 双旧库 ATTACH 原子热熔合 (Multi-DB Atomic Merge)
+* **工作机制**：在新隔离库初始化连接时，若老旧温床路径下存有未搬迁的老库文件，自动触发迁移：
+  1. 通过 `ATTACH DATABASE '<old_db_path>' AS old_db` 将老库挂载。
+  2. 在同一个原子事务中执行跨库合并：
+     * `knowledge_items`：`INSERT OR IGNORE INTO` 覆盖；
+     * `ki_embeddings`：`INSERT OR IGNORE INTO` 覆盖；
+     * `memories_fts`：通过 `filename NOT IN` 对 FTS 全文索引做安全的排重增量导入。
+  3. 执行 `DETACH DATABASE old_db`。
+
+### 9.3 微米级物理 Markdown 碎片分段去重合并 (Micro-level File Merge)
+* **去重合并算法**：
+  1. **普通 Markdown 碎片**（如 `reflect_*.md`）：直接使用 `shutil.copy2` 安全复制到新隔离目录中。
+  2. **核心记忆文件**（如 `user_profile.md` 等）：若新老目录都存在，则读取新老文件内容，**按 `###` 标题进行微米级物理分段解析**。使用 MD5 哈希提取每个段落的内容特征。只有当老段落哈希在新的 core 文件中不存在时，才将该老段落**原子安全追加**到新文件中，彻底杜绝粗暴“覆盖文件”导致的偏好记忆丢失。
+  3. **索引行合并去重**：解析老的 `MEMORY.md` 索引项，过滤已存在的文件名，自动将新增项 `_upsert_index` 至新 `MEMORY.md` 索引中。
+
+### 9.4 物理重命名归档，终结迁移 (Archive Finalization)
+* **自愈闭环**：迁移成功后，系统自动将老目录下的老库文件 `memories.db` 物理重命名为 `memories.db.migrated`，并将老的 `.md` 文件及老索引 `MEMORY.md` 重命名为 `*.migrated` 归档。
+* **物理收益**：使下次启动时自动跳过迁移引擎，杜绝二次搬家带来的写独占死锁与冗余计算，实现完美闭环。
+
