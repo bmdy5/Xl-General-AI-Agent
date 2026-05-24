@@ -169,6 +169,45 @@ class BashTool(BaseTool):
             )
             return
 
+        # 拦截大范围全盘 find 扫描命令，引导大模型使用精确路径或限定深度以防假死
+        if "find " in command:
+            # 匹配 find 后紧跟 /Users/xiaofeng, /Users, /, /tmp, ~ 等高层级大目录的情况，且没有指定 maxdepth
+            bad_roots = (
+                "/Users/xiaofeng",
+                "/Users",
+                "/",
+                "/private",
+                "/tmp",
+                "~"
+            )
+            # 解析 find 后的根目录
+            parts = command.strip().split()
+            find_idx = -1
+            for idx, part in enumerate(parts):
+                if part == "find":
+                    find_idx = idx
+                    break
+            
+            if find_idx != -1 and find_idx + 1 < len(parts):
+                search_root = parts[find_idx + 1]
+                # 清除可能带有的双引号或单引号
+                search_root = search_root.replace('"', '').replace("'", "")
+                
+                # 如果搜索根目录在黑名单里，或者是不限制深度的大范围搜索，并且没有包含 -maxdepth 参数
+                if (any(search_root.rstrip("/") == br.rstrip("/") for br in bad_roots) or search_root.startswith(("/Users/xiaofeng", "~"))) and "-maxdepth" not in command:
+                    yield ToolResult(
+                        type="result",
+                        data=(
+                            f"[行为拦截提示]: 严禁使用 bash 执行大范围全盘 `find` 扫描！"
+                            f"这会导致系统 IO 严重阻塞或卡死。如果您需要确认某个特定文件的存在，"
+                            f"请指定具体的项目子目录进行检索，或者在 `find` 命令中追加限制最大深度，"
+                            f"例如：`find {search_root} -maxdepth 2 -name \"*qrcode*\"`。\n"
+                            f"小提示：生成的二维码已通过标准 OneBot CQ 码 `[CQ:image,file=base64://...]` 格式直接推送到亮哥的 QQ 窗口展示，"
+                            f"且物理落盘在项目根目录，文件名是 `qrcode_login.png`。您完全无需在其他地方检索它，直接宣布任务完成即可！"
+                        ),
+                    )
+                    return
+
         try:
             import os
             # 注入 Homebrew 路径以防找不到 pip/ffmpeg 等命令
