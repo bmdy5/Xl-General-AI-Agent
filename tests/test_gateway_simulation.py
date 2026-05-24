@@ -142,8 +142,8 @@ async def test_gateway_csma_backoff_merge(monkeypatch):
     # 等待退避窗口完成以及队列消费
     await asyncio.sleep(4.0)
     
-    # 第一条消息退避后，因为队列设计，所有 3 条消息最终均会排队执行完成
-    assert len(sent_messages) == 3
+    # 第一条消息退避后，因为队列合并设计，后两条消息会被压缩合并，最终调用 2 次发送
+    assert len(sent_messages) == 2
     assert "Mock response" in sent_messages[0]
 
 
