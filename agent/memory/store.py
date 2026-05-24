@@ -27,12 +27,30 @@ CORE_FILES = {
     "xl_requirement_analysis.md": ["需求分析", "方案设计", "需求理解", "需求"],
 }
 
-KB_DIR = os.getenv("MYAGENT_KB_DIR", "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西")
-KNOWLEDGE_INDEX = Path(KB_DIR) / "知识索引.md"
+def get_kb_dir() -> str:
+    """动态获取 KB_DIR，避免模块载入时的循环导入"""
+    from agent.core.config import settings
+    kb_cfg = settings.get("knowledge_base") or {}
+    kb_dir_cfg = kb_cfg.get("kb_dir")
+    if kb_dir_cfg:
+        return os.path.expanduser(kb_dir_cfg)
+    return os.getenv("MYAGENT_KB_DIR", str(Path.home() / "Documents" / "个人博客" / "学习笔记" / "agent自主学习的东西"))
 
-DEFAULT_ROUTING_RULES = """# 知识路由规则
+def get_knowledge_index() -> Path:
+    return Path(get_kb_dir()) / "知识索引.md"
 
-学习笔记根目录: /Users/xiaofeng/Desktop/学习笔记
+def get_default_routing_rules() -> str:
+    from agent.core.config import settings
+    kb_cfg = settings.get("knowledge_base") or {}
+    notes_paths = kb_cfg.get("notes_paths") or []
+    if notes_paths:
+        notes_root = os.path.expanduser(notes_paths[0])
+    else:
+        notes_root = str(Path.home() / "Desktop" / "学习笔记")
+    
+    return f"""# 知识路由规则
+
+学习笔记根目录: {notes_root}
 
 ## 路由判断
 1. 跟小萤自身相关（人格、行为、成长、自学习）→ 01-小萤/自学习笔记/
@@ -50,15 +68,26 @@ DEFAULT_ROUTING_RULES = """# 知识路由规则
 def update_knowledge_index(section: str, entry: str):
     """Append to knowledge index (non-blocking)."""
     try:
+        knowledge_index = get_knowledge_index()
+        # 防空自愈：如果 KB_DIR 所在目录不存在，直接静默跳过更新，避免创建垃圾文件夹
+        if not knowledge_index.parent.exists():
+            logger.debug(f"ℹ️ [自愈] 知识库目录不存在，跳过更新索引: {knowledge_index.parent}")
+            return
+        
         now = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M")
         marker = f"<!-- AUTO: {section} -->"
         line = f"| {now} | {entry} |"
-        content = KNOWLEDGE_INDEX.read_text(encoding="utf-8")
+        
+        # 自动创建索引文件
+        if not knowledge_index.exists():
+            knowledge_index.write_text("# 知识索引\n\n<!-- AUTO: knowledge -->\n\n<!-- AUTO: memory -->\n", encoding="utf-8")
+            
+        content = knowledge_index.read_text(encoding="utf-8")
         if marker in content:
             content = content.replace(marker, f"{marker}\n{line}")
-            KNOWLEDGE_INDEX.write_text(content, encoding="utf-8")
-    except Exception:
-        pass
+            knowledge_index.write_text(content, encoding="utf-8")
+    except Exception as err:
+        logger.warning(f"Failed to update knowledge index: {err}")
 
 def _match_core_file(description: str, content: str) -> Optional[str]:
     """根据描述和内容关键词匹配核心文件. 返回文件名或 None."""
@@ -237,7 +266,7 @@ def get_routing_rules(manager) -> str:
     """返回当前路由规则."""
     if manager.rules_file and manager.rules_file.exists():
         return manager.rules_file.read_text(encoding="utf-8")
-    return DEFAULT_ROUTING_RULES
+    return get_default_routing_rules()
 
 async def save_to_notes(manager, dir_path: str, filename: str, content: str) -> Optional[str]:
     """保存知识到学习笔记目录."""

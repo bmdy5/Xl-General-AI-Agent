@@ -1,3 +1,4 @@
+import os
 import re
 import math
 import sqlite3
@@ -37,12 +38,29 @@ def search_notes(manager, query: str, limit: int = 5) -> list[dict]:
     if not clean or len(clean) < 2:
         return []
     try:
-        notes_db = Path.home() / ".my-agent" / "notes.db"
+        from agent.core.config import settings
+        # 1. 动态定位 notes.db，优先放入沙箱隔离区，避免锁冲突
+        if manager and hasattr(manager, "base_dir"):
+            notes_db = manager.base_dir / "notes.db"
+        else:
+            notes_db = Path.home() / ".my-agent" / "notes.db"
+            notes_db.parent.mkdir(parents=True, exist_ok=True)
+            
         db = sqlite3.connect(str(notes_db))
         from .notes_fts import create_table as nt_create, sync_incremental
         nt_create(db)
-        sync_incremental(db, Path("/Users/xiaofeng/Desktop/学习笔记/Agent开发"))
-        sync_incremental(db, Path("/Users/xiaofeng/Desktop/学习笔记/后端开发"))
+        
+        # 2. 从 settings 动态提取配置并执行自愈增量同步
+        kb_cfg = settings.get("knowledge_base") or {}
+        notes_paths = kb_cfg.get("notes_paths") or ["~/Desktop/学习笔记/Agent开发", "~/Desktop/学习笔记/后端开发"]
+        
+        for path_str in notes_paths:
+            resolved_path = Path(os.path.expanduser(path_str)).resolve()
+            if resolved_path.exists() and resolved_path.is_dir():
+                sync_incremental(db, resolved_path)
+            else:
+                logger.debug(f"ℹ️ [自愈] 增量同步笔记路径不存在，安全跳过: {path_str}")
+                
         from .notes_fts import search as notes_search
         res = notes_search(db, query, limit)
         manager._note_cache.set(cache_key, res)

@@ -32,7 +32,9 @@ async def on_session_end(agent):
     if getattr(agent, "session", None):
         session_id = getattr(agent.session, "session_id", "")
     
-    admin_id = os.environ.get("QQ_ADMIN_ID", "1705919142")
+    from agent.core.config import settings
+    sec_cfg = settings.get("security") or {}
+    admin_id = os.environ.get("QQ_ADMIN_ID", sec_cfg.get("admin_id", "1705919142"))
     is_group = session_id.startswith("group_")
     current_user_id = getattr(agent, "current_user_id", None)
 

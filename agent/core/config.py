@@ -27,7 +27,7 @@ class Settings:
                     self._data = parsed
                     # 自动注入到 os.environ，实现 100 percent 向后兼容
                     for key, val in parsed.items():
-                        if val is not None:
+                        if val is not None and not isinstance(val, (dict, list)):
                             os.environ[str(key)] = str(val)
                 logger.info(f"Successfully loaded config from {yaml_path}")
             else:

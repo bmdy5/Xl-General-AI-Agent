@@ -22,9 +22,13 @@ from .debate import ANALYZE_PROMPT, REVIEW_PROMPT
 
 logger = logging.getLogger(__name__)
 
-KNOWLEDGE_BASE = Path(
-    os.getenv("MYAGENT_KB_DIR", "/Users/xiaofeng/Documents/个人博客/学习笔记/agent自主学习的东西")
-)
+from agent.core.config import settings
+kb_cfg = settings.get("knowledge_base") or {}
+kb_dir_cfg = kb_cfg.get("kb_dir")
+if kb_dir_cfg:
+    KNOWLEDGE_BASE = Path(os.path.expanduser(kb_dir_cfg))
+else:
+    KNOWLEDGE_BASE = Path(os.getenv("MYAGENT_KB_DIR", str(Path.home() / "Documents" / "个人博客" / "学习笔记" / "agent自主学习的东西")))
 
 CATEGORIES = ["后端", "前端", "AI", "运维", "技能"]
 
@@ -35,11 +39,12 @@ CATEGORIES = ["后端", "前端", "AI", "运维", "技能"]
 class AutoLearner:
     """自主学习器 v2 — LLM 参与全过程."""
 
-    LOCAL_PATHS = [
-        Path("/Users/xiaofeng/Documents/gpt-image2中转站"),
-        Path("/Users/xiaofeng/Documents/个人博客/学习笔记/源码集合/agent源码"),
-        Path("/Users/xiaofeng/Documents/个人博客/学习笔记"),
+    local_paths_cfg = kb_cfg.get("local_paths") or [
+        "~/Documents/gpt-image2中转站",
+        "~/Documents/个人博客/学习笔记/源码集合/agent源码",
+        "~/Documents/个人博客/学习笔记"
     ]
+    LOCAL_PATHS = [Path(os.path.expanduser(p)) for p in local_paths_cfg]
 
     def __init__(self, agent, max_duration_minutes: int = 5, learn_model: str = "", dashboard=None):
         self.agent = agent

@@ -145,7 +145,9 @@ class Agent:
         
         if real_sender_id:
             self.current_user_id = real_sender_id
-            admin_id = os.getenv("QQ_ADMIN_ID", os.getenv("ADMIN_ID", "1705919142"))
+            from agent.core.config import settings
+            sec_cfg = settings.get("security") or {}
+            admin_id = os.getenv("QQ_ADMIN_ID", os.getenv("ADMIN_ID", sec_cfg.get("admin_id", "1705919142")))
             if real_sender_id == admin_id:
                 self.role = "admin"
             else:

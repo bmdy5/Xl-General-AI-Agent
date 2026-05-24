@@ -31,3 +31,7 @@ scripts/
 
 # 归档目录 (历史运行时产物)
 archive/
+
+# 记忆沙箱与测试记忆 (0ms 一键换家与 TDD 安全沙箱)
+.memory/
+.memory_test/
