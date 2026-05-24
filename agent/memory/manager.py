@@ -83,8 +83,9 @@ class MemoryManager:
         if not self.rules_file.exists():
             self.rules_file.write_text(get_default_routing_rules(), encoding="utf-8")
         self._db = None
-        self._mem_cache = MemoryCache(capacity=50, ttl=30)
-        self._note_cache = MemoryCache(capacity=50, ttl=30)
+        self._mem_cache = MemoryCache(capacity=200, ttl=300)
+        self._note_cache = MemoryCache(capacity=200, ttl=300)
+        self._vector_cache = {}
         self._debounce_tasks = {}
         
         # 6. 主动触发老旧无隔离数据库到多实例隔离新库的平滑无损热迁移
