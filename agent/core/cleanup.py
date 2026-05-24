@@ -175,5 +175,11 @@ class KnowledgeCleaner:
 
 async def run_cleanup(agent):
     """入口：执行知识库清理."""
+    try:
+        from agent.skills.cleanup import distill_legacy_skills
+        await distill_legacy_skills(agent)
+    except Exception as e:
+        logger.error(f"Failed to run skills cleanup during global cleanup: {e}")
+
     cleaner = KnowledgeCleaner(agent)
     return await cleaner.run()
