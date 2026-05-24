@@ -35,6 +35,7 @@ async def execute_action(tool, action: str, input_args: dict) -> tuple[str, str]
                 base64_data = match_raw.group(1)
         
         qrcode_path_msg = ""
+        cq_image_msg = ""
         if base64_data:
             try:
                 img_bytes = base64.b64decode(base64_data)
@@ -42,11 +43,20 @@ async def execute_action(tool, action: str, input_args: dict) -> tuple[str, str]
                 qrcode_path = os.path.join(project_dir, "qrcode_login.png")
                 with open(qrcode_path, "wb") as f:
                     f.write(img_bytes)
-                qrcode_path_msg = f"\n\n[扫码提示] 登录二维码已成功物理解码落盘，绝对路径为: {qrcode_path}\n亮哥，你可以直接打开该图片并扫码登录！"
+                
+                # 直发 OneBot CQ 图片码，打包 base64，彻底跨越 Docker/跨平台目录限制限制
+                cq_image_msg = f"[CQ:image,file=base64://{base64_data}]"
+                qrcode_path_msg = (
+                    f"\n\n[扫码提示] 登录二维码已成功物理解码落盘，绝对路径为: {qrcode_path}\n"
+                    f"亮哥，您可以直接在手机 QQ 上识别或扫码登录！\n"
+                    f"{cq_image_msg}"
+                )
             except Exception as ex:
                 logger.error(f"Failed to decode QR code: {ex}")
                 qrcode_path_msg = f"\n\n[扫码警告] 自动解码二维码图片失败: {ex}"
-        return result + qrcode_path_msg, f"获取小红书登录二维码成功:\n{result}{qrcode_path_msg}"
+        
+        # 将 CQ 码直接注入到 assistant_msg 头部，促使 QQ 机器人直接渲染发送，平息大模型 ReAct 偏执检索
+        return result + qrcode_path_msg, f"{cq_image_msg}\n获取小红书登录二维码成功，已直接发送图片到 QQ 对话框。{qrcode_path_msg}"
 
     elif action == "list_feeds":
         result = await tool._call_mcp("list_feeds", {})
