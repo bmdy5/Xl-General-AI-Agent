@@ -52,6 +52,20 @@ def _get_db(manager) -> sqlite3.Connection:
         
         try:
             manager._db = sqlite3.connect(str(db_path), timeout=1.0)
+            
+            # 主动进行 integrity_check 与 vtable 构造白盒探测，自愈物理损坏与 malformed 错误
+            if not is_new:
+                try:
+                    # 极其轻量的完整性测试
+                    manager._db.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+                    # 针对 FTS 虚拟表 vtable 故障进行特异性测试，先检测表是否存在，防止误判
+                    cur_check = manager._db.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='kis_fts'")
+                    if cur_check.fetchone():
+                        manager._db.execute("SELECT 1 FROM kis_fts LIMIT 1").fetchall()
+                except sqlite3.DatabaseError as integrity_err:
+                    logger.critical(f"🚨 [DB探测] 物理数据库或虚拟表损坏: {integrity_err}！触发原地隔离自愈流程...")
+                    raise integrity_err
+            
             manager._db.execute("PRAGMA foreign_keys = ON")
             manager._db.execute("PRAGMA busy_timeout = 1000")
             manager._db.execute("PRAGMA journal_mode = WAL")
@@ -119,6 +133,69 @@ def _get_db(manager) -> sqlite3.Connection:
                 except Exception:
                     pass
                     
+        except sqlite3.DatabaseError as db_err:
+            db_err_msg = str(db_err).lower()
+            if "malformed" in db_err_msg or "vtable" in db_err_msg or "corrupt" in db_err_msg:
+                logger.critical(f"🚨 [DB自愈] 确认数据库物理损坏: {db_err}。正在对坏库实施物理热隔离...")
+                if manager._db is not None:
+                    try:
+                        manager._db.close()
+                    except Exception:
+                        pass
+                    manager._db = None
+                
+                # 强力重命名隔离损坏的主库，包含所有的 WAL、SHM 伴生文件
+                import time
+                ts = int(time.time())
+                for ext in ["", "-wal", "-shm", ".bak"]:
+                    p = Path(str(db_path) + ext)
+                    if p.exists():
+                        try:
+                            p.rename(Path(str(p) + f".malformed.{ts}"))
+                        except Exception as rename_err:
+                            logger.error(f"❌ [DB自愈] 坏库文件 {p.name} 隔离重命名失败: {rename_err}")
+                
+                logger.critical("🎉 [DB自愈] 坏库已全线物理隔离。尝试备份库回卷还原...")
+                
+                # 检查项目沙箱备份库是否也损坏，如果不损坏，尝试回卷备份库作为 0ms 瞬间还原
+                backup_db_path = manager.backup_dir / "memories.db"
+                if backup_db_path.exists():
+                    import shutil
+                    try:
+                        # 尝试验证备份库的健康度
+                        test_conn = sqlite3.connect(str(backup_db_path))
+                        test_conn.execute("SELECT 1 FROM sqlite_master LIMIT 1").fetchall()
+                        # 测试备份库里的虚拟表是否完全健康
+                        try:
+                            test_conn.execute("SELECT 1 FROM kis_fts LIMIT 1").fetchall()
+                            is_backup_healthy = True
+                        except sqlite3.DatabaseError:
+                            is_backup_healthy = False
+                        test_conn.close()
+                        
+                        if is_backup_healthy:
+                            manager.base_dir.mkdir(parents=True, exist_ok=True)
+                            for ext in ["", "-wal", "-shm"]:
+                                src = Path(str(backup_db_path) + ext)
+                                if src.exists():
+                                    shutil.copy2(str(src), str(manager.base_dir / (src.name)))
+                            logger.critical("✨ [DB自愈] 极度幸运！项目沙箱备份库完全健康，已成功实现 0ms 完美物理回卷自愈还原！")
+                        else:
+                            logger.error("❌ [DB自愈] 备份库测试失败，虚拟表已损坏，跳过物理回卷。")
+                    except Exception as backup_test_err:
+                        logger.error(f"❌ [DB自愈] 备份库连接或验证失败: {backup_test_err}。跳过物理回卷。")
+                        try:
+                            test_conn.close()
+                        except Exception:
+                            pass
+                
+                # 重新递归调用 _get_db 重建新库结构
+                manager._db = None
+                return _get_db(manager)
+            
+            # 向上抛出其他 DatabaseError
+            raise db_err
+            
         except Exception as upgrade_err:
             logger.critical(f"🚨 [DB自愈] 数据库 DDL 热升级失败: {upgrade_err}. 启动物理自愈快照还原...")
             if manager._db is not None:

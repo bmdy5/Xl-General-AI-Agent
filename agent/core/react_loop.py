@@ -61,13 +61,8 @@ def setup_prompt_caching(messages: list[dict], model_name: str) -> list[dict]:
 
 async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
     """统一 ReAct 核心循环。stream=False -> chat(), stream=True -> chat_stream()."""
-    # 锁定时间戳防抖，彻底消除 ReAct 多次交互因时间越界导致的前缀缓存失效，提升缓存命中率
-    from datetime import datetime, timezone, timedelta
-    beijing_tz = timezone(timedelta(hours=8))
-    dt = datetime.now(beijing_tz)
-    minute_window = (dt.minute // 5) * 5
-    now_agg = dt.replace(minute=minute_window, second=0, microsecond=0)
-    now = now_agg.strftime("%Y-%m-%d %H:%M (北京时间)")
+    # 直接在每轮 run_loop 初始化时提取静态时间戳，在整轮 ReAct 中静止不变，极致不冗余
+    now = datetime.now().strftime("%Y-%m-%d %H:%M")
     cwd = os.getcwd()
     tool_call_history: list[dict] = []
 
@@ -127,14 +122,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         fatigue_threshold = 100000 if is_debugging else 64000
         is_fatigued = agent.compressor.estimate_tokens(agent.messages) > fatigue_threshold
 
-        llm_messages = [{"role": "system", "content": system_prompt}]
-        for m in agent.messages:
-            copy = dict(m)
-            if "deepseek" not in agent.llm.model.lower():
-                copy.pop("reasoning_content", None)
-            llm_messages.append(copy)
-
-        # 构建临时的动态环境上下文，强制作为单次 completion 调用的最尾端临时 system 消息，彻底阻断消息队列中间的 Hash 抖动
+        # 构建动态环境上下文，将其直接合并注入首条 System Prompt 中以彻底抑制前缀缓存抖动
         context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
         if memory_block:
             context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
@@ -151,11 +139,14 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                 "注意：必须明确提及在完成手头这一轮工作之后，你要求去大睡一觉以整理大脑记忆。"
             )
 
-        temp_context_msg = {
-            "role": "system",
-            "content": "\n\n".join(context_parts)
-        }
-        llm_messages.append(temp_context_msg)
+        full_system_prompt = system_prompt + "\n\n" + "\n\n".join(context_parts)
+        
+        llm_messages = [{"role": "system", "content": full_system_prompt}]
+        for m in agent.messages:
+            copy = dict(m)
+            if "deepseek" not in agent.llm.model.lower():
+                copy.pop("reasoning_content", None)
+            llm_messages.append(copy)
 
         tools = agent.registry.get_definitions()
         
