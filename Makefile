@@ -71,10 +71,18 @@ clean:
 # ── 重启 QQ Gateway（改完代码后执行） ──
 gateway-restart:
 	@echo "🔄 正在重启 QQ Gateway..."
-	-pkill -f "main.py --gateway" 2>/dev/null
-	sleep 1
-	mkdir -p logs
-	nohup venv/bin/python main.py --gateway >> logs/gateway.log 2>&1 &
-	@echo "✅ QQ Gateway 已重启"
+	@if launchctl list 2>/dev/null | grep -q com.myagent.qqgateway; then \
+		echo "   - 检测到 launchd 托管服务，正在执行进程安全关停以激活 launchd 的自动拉起自愈..."; \
+		pkill -f "main.py --gateway" 2>/dev/null || true; \
+	else \
+		echo "   - 未检测到 launchd 服务，正在通过 nohup 独立重启..."; \
+		pkill -f "main.py --gateway" 2>/dev/null || true; \
+		sleep 1; \
+		mkdir -p logs; \
+		nohup venv/bin/python main.py --gateway >> logs/gateway.log 2>&1 & \
+	fi
+	@echo "✅ QQ Gateway 重启完成"
 	@echo "   查看日志: tail -f logs/gateway.log"
+
+
 
