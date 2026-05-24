@@ -183,13 +183,66 @@ class AgentExecutor:
                 if is_current:
                     self.bot.remove_active_task(session_key, current_coro)
                     
-                    # 自动拉起下一个排队任务，维持完美功能闭环与单元测试向下兼容
+                    # 自动拉起并合并下一个排队任务，维持完美功能闭环与单元测试向下兼容
                     if self.bot.has_queued_messages(session_key):
-                        next_pack = self.bot.pop_queued_message(session_key)
-                        if next_pack:
-                            next_event, next_raw = next_pack
-                            logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务: {next_raw}")
-                            asyncio.create_task(self.dispatcher.dispatch_event(next_event))
+                        queued_packs = []
+                        while self.bot.has_queued_messages(session_key):
+                            pack = self.bot.pop_queued_message(session_key)
+                            if pack:
+                                queued_packs.append(pack)
+                        
+                        if queued_packs:
+                            # 提取并判断所有的发言人是否全是管理员亮哥
+                            all_admin = True
+                            for pack in queued_packs:
+                                next_event, _ = pack
+                                next_user_id = str(next_event.get("user_id", ""))
+                                if next_user_id != str(self.admin_id):
+                                    all_admin = False
+                                    break
+                            
+                            last_event, _ = queued_packs[-1]
+                            
+                            if all_admin:
+                                # 全是管理员亮哥连发，构造亮哥连发专属合并 Prompt
+                                merged_raw = "\n".join(pack[1] for pack in queued_packs)
+                                prompt = (
+                                    f"[系统提示：亮哥在刚才小萤思考期间连发了 {len(queued_packs)} 条消息。"
+                                    f"他可能很关心或者很急切哦！请在回复中展现出你的惊喜与高情商，"
+                                    f"将这些话融合在一起一次性甜甜地回答他～ 连发消息如下：\n{merged_raw}]"
+                                )
+                            else:
+                                # 包含其他人发言，构造群聊混杂 Prompt
+                                lines = []
+                                for pack in queued_packs:
+                                    next_event, next_raw = pack
+                                    next_user_id = str(next_event.get("user_id", ""))
+                                    next_sender_info = next_event.get("sender", {}) or {}
+                                    next_card = str(next_sender_info.get("card", "")).strip()
+                                    next_nickname = str(next_sender_info.get("nickname", "")).strip()
+                                    next_sender_name = next_card or next_nickname or next_user_id
+                                    
+                                    display_name = "亮哥" if next_user_id == str(self.admin_id) else next_sender_name
+                                    lines.append(f"{display_name}：{next_raw}")
+                                
+                                merged_lines = "\n".join(lines)
+                                prompt = (
+                                    f"[系统提示：系统检测到在此期间有多人发言（含亮哥与他人），"
+                                    f"请综合他们的发言意图，一次性给予综合答复。对亮哥要保持亲昵，对他人保持克制。"
+                                    f"连发消息如下：\n{merged_lines}]"
+                                )
+                            
+                            # 重新装配 event，并以最新的时间戳自动重新调用
+                            if last_event.get("message_type") == "group":
+                                self_id = str(last_event.get("self_id", "999999"))
+                                prompt = f"[CQ:at,qq={self_id}] {prompt}"
+                                
+                            last_event["raw_message"] = prompt
+                            if "message" in last_event:
+                                last_event["message"] = prompt
+                                
+                            logger.info(f"🔄 [系统调度] 自动拉起下一个排队任务并合并，合并后Prompt: {prompt}")
+                            asyncio.create_task(self.dispatcher.dispatch_event(last_event))
 
     def _count_tokens(self, text: str) -> int:
         """中英文混合 Token 科学算法"""
