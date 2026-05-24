@@ -73,9 +73,24 @@ class BashTool(BaseTool):
         if not cmd:
             return "safe"
 
+        # 1. 经典显式删除与进程终止拦截
         for pat in BashTool.DANGEROUS_PATTERNS:
             if pat.search(cmd):
                 return "dangerous"
+
+        # 2. 经典 Python 代码删除行为 (os.remove / shutil.rmtree / unlink)
+        if re.search(r'\bos\.remove\b|\bos\.unlink\b|\bshutil\.rmtree\b|\bPath\.unlink\b', cmd):
+            return "dangerous"
+
+        # 3. 隐式物理重定向与转移覆写保护区拦截
+        protected_keywords = {
+            "main.py", "Makefile", "Dockerfile", "docker-compose.yml",
+            "pytest.ini", "requirements.txt", ".gitignore", ".env.example", "agent/"
+        }
+        has_redirect = ">" in cmd
+        has_move = re.search(r'\bmv\b', cmd)
+        if (has_redirect or has_move) and any(kw in cmd for kw in protected_keywords):
+            return "dangerous"
 
         first_word = cmd.split()[0] if cmd.split() else ""
         first_word = first_word.lstrip('\\')
@@ -87,6 +102,7 @@ class BashTool(BaseTool):
                 return "safe"
 
         return "write"
+
 
     # ── tool definition ────────────────────────────────────────
 
