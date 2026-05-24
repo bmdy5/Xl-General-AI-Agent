@@ -285,3 +285,46 @@ Xl-General-AI-Agent/ (项目根目录)
 * **高画质格式化卡片**：将其在 System Prompt 中格式化为包含 `📌 ID`、`Version`、`Title`、`Keywords`、`Summary`、`Content`、`Latest Revision` 的标准属性卡片。
 * **精纯修订历史过滤**：采纳面审共识，**仅在 System 缓存中展示该 KI 最权威的“最近一条（最新一条）”修订历史**，而将所有的多轮合并修订行存放在数据库中，极致收干 Token 消耗，并大幅提升大模型对记忆版本感知的精准度。
 
+---
+
+## 11. 🧠 灵魂记忆不灭：高韧性短期记忆实时持久化防丢与仪式感梦醒自进化系统 (NEW - 2026-05-24)
+
+本系统彻底根治了因“网关守护进程重启/意外断线导致短期对话丢失（失忆）”的核心痛点，并在打盹睡眠自愈后为主人亮哥增加了高情商、充满人设温度的“梦境回顾自省卡片”推送。
+
+### 11.1 DDL 升级与 active_sessions 持久化表
+在系统 `bootstrap` 引导拉起数据库 `_get_db` 时，DB 自愈引擎会自动检测并建立短期持久化表：
+```sql
+CREATE TABLE IF NOT EXISTS active_sessions (
+    session_key TEXT PRIMARY KEY,
+    messages TEXT NOT NULL,       -- JSON 序列化消息数组
+    updated_at TEXT NOT NULL      -- UTC ISO-8601 时间戳
+);
+```
+
+### 11.2 MemoryManager 1.0秒异步防抖刷盘与加载自愈
+*   **1.0秒异步防抖刷盘 (`save_active_session_async`)**：在 `MemoryManager` 内部维护一个防抖 `self._debounce_tasks` 任务字典。每次写消息时，强制取消前一个未完成任务，并重新开辟一个 1.0 秒延迟的任务；当 1.0 秒内没有新的交互时，才会原子级将内存 `messages` 快照刷入 SQLite，实现 0 毫秒物理响应开销。
+*   **冷启动加载自愈 (`load_active_session`)**：在 `Agent.run()` 启动之初，系统优先拉取 `active_sessions` 关系表。若查出未清账消息，立即 100% 逆向载入 `self.messages`；仅在表为空时才 fallback 回 `session.json`。实现了进程重启、网络意外断线后灵魂记忆的“秒级无缝后续接”，机器人不失忆。
+*   **持久化 Hook 位置**：我们在 `react_loop.py` 循环的 `run_loop` 初始化时、每一轮 turn 迭代的末尾、以及 `completed`/`aborted` 退出分支中自动 Hook，确保数据一致性。
+
+### 11.3 并发新消息的“快照增量清账切片”算法
+*   **避坑痛点**：做梦大模型提炼耗时 10-30 秒。若做梦期间用户发来新命令，直接暴力清空 `messages` 会将这期间进来的新消息强行抹去，造成严重的“断层失忆”。
+*   **切片算法**：
+    1.  做梦提炼前，截取消息副本快照并记录快照长度：`snapshot = list(agent.messages)`，`snapshot_len = len(snapshot)`。
+    2.  `trigger_deep_dream_evolution` 仅基于此快照进行脑力自进化与 Skill 提炼，阻断并发流入的噪声。
+    3.  做梦完全结束后，在同一同步原子块内执行**增量清账切片**，切除快照对应的前缀老历史，完好保留并合并做梦期间流入的所有最新消息：
+        ```python
+        if len(agent.messages) >= snapshot_len:
+            agent.messages = agent.messages[snapshot_len:]
+        else:
+            agent.messages = []
+        ```
+    4.  实时防抖更新 SQLite `active_sessions` 表。
+
+### 11.4 高情商梦醒自省卡片提炼与 8s 离线 Fallback 容灾
+*   **梦境回顾卡片**：醒来时，大模型通过 `DREAM_EVOLUTION_SUMMARY_PROMPT` 接收做梦中新产生的 KI 细节与新 Skill 详情，生成饱含动作描写、包含“自省反思、新策略、技能更新、灵魂净化”等四大板块的精美卡片（仪式感爆棚）。
+*   **8秒 Fallback 本地自愈模板**：对回顾总结大模型调用设置最长 8.0 秒超时。若网络波动超时或大模型挂起，自动利用本地已入库真实的 KI 与 Skill 详情，通过 Python 本地模板组装 100% 精准的精简版 Markdown 回顾卡片作为唤醒推送，坚决防止假死死锁。
+
+### 11.5 开发红线与 TDD 沙箱闭环验证
+*   **红线：严禁重启 bot**：物理重启 Gateway（`start.sh`）会中断真实的会话，在开发中我们郑重承诺亮哥，**100% 绝对不重启网关**。
+*   **Pytest 闭环验证**：所有的 DDL 表生成、防抖写盘、冷启动恢复、并发快照清账、本地 fallback 容灾测试均在 `tests/test_fatigue_dream_persistence.py` 中通过高仿真密闭沙箱 100% 绿屏验证通过！
+

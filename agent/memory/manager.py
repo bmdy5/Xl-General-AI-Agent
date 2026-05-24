@@ -85,6 +85,7 @@ class MemoryManager:
         self._db = None
         self._mem_cache = MemoryCache(capacity=50, ttl=30)
         self._note_cache = MemoryCache(capacity=50, ttl=30)
+        self._debounce_tasks = {}
         
         # 6. 主动触发老旧无隔离数据库到多实例隔离新库的平滑无损热迁移
         self._run_hot_migration_if_needed()
@@ -137,6 +138,83 @@ class MemoryManager:
     def _get_db(self):
         from .index import _get_db
         return _get_db(self)
+
+    async def load_active_session(self, session_key: str) -> list:
+        """从 SQLite 数据库 active_sessions 中安全加载当前会话消息列表."""
+        import json
+        db = self._get_db()
+        try:
+            cur = db.execute(
+                "SELECT messages FROM active_sessions WHERE session_key = ?",
+                (session_key,)
+            )
+            row = cur.fetchone()
+            if row:
+                messages_str = row[0]
+                try:
+                    return json.loads(messages_str)
+                except Exception as parse_err:
+                    logger.error(f"Failed to parse active_session json for {session_key}: {parse_err}")
+                    return []
+        except Exception as e:
+            logger.error(f"Failed to load active session from DB for {session_key}: {e}")
+        return []
+
+    def save_active_session_async(self, session_key: str, messages: list):
+        """非阻塞式异步内存防抖刷盘。消息先保留在内存，1.0秒防抖延迟后一次性写入SQLite。"""
+        import json
+        from datetime import datetime, timezone
+        
+        # 1. 序列化消息数据以快照保存，规避协程挂起期间 messages 列表被后方修改导致的数据同步不一致
+        try:
+            serialized_msgs = json.dumps(messages)
+        except Exception as ser_err:
+            logger.error(f"Failed to serialize messages for {session_key}: {ser_err}")
+            return
+
+        # 2. 强行取消当前 session_key 正在等待的旧 Task (Debounce 去重)
+        old_task = self._debounce_tasks.get(session_key)
+        if old_task and not old_task.done():
+            old_task.cancel()
+
+        # 3. 创建全新的防抖物理写入 Task
+        async def _do_debounce_write():
+            try:
+                await asyncio.sleep(1.0)
+                db = self._get_db()
+                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                with db:
+                    db.execute(
+                        "INSERT OR REPLACE INTO active_sessions (session_key, messages, updated_at) VALUES (?, ?, ?)",
+                        (session_key, serialized_msgs, now_str)
+                    )
+                logger.debug(f"💾 [防抖刷盘成功] session {session_key} 内存消息已被同步至 SQLite。")
+            except asyncio.CancelledError:
+                # 任务被取消是正常防抖现象，不打印 error
+                pass
+            except Exception as write_err:
+                logger.error(f"Failed to execute debounce write to SQLite: {write_err}")
+            finally:
+                # 安全清理
+                if self._debounce_tasks.get(session_key) == current_task:
+                    self._debounce_tasks.pop(session_key, None)
+
+        try:
+            loop = asyncio.get_running_loop()
+            current_task = loop.create_task(_do_debounce_write())
+            self._debounce_tasks[session_key] = current_task
+        except RuntimeError:
+            # 兼容同步单测环境无事件循环时，直接阻塞写（容灾）
+            try:
+                db = self._get_db()
+                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                with db:
+                    db.execute(
+                        "INSERT OR REPLACE INTO active_sessions (session_key, messages, updated_at) VALUES (?, ?, ?)",
+                        (session_key, serialized_msgs, now_str)
+                    )
+            except Exception as sync_write_err:
+                logger.error(f"Failed to execute synchronous active session write: {sync_write_err}")
 
     def _upsert_index(self, filename: str, new_line: str):
         from .index import _upsert_index

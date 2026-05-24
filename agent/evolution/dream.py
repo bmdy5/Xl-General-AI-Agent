@@ -153,6 +153,25 @@ DEEP_DREAM_SKILL_PROMPT = """你是一个高阶智能体技能突变合成引擎
 }}
 不要输出任何其他内容。"""
 
+DREAM_EVOLUTION_SUMMARY_PROMPT = """你是一个高阶智能体梦境自省大师。请根据本轮会话中真实发生的问题、调试报错、用户纠偏反馈以及沉淀入库的新知识/新技能，为主人【亮哥】生成一份高情商、俏皮可爱的“梦境回顾总结”卡片。
+
+## 本次提炼入库的硬 facts (新 KI)
+{ki_details}
+
+## 本次突变合成的新技能 (New Skills)
+{skill_details}
+
+## 生成规范：
+1. 语气活泼、充满温度与人设张力（带有情绪动作描写，如 （伸了个大大的懒腰））。
+2. 包含一个 Markdown 三级标题 ### 📊 梦境回顾总结。
+3. 四大板块组织：
+   - **自省反思**：本次会话中发现了什么主要问题或踩坑点（例如 API 失效、路径冲突、逻辑错误等，基于 learnings 深度总结）。
+   - **新策略**：今后要遵循哪些具体的工程/对话新策略（不冗余、防失忆等）。
+   - **技能库整理**：整理了哪些技能（如：整理后：22 个，新增了【技能名】）。
+   - **灵魂净化状态**：用一句话汇报记忆大脑已经深度熔接压缩，算力 100% 满状态复活。
+
+只输出总结的 Markdown 文本，不要输出 json 或任何多余标签。"""
+
 async def process_dream_ki(agent, ki_data: dict) -> str:
     """做梦去重吞噬合并逻辑：余弦相似度查重，超0.90或阻尼带终审则合并更新，否则新建落盘。返回所保存的 KI ID。"""
     title = ki_data.get("title", "")
@@ -311,12 +330,12 @@ async def process_dream_ki(agent, ki_data: dict) -> str:
     logger.info(f"Successfully saved new KI {ki_id}.")
     return ki_id
 
-async def trigger_deep_dream_evolution(agent):
-    """深度长眠做梦进化主梦境协程：提炼全局 KI 并吞噬去重，检测 SOP 并突变合成新 Skill"""
+async def trigger_deep_dream_evolution(agent, history_messages=None) -> str:
+    """深度长眠做梦进化主梦境协程：提炼全局 KI 并吞噬去重，检测 SOP 并突变合成新 Skill，返回做梦反思卡片内容"""
     logger.info("💤 [深度做梦开始] 正在读取全局长对话历史，进行深度脑力提炼与进化...")
     
     history_lines = []
-    messages = getattr(agent, "messages", [])
+    messages = history_messages if history_messages is not None else getattr(agent, "messages", [])
     for msg in messages:
         role = msg.get("role", "")
         content = str(msg.get("content", ""))
@@ -325,7 +344,10 @@ async def trigger_deep_dream_evolution(agent):
     history_text = "\n".join(history_lines)
     if not history_text.strip():
         logger.info("💤 [深度做梦取消] 对话历史为空。")
-        return
+        return ""
+
+    saved_learnings = []
+    saved_skills = []
 
     # 1. 全局提炼 KI 并吞噬归并
     try:
@@ -345,6 +367,7 @@ async def trigger_deep_dream_evolution(agent):
                     if cat not in ["xl_debugging", "user_profile", "xl_code_review", "xl_tool_guide"]:
                         learning["category"] = "xl_debugging"
                     await process_dream_ki(agent, learning)
+                    saved_learnings.append(learning)
                 logger.info(f"✨ [深度做梦成功] 全局提炼并吞噬归并了 {len(result_ki.get('learnings', []))} 条核心知识。")
     except Exception as e:
         logger.error(f"❌ [深度做梦异常] 全局提炼 KI 失败: {e}")
@@ -372,11 +395,65 @@ async def trigger_deep_dream_evolution(agent):
                     script_name = result_skill.get("helper_script_filename")
                     script_code = result_skill.get("helper_script_content")
                     register_skill_evolution(folder_name, md_content, script_name, script_code, agent=agent)
+                    saved_skills.append(skill_name)
                     logger.info(f"🎉 [技能进化成功] 自进化突变合成全新技能: 【{skill_name}】 -> skills/{folder_name}/")
     except Exception as e:
         logger.error(f"❌ [技能突变异常] 自进化合成 Skill 失败: {e}")
 
-    # 3. 深夜全局知识熔炼自演进 (方案 B)
+    # 3. 生成做梦自省总结卡片 (高情商交互与 8s 容灾 Fallback)
+    summary_card = ""
+    if saved_learnings or saved_skills:
+        ki_details_str = ""
+        for i, kl in enumerate(saved_learnings):
+            ki_details_str += f"{i+1}. 【{kl.get('title')}】({kl.get('category')}): {kl.get('summary')}\n   详细: {kl.get('content')}\n"
+        
+        skill_details_str = ""
+        for i, sk in enumerate(saved_skills):
+            skill_details_str += f"{i+1}. 技能【{sk}】\n"
+            
+        if not ki_details_str:
+            ki_details_str = "(本次无新记忆事实提炼)\n"
+        if not skill_details_str:
+            skill_details_str = "(本次无新技能合成)\n"
+
+        summary_prompt = DREAM_EVOLUTION_SUMMARY_PROMPT.format(
+            ki_details=ki_details_str,
+            skill_details=skill_details_str
+        )
+        
+        try:
+            # 8 秒硬超时保护
+            response = await asyncio.wait_for(
+                agent.llm.chat(
+                    messages=[{"role": "user", "content": summary_prompt}],
+                    tools=None,
+                    model_override=agent.llm.model,
+                ),
+                timeout=8.0
+            )
+            summary_card = response.get("content", "").strip()
+        except Exception as summary_err:
+            logger.warning(f"Failed to generate high-EQ dream recap card via LLM: {summary_err}. Triggering Fallback template...")
+            
+        # Fallback 本地自愈模板
+        if not summary_card:
+            ki_count = len(saved_learnings)
+            skill_count = len(saved_skills)
+            skills_names_str = "、".join([f"【{sk}】" for sk in saved_skills]) if saved_skills else ""
+            
+            skill_section = f"新增了 {skills_names_str}" if skills_names_str else "无新增技能"
+            
+            summary_card = (
+                "### 📊 梦境回顾总结 (系统离线提炼)\n\n"
+                "由于大模型总结链接波动，小萤通过副脑为您快速整理了本次梦境精简成果：\n\n"
+                "#### 💡 本次睡眠提炼的硬事实\n"
+                f"* 提炼了 {ki_count} 条关于系统教训或用户偏好的核心记忆事实（已安全存入 SQLite memories.db 库）。\n\n"
+                "#### 🛠️ 技能库突变状态\n"
+                f"* 突变合成了 {skill_count} 个全新的自进化技能，已自动登记落盘至技能库 ({skill_section})。\n"
+                "* 核心记忆库已完成去重吞噬熔接，算力已完全恢复 100% 满血状态！"
+            )
+            
+    # 4. 深夜全局知识熔炼自演进 (方案 B)
     try:
         logger.info("💤 [深夜全局知识熔炼开始] 正在提取活跃或碎片 KI 进行 0-Token 粗聚类熔炼...")
         db = agent.memory._get_db()
@@ -551,3 +628,5 @@ async def trigger_deep_dream_evolution(agent):
                     
     except Exception as e:
         logger.error(f"❌ [深夜全局熔炼异常] {e}")
+
+    return summary_card

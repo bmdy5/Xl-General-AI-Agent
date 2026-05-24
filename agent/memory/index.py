@@ -116,6 +116,14 @@ def _get_db(manager) -> sqlite3.Connection:
                 USING fts5(ki_id, title, category, keywords, summary, content,
                            tokenize="porter unicode61")
             """)
+            # 创建短期记忆实时持久化表 active_sessions
+            manager._db.execute("""
+                CREATE TABLE IF NOT EXISTS active_sessions (
+                    session_key TEXT PRIMARY KEY,
+                    messages TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
             # 创建 768维中文增强语义向量库表
             manager._db.execute("""
                 CREATE TABLE IF NOT EXISTS ki_embeddings (
