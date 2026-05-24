@@ -18,6 +18,9 @@ class SecurityManager:
 
     def is_allowed(self, user_id: str, msg_type: str, group_id: str) -> bool:
         """安全白名单判定"""
+        if str(user_id).startswith("douyin_"):
+            return True
+
         WHITE_LIST = {self.admin_id}
         coworker_ids = os.getenv("QQ_COWORKER_IDS", "")
         if coworker_ids:

@@ -68,12 +68,16 @@ clean:
 	docker compose down
 	@echo "✅ 已停止"
 
+
+
 # ── 重启 QQ Gateway（改完代码后执行） ──
 gateway-restart:
 	@echo "🔄 正在重启 QQ Gateway..."
 	@if launchctl list 2>/dev/null | grep -q com.myagent.qqgateway; then \
-		echo "   - 检测到 launchd 托管服务，正在执行进程安全关停以激活 launchd 的自动拉起自愈..."; \
-		pkill -f "main.py --gateway" 2>/dev/null || true; \
+		echo "   - 检测到 launchd 托管服务，正在通过 launchctl 执行干净、安全的卸载与重新装载重启..."; \
+		launchctl unload ~/Library/LaunchAgents/com.myagent.qqgateway.plist 2>/dev/null || true; \
+		sleep 1; \
+		launchctl load ~/Library/LaunchAgents/com.myagent.qqgateway.plist 2>/dev/null || true; \
 	else \
 		echo "   - 未检测到 launchd 服务，正在通过 nohup 独立强力重启..."; \
 		pkill -9 -f "main.py --gateway" 2>/dev/null || true; \
@@ -86,6 +90,7 @@ gateway-restart:
 	@echo "   查看日志: tail -f logs/gateway.log"
 
 # ── 一键物理技能增量去重 ──
+
 skills-dedup:
 	@echo "🔄 正在一键增量合并 skills/ 冗余技能..."
 	PYTHONPATH=. venv/bin/python agent/skills/cleanup.py --incremental

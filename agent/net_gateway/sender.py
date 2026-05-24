@@ -27,6 +27,16 @@ class MessageSender:
 
     async def send(self, msg_type: str, user_id: str, group_id: str, text: str, skip_delay: bool = False):
         """OneBot HTTP 协议消息发送，负责具体的网络包推送。"""
+        # 0.1 抖音消息专有通道拦截与路由分发
+        if str(user_id).startswith("douyin_"):
+            try:
+                from .douyin_bot import douyin_gateway
+                # 抖音网页版私信通过 CloakBrowser 物理发送，不占用 QQ 令牌桶
+                asyncio.create_task(douyin_gateway.send_message(str(user_id), text))
+            except Exception as router_err:
+                logger.error(f"Failed to route message to Douyin gateway: {router_err}")
+            return
+
         # 0. 全局物理发包滑窗令牌桶平滑流控整流
         await self.limiter.acquire()
 
