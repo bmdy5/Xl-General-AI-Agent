@@ -146,8 +146,8 @@ async def append_to_core(manager, target_file: str, description: str, content: s
     except Exception:
         pass
 
-    manager._mem_cache.invalidate_all()
-    manager._note_cache.invalidate_all()
+    manager._mem_cache.invalidate_keys(keywords=description, text=content)
+    manager._note_cache.invalidate_keys(keywords=description, text=content)
     return timestamp
 
 async def save(manager, filename: str, description: str, content: str,
@@ -220,8 +220,8 @@ async def save(manager, filename: str, description: str, content: str,
         db.commit()
     except Exception:
         pass
-    manager._mem_cache.invalidate_all()
-    manager._note_cache.invalidate_all()
+    manager._mem_cache.invalidate_keys(keywords=description, text=content)
+    manager._note_cache.invalidate_keys(keywords=description, text=content)
     return timestamp
 
 async def remove(manager, filename: str):
@@ -242,8 +242,8 @@ async def remove(manager, filename: str):
         db.commit()
     except Exception:
         pass
-    manager._mem_cache.invalidate_all()
-    manager._note_cache.invalidate_all()
+    manager._mem_cache.invalidate_keys(keywords=safe_name.replace(".md", "").split("_"))
+    manager._note_cache.invalidate_keys(keywords=safe_name.replace(".md", "").split("_"))
 
 async def get_entry(manager, filename: str) -> Optional[str]:
     """读取记忆文件内容."""
@@ -283,8 +283,8 @@ async def save_to_notes(manager, dir_path: str, filename: str, content: str) -> 
             safe_name += ".md"
         filepath = target_dir / safe_name
         filepath.write_text(content, encoding="utf-8")
-        manager._mem_cache.invalidate_all()
-        manager._note_cache.invalidate_all()
+        manager._mem_cache.invalidate_keys(keywords=filename, text=content)
+        manager._note_cache.invalidate_keys(keywords=filename, text=content)
         return str(filepath)
     except Exception as e:
         logger.warning(f"Failed to save to notes: {e}")

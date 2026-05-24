@@ -83,7 +83,7 @@ def save_ki(manager, ki_data: dict) -> str:
             _cjk_space(content)
         ))
         
-    manager._mem_cache.invalidate_all()
+    manager._mem_cache.invalidate_keys(keywords=keywords, text=content)
     return now
 
 
