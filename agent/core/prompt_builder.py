@@ -239,22 +239,80 @@ async def build_memory_block(agent, user_input: str, turn: int) -> str:
 
     for i, e in enumerate(relevant):
         ts = e.get("timestamp", "")[:19]
+        filename = e.get("filename", "")
+        
+        # 提取并辨识是否为长期大脑标准 KI (文件名为 ki_ 开头)
+        is_ki = False
+        ki_id = ""
+        if filename.endswith(".md"):
+            name_without_ext = filename[:-3]
+            if name_without_ext.startswith("ki_"):
+                is_ki = True
+                # 兼容剥除首个 "ki_" 以获得真实的数据库 ID 映射
+                if name_without_ext.startswith("ki_ki_"):
+                    ki_id = name_without_ext[3:]
+                else:
+                    ki_id = name_without_ext
+                    
+        # 尝试从数据库加载结构化 KI，只有在能找到时才执行结构化融合
+        ki_data = None
+        if is_ki and ki_id:
+            try:
+                ki_data = agent.memory.get_ki(ki_id)
+            except Exception:
+                pass
+                
         if i < 3:
-            cached = e.get("content", "")
-            if cached:
-                clean = cached.split("<!-- previous version -->")[0]
-                clean = clean.split("<!-- updated:")[0].strip()[:1000]
-                lines.append(f"### {e['description']} ({ts})\n{clean}\n")
+            if ki_data:
+                # 1. 结构化高雅大熔接卡片组装 (极简不冗余显示最后一条修订)
+                rev_history = ki_data.get("revision_history")
+                rev_str = "无修订记录"
+                if rev_history:
+                    if isinstance(rev_history, str):
+                        try:
+                            rev_history = json.loads(rev_history)
+                        except Exception:
+                            pass
+                    if isinstance(rev_history, list) and rev_history:
+                        last_rev = rev_history[-1]
+                        rev_str = f"版本 {last_rev.get('version', '?')} ({last_rev.get('timestamp', '?')}): {last_rev.get('reason', '')}"
+                
+                # keywords 字段可能是字符串或者是列表
+                keywords_val = ki_data.get("keywords", "[]")
+                if isinstance(keywords_val, str):
+                    try:
+                        keywords_val = json.loads(keywords_val)
+                    except Exception:
+                        pass
+                
+                ki_markdown = (
+                    f"### 📌 ID: {ki_id} (Version: {ki_data.get('version', 1)})\n"
+                    f"* 类别: {ki_data.get('category', 'other')}\n"
+                    f"* 标题: {ki_data.get('title', '')}\n"
+                    f"* 标签: {keywords_val}\n"
+                    f"* 摘要: {ki_data.get('summary', '')}\n"
+                    f"* 最新修订原因: {rev_str}\n"
+                    f"* 权威内容:\n"
+                    f"{ki_data.get('content', '')}\n"
+                )
+                lines.append(ki_markdown)
             else:
-                content = await agent.memory.get_entry(e["filename"])
-                if content:
-                    clean = content.split("<!-- previous version -->")[0]
+                # 2. 降维向下兼容普通碎片的读取
+                cached = e.get("content", "")
+                if cached:
+                    clean = cached.split("<!-- previous version -->")[0]
                     clean = clean.split("<!-- updated:")[0].strip()[:1000]
                     lines.append(f"### {e['description']} ({ts})\n{clean}\n")
                 else:
-                    lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
+                    content = await agent.memory.get_entry(filename)
+                    if content:
+                        clean = content.split("<!-- previous version -->")[0]
+                        clean = clean.split("<!-- updated:")[0].strip()[:1000]
+                        lines.append(f"### {e['description']} ({ts})\n{clean}\n")
+                    else:
+                        lines.append(f"- [{e['description']}]({filename}) `{ts}`")
         else:
-            lines.append(f"- [{e['description']}]({e['filename']}) `{ts}`")
+            lines.append(f"- [{e['description']}]({filename}) `{ts}`")
 
     try:
         note_results = []
