@@ -27,7 +27,23 @@ IMAGE_REGEX = re.compile(r'\!\[\[([^\]]+)\]\]')
 
 # 核心映射关系表 (老双链关键词 ➔ 新卡片路径)
 LINK_MAPS = {
-    # 02.1-Agent核心循环与架构
+    # ==================== 01-小萤 重构映射 ====================
+    "小萤-Agent核心架构总览": "01-小萤/01.1-小萤核心架构与生命周期",
+    "小萤-多智能体设计学习笔记": "01-小萤/01.1-小萤核心架构与生命周期",
+    "小萤-完整技术说明书": "01-小萤/01.1-小萤核心架构与生命周期",
+    "小萤综合笔记": "01-小萤/01.1-小萤核心架构与生命周期",
+    "小萤架构与记忆系统": "01-小萤/01.2-小萤长短期记忆与RAG表结构",
+    "定时合并reflect到核心记忆方案": "01-小萤/01.2-小萤长短期记忆与RAG表结构",
+    "小萤技能与工作流": "01-小萤/01.3-小萤工具分发与防空自愈",
+    "提交审查-问题清单": "01-小萤/01.3-小萤工具分发与防空自愈",
+    "小萤成长记录": "01-小萤/01.4-小萤做梦反思与进阶学习机制",
+    "01-小萤/架构设计/工具系统": "01-小萤/01.3-小萤工具分发与防空自愈",
+    "01-小萤/架构设计/模型配置": "01-小萤/01.1-小萤核心架构与生命周期",
+    "01-小萤/架构设计/记忆系统": "01-小萤/01.2-小萤长短期记忆与RAG表结构",
+    "01-小萤/架构设计/RAG知识库": "01-小萤/01.2-小萤长短期记忆与RAG表结构",
+    "01-小萤/架构设计/记忆升级计划": "01-小萤/01.2-小萤长短期记忆与RAG表结构",
+
+    # ==================== 02-Agent技术 重构映射 ====================
     "核心循环": "02-Agent技术/02.1-Agent核心循环与架构",
     "五大设计模式": "02-Agent技术/02.1-Agent核心循环与架构",
     "Prompt Chaining": "02-Agent技术/02.1-Agent核心循环与架构",
@@ -35,8 +51,6 @@ LINK_MAPS = {
     "对比分析_合并版": "02-Agent技术/02.1-Agent核心循环与架构",
     "核心循环_合并版": "02-Agent技术/02.1-Agent核心循环与架构",
     "学习路线_合并版": "02-Agent技术/02.1-Agent核心循环与架构",
-    
-    # 02.2-ClaudeCode多智能体体系
     "多智能体设计_合并版": "02-Agent技术/02.2-ClaudeCode多智能体体系",
     "Subagent": "02-Agent技术/02.2-ClaudeCode多智能体体系",
     "Fork": "02-Agent技术/02.2-ClaudeCode多智能体体系",
@@ -46,16 +60,12 @@ LINK_MAPS = {
     "CC": "02-Agent技术/02.2-ClaudeCode多智能体体系",
     "多智能体设计": "02-Agent技术/02.2-ClaudeCode多智能体体系",
     "多智能体-协调器-对比与优化": "02-Agent技术/02.2-ClaudeCode多智能体体系",
-    
-    # 02.3-OpenCLAW与跨会话通信
     "OpenCLAW": "02-Agent技术/02.3-OpenCLAW与跨会话通信",
     "Spawn": "02-Agent技术/02.3-OpenCLAW与跨会话通信",
     "跨会话": "02-Agent技术/02.3-OpenCLAW与跨会话通信",
     "A2A": "02-Agent技术/02.3-OpenCLAW与跨会话通信",
     "tinypace": "02-Agent技术/02.3-OpenCLAW与跨会话通信",
     "TaskTracker": "02-Agent技术/02.3-OpenCLAW与跨会话通信",
-    
-    # 02.4-Anthropic构建哲学与ACI设计
     "构建哲学": "02-Agent技术/02.4-Anthropic构建哲学与ACI设计",
     "Building Effective Agents": "02-Agent技术/02.4-Anthropic构建哲学与ACI设计",
     "ACI": "02-Agent技术/02.4-Anthropic构建哲学与ACI设计",
@@ -64,17 +74,30 @@ LINK_MAPS = {
     "Eval": "02-Agent技术/02.4-Anthropic构建哲学与ACI设计",
     "人机协作": "02-Agent技术/02.4-Anthropic构建哲学与ACI设计",
 
-    # 01-小萤相关断联自愈
-    "01-小萤/架构设计/工具系统": "01-小萤/小萤-完整技术说明书",
-    "01-小萤/架构设计/模型配置": "01-小萤/小萤-完整技术说明书",
-    "01-小萤/架构设计/记忆系统": "01-小萤/小萤架构与记忆系统",
-    "01-小萤/架构设计/RAG知识库": "01-小萤/小萤架构与记忆系统",
-    "01-小萤/架构设计/记忆升级计划": "01-小萤/小萤架构与记忆系统",
-    "定时合并reflect到核心记忆方案": "01-小萤/小萤-完整技术说明书",
+    # ==================== 03-应用开发 重构映射 ====================
+    "03应用开发_index": "03-应用开发/03.1-极客全栈工程应用开发规范",
+    "前端": "03-应用开发/03.1-极客全栈工程应用开发规范",
+    "后端": "03-应用开发/03.1-极客全栈工程应用开发规范",
+    "AI应用": "03-应用开发/03.2-大模型驱动应用 (LLM-App) 架构设计",
 
-    # 04-运维部署相关断联自愈
-    "配置管理与变更流程": "04-运维部署/04运维部署_index",
-    "网关运维手册": "04-运维部署/04运维部署_index"
+    # ==================== 04-运维部署 重构映射 ====================
+    "04运维部署_index": "04-运维部署/04.1-QQ机器人网关高可用部署手册",
+    "网关运维手册": "04-运维部署/04.1-QQ机器人网关高可用部署手册",
+    "配置管理与变更流程": "04-运维部署/04.2-生产环境网络安全与数据灾备规范",
+    "网络安全": "04-运维部署/04.2-生产环境网络安全与数据灾备规范",
+    "生产环境部署": "04-运维部署/04.1-QQ机器人网关高可用部署手册",
+
+    # ==================== 06-工作记录 重构映射 ====================
+    "06工作记录_index": "06-工作记录/06.1-工作日志与自学习技能清单",
+    "工作日志": "06-工作记录/06.1-工作日志与自学习技能清单",
+    "自学习技能清单": "06-工作记录/06.1-工作日志与自学习技能清单",
+    "定时任务": "06-工作记录/06.1-工作日志与自学习技能清单",
+    "小红书推广": "06-工作记录/06.1-工作日志与自学习技能清单",
+    "工具审计": "06-工作记录/06.1-工作日志与自学习技能清单",
+    "自我审计": "06-工作记录/06.1-工作日志与自学习技能清单",
+    "自建Agent实操": "06-工作记录/06.2-自建Agent实操与项目复盘",
+    "工程实践": "06-工作记录/06.2-自建Agent实操与项目复盘",
+    "已完成项目与实战": "06-工作记录/06.2-自建Agent实操与项目复盘"
 }
 
 
@@ -106,8 +129,11 @@ def setup_directories():
 
 
 def run_physical_cleanup():
-    """3. 开展空目录清理、多余碎片与附件的物理归拢"""
-    print(f"🧹 [物理去噪] 正在扫描并归拢零散碎片与垃圾文件...")
+    """3. 开展全局空目录清理、多余碎片与附件的物理归拢"""
+    print(f"🧹 [物理去噪] 正在全库扫描并归拢零散碎片与垃圾文件...")
+    
+    # 排除的特殊系统级目录
+    exclude_dirs = {".archive", ".attachments", ".git", ".obsidian", ".trash", ".claude"}
     
     # A. 归拢根目录下的 Pasted image 附件图片
     for file in os.listdir(NOTES_DIR):
@@ -131,51 +157,59 @@ def run_physical_cleanup():
             except Exception as e:
                 print(f"  ⚠️ 移动画布 {file} 失败: {e}")
 
-    # C. 归拢 02-Agent技术 目录下的所有以 .bak 结尾的冗余碎片
-    agent_tech_dir = os.path.join(NOTES_DIR, "02-Agent技术")
-    if os.path.exists(agent_tech_dir):
-        for root, dirs, files in os.walk(agent_tech_dir):
-            for file in files:
-                if file.endswith(".bak"):
-                    src = os.path.join(root, file)
-                    dst = os.path.join(ARCHIVE_DIR, file)
-                    try:
-                        shutil.move(src, dst)
-                        print(f"  ➔ [碎片降噪] 移动冗余.bak文件: {file} 至 .archive/")
-                    except Exception as e:
-                        print(f"  ⚠️ 移动碎片 {file} 失败: {e}")
+    # C. 全局扫描并归拢冗余文件（如所有的 .bak 文件、或文件名中带 _合并版 的大文档）
+    for root, dirs, files in os.walk(NOTES_DIR):
+        # 排除系统级隐藏目录和本身就是 archive 的目录
+        path_parts = set(os.path.normpath(root).split(os.sep))
+        if path_parts.intersection(exclude_dirs):
+            continue
+            
+        for file in files:
+            if file.endswith(".bak") or "_合并版" in file:
+                src = os.path.join(root, file)
+                dst = os.path.join(ARCHIVE_DIR, file)
+                try:
+                    shutil.move(src, dst)
+                    print(f"  ➔ [碎片降噪] 移动冗余文件: {file} 至 .archive/")
+                except Exception as e:
+                    print(f"  ⚠️ 移动文件 {file} 失败: {e}")
 
-    # D. 处理“重复的/”目录下的文件，并归入 .archive/
+    # D. 递归物理全局清扫已废弃的空子目录 (若无任何 .md 笔记则强力拔除)
+    for root, dirs, files in os.walk(NOTES_DIR, topdown=False):
+        path_parts = set(os.path.normpath(root).split(os.sep))
+        if path_parts.intersection(exclude_dirs) or root == NOTES_DIR:
+            continue
+            
+        # 判断本目录下及所有子目录下是否包含任何 md 文件
+        has_md = False
+        for r, d, fs in os.walk(root):
+            if any(f.endswith(".md") for f in fs):
+                has_md = True
+                break
+                
+        if not has_md:
+            try:
+                shutil.rmtree(root)
+                print(f"  ➔ [空目录净化] 强力清扫废弃子目录: {root.replace(NOTES_DIR + '/', '')}")
+            except Exception as e:
+                print(f"  ⚠️ 清扫子目录 {root} 失败: {e}")
+
+    # E. 清理物理空文件夹 Agent开发/ 或者是 重复的/
     dup_dir = os.path.join(NOTES_DIR, "重复的")
     if os.path.exists(dup_dir):
-        for file in os.listdir(dup_dir):
-            src = os.path.join(dup_dir, file)
-            dst = os.path.join(ARCHIVE_DIR, file)
-            try:
-                shutil.move(src, dst)
-                print(f"  ➔ [重复项隔离] 移动文件: {file} 至 .archive/")
-            except Exception as e:
-                print(f"  ⚠️ 移动重复项 {file} 失败: {e}")
         try:
-            os.rmdir(dup_dir)
+            shutil.rmtree(dup_dir)
             print(f"  ➔ [目录清理] 彻底清理重复文件夹: {dup_dir}")
         except Exception:
             pass
 
-    # E. 清理物理空文件夹 Agent开发/
     agent_dev_parent = os.path.join(NOTES_DIR, "Agent开发")
     if os.path.exists(agent_dev_parent):
-        for root, dirs, files in os.walk(agent_dev_parent, topdown=False):
-            for name in dirs:
-                try:
-                    os.rmdir(os.path.join(root, name))
-                except Exception:
-                    pass
         try:
             shutil.rmtree(agent_dev_parent)
             print(f"  ➔ [目录清理] 彻底清理多余空文件夹: {agent_dev_parent}")
-        except Exception as e:
-            print(f"  ⚠️ 清理空文件夹 {agent_dev_parent} 失败: {e}")
+        except Exception:
+            pass
 
 
 def heal_all_links():
