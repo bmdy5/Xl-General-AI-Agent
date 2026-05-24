@@ -43,27 +43,72 @@ class GatewayScheduler:
         while True:
             await asyncio.sleep(15)  # 每 15s 轮询检测一次健康度
             
-            # 1. 自动对 GPT-SoVITS 语音服务进行高可用探测与假死自愈，确保重启或意外终止时瞬间拉起
+            # 1. 自动对 GPT-SoVITS 语音服务进行保活探测、超时强杀与自愈管理
             try:
-                timeout_tts = aiohttp.ClientTimeout(total=2.0)
-                async with aiohttp.ClientSession(timeout=timeout_tts) as session:
-                    async with session.get("http://127.0.0.1:9880/") as resp:
-                        if resp.status not in (200, 404):
-                            raise ValueError(f"Status {resp.status}")
-            except Exception:
-                logger.warning("🎙️ [守护进程] 发现 GPT-SoVITS 语音服务离线，正在以专属 venv 虚拟环境启动自愈机制...")
                 from pathlib import Path
+                import time
+                import shutil
+                
                 root_dir = Path(__file__).resolve().parents[2]
-                tts_dir = str(root_dir.parent / "GPT-SoVITS")
-                cmd_kill = 'pkill -f "api_v2.py" || true'
-                cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
-                try:
-                    import os
-                    os.system(cmd_kill)
-                    os.system(cmd_start)
-                    logger.info("🎙️ [守护进程] 语音服务自愈启动信号已发送。")
-                except Exception as tts_err:
-                    logger.error(f"🎙️ [守护进程] 自愈拉起失败: {tts_err}")
+                state_file = root_dir / "logs" / ".tts_state"
+                
+                active = False
+                last_time = 0.0
+                if state_file.exists():
+                    try:
+                        state_data = json.loads(state_file.read_text(encoding="utf-8"))
+                        active = state_data.get("active", False)
+                        last_time = state_data.get("last_time", 0.0)
+                    except Exception:
+                        pass
+                
+                if active:
+                    now_ts = time.time()
+                    if now_ts - last_time > 7200:  # 2小时 = 7200秒
+                        logger.info("🎙️ [守护进程] 语音服务已闲置满 2 小时，执行物理强杀释放 3GB 内存，并进行磁盘垃圾清理...")
+                        
+                        cmd_kill = 'pkill -f "api_v2.py" || true'
+                        import os
+                        os.system(cmd_kill)
+                        
+                        tts_dir = root_dir.parent / "GPT-SoVITS"
+                        output_dir = tts_dir / "output"
+                        if output_dir.exists():
+                            try:
+                                shutil.rmtree(output_dir)
+                                logger.info("🎙️ [守护进程] 物理清理 output/ 临时生成目录成功")
+                            except Exception as clean_err:
+                                logger.warning(f"🎙️ [守护进程] 物理清理 output/ 失败: {clean_err}")
+                        
+                        tts_log = tts_dir / "tts.log"
+                        if tts_log.exists():
+                            try:
+                                tts_log.unlink()
+                            except Exception:
+                                pass
+                                
+                        state_data = {"active": False, "last_time": 0.0}
+                        state_file.write_text(json.dumps(state_data), encoding="utf-8")
+                        logger.info("🎙️ [守护进程] 语音服务物理内存与磁盘缓存彻底复归清爽 (IDLE)")
+                    else:
+                        try:
+                            timeout_tts = aiohttp.ClientTimeout(total=2.0)
+                            async with aiohttp.ClientSession(timeout=timeout_tts) as session:
+                                async with session.get("http://127.0.0.1:9880/") as resp:
+                                    if resp.status not in (200, 404):
+                                        raise ValueError(f"Status {resp.status}")
+                        except Exception:
+                            logger.warning("🎙️ [守护进程] 发现处于活跃保活期的语音服务假死/挂起，执行自愈重启...")
+                            tts_dir = str(root_dir.parent / "GPT-SoVITS")
+                            cmd_kill = 'pkill -f "api_v2.py" || true'
+                            cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
+                            import os
+                            os.system(cmd_kill)
+                            os.system(cmd_start)
+                else:
+                    pass
+            except Exception as tts_manage_err:
+                logger.error(f"🎙️ [守护进程] 语音调度及超时检测异常: {tts_manage_err}")
 
             # 获取当前时间
             now_dt = datetime.now()
