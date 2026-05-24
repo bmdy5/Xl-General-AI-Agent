@@ -1,6 +1,7 @@
 import os
 import re
 import time
+import math
 import sqlite3
 import logging
 import asyncio
@@ -23,23 +24,61 @@ class MemoryCache:
         total = self.hits + self.misses
         return (self.hits / total * 100) if total > 0 else 0.0
     
-    def get(self, key):
-        if key not in self.cache:
-            self.misses += 1
-            return None
-        ts, val = self.cache[key]
-        if time.time() - ts > self.ttl:
-            del self.cache[key]
-            self.misses += 1
-            return None
-        self.hits += 1
-        self.cache.move_to_end(key)
-        return val
-    
-    def set(self, key, val):
-        self.cache[key] = (time.time(), val)
+    def get(self, key, query_vec=None, semantic_threshold=0.85):
+        # 精确匹配阶段
+        if key in self.cache:
+            ts, val, emb = self.cache[key]
+            if time.time() - ts <= self.ttl:
+                self.hits += 1
+                self.cache.move_to_end(key)
+                return val
+            else:
+                del self.cache[key]
+
+        # 语义匹配阶段（基于 embedding 余弦相似度）
+        if query_vec is not None:
+            best_key = None
+            best_sim = 0.0
+            best_val = None
+            expired_keys = []
+            for k, (ts, v, e) in self.cache.items():
+                if e is None:
+                    continue
+                if time.time() - ts > self.ttl:
+                    expired_keys.append(k)
+                    continue
+                sim = self._cosine_similarity(query_vec, e)
+                if sim > best_sim:
+                    best_sim = sim
+                    best_key = k
+                    best_val = v
+            
+            # 循环结束后统一物理移除过期条目，防范 RuntimeError
+            for ek in expired_keys:
+                self.cache.pop(ek, None)
+                
+            if best_sim >= semantic_threshold:
+                self.hits += 1
+                self.cache.move_to_end(best_key)
+                return best_val
+
+        self.misses += 1
+        return None
+
+    def set(self, key, val, embedding=None):
+        self.cache[key] = (time.time(), val, embedding)
         if len(self.cache) > self.capacity:
             self.cache.popitem(last=False)
+
+    @staticmethod
+    def _cosine_similarity(v1, v2):
+        v1, v2 = list(v1), list(v2)
+        dot = sum(a * b for a, b in zip(v1, v2))
+        m1 = math.sqrt(sum(a * a for a in v1))
+        m2 = math.sqrt(sum(b * b for b in v2))
+        if m1 == 0 or m2 == 0:
+            return 0.0
+        return dot / (m1 * m2)
     
     def invalidate_all(self):
         self.cache.clear()
@@ -81,8 +120,8 @@ class MemoryCache:
             
         keys_to_del = []
         for key in list(self.cache.keys()):
-            query = key[0].lower()
-            query_words = get_tokens(query)
+            query = key[0] if isinstance(key, (tuple, list)) else key
+            query_words = get_tokens(str(query).lower())
             if query_words.intersection(target_words):
                 keys_to_del.append(key)
                 
