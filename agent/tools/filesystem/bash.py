@@ -171,7 +171,6 @@ class BashTool(BaseTool):
 
         # 拦截大范围全盘 find 扫描命令，引导大模型使用精确路径或限定深度以防假死
         if "find " in command:
-            # 匹配 find 后紧跟 /Users/xiaofeng, /Users, /, /tmp, ~ 等高层级大目录的情况，且没有指定 maxdepth
             bad_roots = (
                 "/Users/xiaofeng",
                 "/Users",
@@ -180,21 +179,37 @@ class BashTool(BaseTool):
                 "/tmp",
                 "~"
             )
-            # 解析 find 后的根目录
-            parts = command.strip().split()
-            find_idx = -1
-            for idx, part in enumerate(parts):
-                if part == "find":
-                    find_idx = idx
-                    break
             
-            if find_idx != -1 and find_idx + 1 < len(parts):
-                search_root = parts[find_idx + 1]
-                # 清除可能带有的双引号或单引号
-                search_root = search_root.replace('"', '').replace("'", "")
+            # 使用正则找出所有的 find 路径
+            find_matches = re.finditer(r'\bfind\s+([^\s;&|]+)', command)
+            for m_match in find_matches:
+                search_root = m_match.group(1).replace('"', '').replace("'", "").strip()
+                if not search_root or search_root.startswith("-"):
+                    continue
                 
-                # 如果搜索根目录在黑名单里，或者是不限制深度的大范围搜索，并且没有包含 -maxdepth 参数
-                if (any(search_root.rstrip("/") == br.rstrip("/") for br in bad_roots) or search_root.startswith(("/Users/xiaofeng", "~"))) and "-maxdepth" not in command:
+                is_bad_root = False
+                
+                # 智能识别：如果是我们项目内部的路径，不管多深都是完全放行的
+                try:
+                    from pathlib import Path
+                    project_root = Path(__file__).resolve().parents[3].resolve()
+                    resolved_root = Path(search_root).expanduser().resolve()
+                    is_inside_project = (project_root in resolved_root.parents or resolved_root == project_root)
+                except Exception:
+                    is_inside_project = False
+                
+                if not is_inside_project:
+                    try:
+                        from pathlib import Path
+                        resolved_root = Path(search_root).expanduser().resolve()
+                        resolved_str = str(resolved_root).rstrip("/")
+                        if any(resolved_str == br.rstrip("/") or resolved_str.startswith(br.rstrip("/") + "/") for br in bad_roots) or search_root.startswith(("/Users/xiaofeng", "~")):
+                            is_bad_root = True
+                    except Exception:
+                        if any(search_root.rstrip("/") == br.rstrip("/") or search_root.startswith(br.rstrip("/") + "/") for br in bad_roots) or search_root.startswith(("/Users/xiaofeng", "~")):
+                            is_bad_root = True
+                
+                if is_bad_root and "-maxdepth" not in command:
                     yield ToolResult(
                         type="result",
                         data=(
