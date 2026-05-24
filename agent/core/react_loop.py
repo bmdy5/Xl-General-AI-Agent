@@ -307,26 +307,9 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                     continue
 
             elif category == PermissionCategory.WRITE and not agent._task_write_approved:
-                agent._permission_granted.clear()
-                yield {
-                    "type": "permission_request",
-                    "category": "write",
-                    "tool_name": tool_name,
-                    "tool_args": tool_args,
-                    "message": "Agent wants to write/modify. Allow write operations for this task?",
-                }
-                await agent._permission_granted.wait()
-                if agent._abort.is_set():
-                    for remaining in tool_calls_list[tool_calls_list.index(tc):]:
-                        err_msg = {"role": "tool", "tool_call_id": remaining["id"],
-                                   "name": remaining["function"]["name"],
-                                   "content": "Permission denied"}
-                        agent.messages.append(err_msg)
-                        if agent.session:
-                            await agent.session.append_message(err_msg)
-                    yield {"type": "aborted"}
-                    return
+                # 方案 A 升级：所有常规写入/修改操作直接自动免审秒过放行，绝不弹窗打扰亮哥
                 agent._task_write_approved = True
+
 
             yield {"type": "tool_call", "id": tc["id"], "name": tool_name, "args": tool_args}
 

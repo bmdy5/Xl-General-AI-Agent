@@ -25,7 +25,7 @@ async def test_session_level_one_time_approval(monkeypatch):
             # 1. 触发第一个敏感工具请求
             yield {
                 "type": "permission_request",
-                "category": "write",
+                "category": "dangerous",
                 "tool_name": "edit_file_1",
                 "message": "写入核心配置1"
             }
@@ -35,11 +35,12 @@ async def test_session_level_one_time_approval(monkeypatch):
             # 2. 触发第二个敏感工具请求 (如果单次审批生效，此操作应自动放行)
             yield {
                 "type": "permission_request",
-                "category": "write",
+                "category": "dangerous",
                 "tool_name": "edit_file_2",
                 "message": "写入核心配置2"
             }
             state_2 = self.approved
+
 
             yield {"type": "text_delta", "content": f"State1: {state_1} | State2: {state_2}"}
             yield {"type": "_done"}
