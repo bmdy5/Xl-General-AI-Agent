@@ -34,7 +34,40 @@ class EditFileTool(BaseTool):
         return False
 
     def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
-        return True
+        file_path = (input_args or {}).get("file_path", "")
+        if not file_path:
+            return True
+        from pathlib import Path
+        try:
+            p = Path(file_path).resolve()
+        except Exception:
+            p = Path(file_path).absolute()
+            
+        root_dir = Path(__file__).resolve().parents[3]
+        
+        # 1. 检查是否在 agent/ 源码目录内
+        agent_dir = root_dir / "agent"
+        try:
+            if agent_dir.resolve() in p.parents or p.resolve() == agent_dir.resolve():
+                return True
+        except Exception:
+            if "agent/" in str(p) or "/agent" in str(p):
+                return True
+
+        # 2. 检查是否是根目录的关键系统元配置文件
+        protected_root_files = {
+            "main.py", "Makefile", "Dockerfile", "docker-compose.yml",
+            "pytest.ini", "requirements.txt", ".gitignore", ".env.example"
+        }
+        try:
+            is_in_root = p.parent.resolve() == root_dir.resolve()
+        except Exception:
+            is_in_root = p.parent.absolute() == root_dir.absolute()
+
+        if is_in_root and p.name in protected_root_files:
+            return True
+            
+        return False
 
     def get_tool_definition(self) -> dict:
         return {
@@ -43,6 +76,8 @@ class EditFileTool(BaseTool):
                 "name": self.name,
                 "description": (
                     "Use SEARCH/REPLACE to make precise edits to a text file. "
+                    "Requires approval ONLY if editing core source directories (like agent/) "
+                    "or root system files. Edits to logs/ or note directories are auto-approved. "
                     "The `search` text must match exactly (including whitespace) and appear "
                     "exactly once in the file. Use this for small, targeted changes — "
                     "it avoids rewriting the entire file. "
@@ -58,6 +93,7 @@ class EditFileTool(BaseTool):
                         },
                         "search": {
                             "type": "string",
+
                             "description": (
                                 "The exact text to find and replace. Must match byte-for-byte "
                                 "in the file and appear exactly once."

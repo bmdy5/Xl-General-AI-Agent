@@ -38,9 +38,9 @@ class MemoryTool(BaseTool):
 
     def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
         action = (input_args or {}).get("action", "")
-        if action == "merge_to_core":
-            return False  # 合并操作自动放行
-        return True  # 其他记忆修改需要用户审批
+        if action == "remove":
+            return True  # 物理删除记忆需要用户审批阻断
+        return False  # 其他记忆操作（保存、更新、检索、合并）全部自动放行，0 弹窗
 
     def get_tool_definition(self) -> dict:
         return {
@@ -49,6 +49,8 @@ class MemoryTool(BaseTool):
                 "name": self.name,
                 "description": (
                     "Manage persistent memories. Check before answering about preferences.\n\n"
+                    "Requires approval ONLY for 'remove' action. Actions like 'add', 'replace', "
+                    "'search', and 'merge_to_core' are auto-approved.\n\n"
                     "Types: user/feedback/project/reference/learn.\n\n"
                     "ROUTING: user/feedback → core memory (always keep). "
                     "learn/project/knowledge → set note_dir to archive content to learning notes. "
@@ -58,6 +60,7 @@ class MemoryTool(BaseTool):
                 "parameters": {
                     "type": "object",
                     "properties": {
+
                         "action": {
                             "type": "string",
                             "enum": ["add", "replace", "remove", "read", "search", "merge_to_core"],
