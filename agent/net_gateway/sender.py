@@ -35,6 +35,14 @@ class MessageSender:
         text = re.sub(r'\*(.+?)\*', r'\1', text)
         text = re.sub(r'__(.+?)__', r'\1', text)
 
+        # 2.5 修复 OneBot CQ 码中本地绝对路径漏掉 file:/// 的灾难性错误格式
+        def _heal_cq_image(match):
+            path = match.group(1)
+            if path.startswith("/") and not any(path.startswith(prefix) for prefix in ("file://", "base64://", "http://", "https://")):
+                return f"[CQ:image,file=file://{path}]"
+            return match.group(0)
+        text = re.sub(r'\[CQ:image,file=([^\]]+)\]', _heal_cq_image, text)
+
         # 3. 构造发送 payload
         payload = {}
         endpoint = ""
