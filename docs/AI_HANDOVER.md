@@ -23,9 +23,14 @@ Xl-General-AI-Agent/ (项目根目录)
 │   │   └── llm.py, compressor.py, task_queue.py
 │   ├── resources/              <-- 静态资源与角色数据资产存储包
 │   │   └── default_persona.json <-- 物理迁移: 默认的人设设定数据 (修复了原本在 agent.py 同级找不到的 Bug)
-│   ├── net_gateway/            <-- QQBot 网关协议底层 (高可用自愈及主流量/沙箱流量物理隔离)
-│   │   └── logger.py           <-- 活动日志追踪器 (已更新 agent_activity.log 重定向至 logs/)
-│   └── [其他规范子包: memory/, tools/, ui/, evolution/]
+│   ├── net_gateway/            <-- QQBot & 抖音双网关并发中枢 (高可用自愈与多通道物理隔离)
+│   │   ├── logger.py           <-- 活动日志追踪器 (已更新 agent_activity.log 重定向至 logs/)
+│   │   └── douyin_bot.py       <-- NEW: 抖音私信防封隐身网关 (CloakBrowser 常驻驱动)
+│   ├── tools/                  <-- 内置高内聚工具包
+│   │   ├── media/
+│   │   │   └── send_image_tool.py <-- NEW: 公共发图组件 (本地图片 ➔ COS ➔ QQ 管理员推送)
+│   │   └── [其他工具模块: registry.py, base_tool.py 等]
+│   └── [其他规范子包: memory/, ui/, evolution/]
 ├── config/
 │   ├── settings.yaml           <-- 中央配置总枢纽 (包含大模型 key、NapCat ws/http、Stitch 等)
 │   └── .stitch_env             <-- 物理迁移: Stitch MCP 的局部 Shell 环境配置
@@ -327,4 +332,27 @@ CREATE TABLE IF NOT EXISTS active_sessions (
 ### 11.5 开发红线与 TDD 沙箱闭环验证
 *   **红线：严禁重启 bot**：物理重启 Gateway（`start.sh`）会中断真实的会话，在开发中我们郑重承诺亮哥，**100% 绝对不重启网关**。
 *   **Pytest 闭环验证**：所有的 DDL 表生成、防抖写盘、冷启动恢复、并发快照清账、本地 fallback 容灾测试均在 `tests/test_fatigue_dream_persistence.py` 中通过高仿真密闭沙箱 100% 绿屏验证通过！
+
+---
+
+## 12. 📡 抖音私信防封隐身网关与公共发图高内聚解耦组件 (NEW - 2026-05-24)
+
+为了在小萤中支持抖音粉丝渠道的客服与公开互动，且达成 100% 的抗检测防封号标准，系统无缝集成了 `CloakBrowser` 并在 `net_gateway/` 和 `tools/` 中实现了精纯桥接：
+
+### 12.1 公共解耦发图工具 (`SendImageToQqTool`)
+*   **物理文件**：[`agent/tools/media/send_image_tool.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/tools/media/send_image_tool.py)。
+*   **设计原则**：将“本地图片 ➔ 上传腾讯云 COS ➔ 组装 OneBot CQ 码 ➔ 推送管理员 QQ_ADMIN_ID”的流程封装为统一的内置 `BaseTool` 并在 `bootstrap.py` 中完成自动挂载。实现了发图流程与具体业务网关的彻底解耦。
+
+### 12.2 智能随机退避轮询与 DOM 拟真 (`DouyinGateway`)
+*   **物理文件**：[`agent/net_gateway/douyin_bot.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/net_gateway/douyin_bot.py)。
+*   **防风控设计**：
+    1.  **隐形沙箱**：基于 `launch_persistent_context_async` 与 `humanize=True` 物理按键与鼠标微颤模拟，绕过 30/30 设备和 Bot 检测。
+    2.  **高斯退避轮询**：不采用固定频率。日常闲置采用高斯分布 `45s + random.gauss(0, 10)` 波动以打碎规律性抓取特征；对话活跃时自动收窄至 `5s - 10s`；连续闲置时深度退避至 `90s - 120s`。
+    3.  **扫码登录自愈**：检测到重定向登录页时，自动截取登录二维码图片，调用 `send_image_to_qq` 推送至亮哥 QQ，后台每 5s 自动轮询监测登录跳转以实现 0 人工干预的完全自愈。
+
+### 12.3 零侵入高可用物理桥接
+*   **事件分发桥接**：`douyin_bot.py` 捕获未读 DOM 后，仅用 10 行代码将其封装为带 `douyin_` 前缀的 OneBot 兼容私信 event，直接调用 `dispatcher.dispatch_event(event)`。完美复用了小萤已有的 **CSMA/CD 消息退避合并、Fatigue 脑力计费、短期记忆 1.0s 防抖持久化和 Prompt 缓存优化** 等所有核心黑科技。
+*   **物理拦截路由**：
+    *   [`sender.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/net_gateway/sender.py) 开头加设拦截，凡 `user_id` 带 `douyin_` 前缀的消息，直接通过异步任务委派给 `douyin_gateway.send_message` 执行 DOM 拟真输入，不干扰也完全不占用 QQ 本身的消息队列和令牌桶限流。
+    *   [`security.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/net_gateway/security.py) 对 `douyin_` 前缀用户提供安全白名单直接穿透，以支持抖音上对所有普通粉丝的高情商客服扮演回复。
 

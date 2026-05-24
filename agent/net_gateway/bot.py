@@ -82,6 +82,14 @@ class QQGateway:
         
         self._http = aiohttp.ClientSession()
         try:
+            # 1. 异步并行挂载并启动抖音私信防封网关
+            try:
+                from .douyin_bot import douyin_gateway
+                douyin_gateway.start(self.dispatcher)
+                logger.info("Douyin Gateway started concurrently in background task.")
+            except Exception as douyin_err:
+                logger.error(f"Failed to launch Douyin Gateway: {douyin_err}")
+
             await self.scheduler.start()
             
             # 主长连接维持循环
@@ -92,6 +100,14 @@ class QQGateway:
                     logger.error(f"WebSocket loop finished with error: {e}. Reconnecting in 3s...")
                     await asyncio.sleep(3)
         finally:
+            # 2. 优雅停机并释放 CloakBrowser 浏览器沙箱资源
+            try:
+                from .douyin_bot import douyin_gateway
+                await douyin_gateway.stop()
+                logger.info("Douyin Gateway stopped and resources cleared.")
+            except Exception as douyin_stop_err:
+                logger.error(f"Error when stopping Douyin Gateway: {douyin_stop_err}")
+
             await self.scheduler.stop()
             if self._http and not self._http.closed:
                 await self._http.close()
