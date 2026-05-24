@@ -21,6 +21,7 @@ class GatewayScheduler:
         self.admin_id = bot.admin_id
         self._is_generating = False
         self._daemon_task = None
+        self._tts_fail_count = 0
 
     async def start(self):
         """拉起守护后台任务循环"""
@@ -100,7 +101,7 @@ class GatewayScheduler:
                         logger.info("🎙️ [守护进程] 语音服务物理内存与磁盘缓存彻底复归清爽 (IDLE)")
                     else:
                         try:
-                            timeout_tts = aiohttp.ClientTimeout(total=2.0)
+                            timeout_tts = aiohttp.ClientTimeout(total=6.0)
                             if self.bot._http and not self.bot._http.closed:
                                 async with self.bot._http.get("http://127.0.0.1:9880/", timeout=timeout_tts) as resp:
                                     if resp.status not in (200, 404):
@@ -110,14 +111,20 @@ class GatewayScheduler:
                                     async with session.get("http://127.0.0.1:9880/") as resp:
                                         if resp.status not in (200, 404):
                                             raise ValueError(f"Status {resp.status}")
+                            self._tts_fail_count = 0  # 探测成功，重置计数
                         except Exception:
-                            logger.warning("🎙️ [守护进程] 发现处于活跃保活期的语音服务假死/挂起，执行自愈重启...")
-                            tts_dir = str(root_dir.parent / "GPT-SoVITS")
-                            cmd_kill = 'pkill -f "api_v2.py" || true'
-                            cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
-                            import os
-                            os.system(cmd_kill)
-                            os.system(cmd_start)
+                            self._tts_fail_count += 1
+                            if self._tts_fail_count >= 2:
+                                logger.warning(f"🎙️ [守护进程] 语音服务连续 {self._tts_fail_count} 次探测失败，判定为假死/挂起，执行自愈重启...")
+                                tts_dir = str(root_dir.parent / "GPT-SoVITS")
+                                cmd_kill = 'pkill -f "api_v2.py" || true'
+                                cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
+                                import os
+                                os.system(cmd_kill)
+                                os.system(cmd_start)
+                                self._tts_fail_count = 0  # 重启后重置
+                            else:
+                                logger.info(f"🎙️ [守护进程] 语音服务探测失败 (第 {self._tts_fail_count} 次)，继续防抖观察中...")
                 else:
                     pass
             except Exception as tts_manage_err:
