@@ -40,7 +40,10 @@ class StreamPresenter:
                     self.context._last_voice_time = time.monotonic()
                     logger.info(f"✅ AI自主触发语音合成，情绪: {self.voice_style}")
 
-        if self.is_voice_reply:
+        if "douyin" in str(user_id):
+            # 抖音回复时不进行流式分句发送，全量缓存在 buf 中以保持单次极简输出
+            pass
+        elif self.is_voice_reply:
             # 语音回复时不进行流式分句发送，全量缓存在 buf 中以保持语音连贯性
             pass
         else:
@@ -74,10 +77,23 @@ class StreamPresenter:
                         await self.context.send_chunk(msg_type, user_id, group_id, to_send.strip())
                         self.total_sent_tokens += self.executor._count_tokens(to_send.strip())
                     self.buf = self.buf[idx+1:]
-
+ 
     async def flush_buffer(self, msg_type: str, user_id: str, group_id: str):
         """强行冲刷缓冲区，并进行语音合成的最终投递"""
         if self.buf.strip():
+            # 抖音专属超级极简与防碎嘴熔断补丁
+            if "douyin" in str(user_id):
+                text = self.buf.strip()
+                # 剔除可能存在的动作或语音情绪表情标签 [xxx]
+                text = re.sub(r'^\[[^\]]+\]', '', text).strip()
+                # 提取第一句或截断前 35 字
+                sentences = re.split(r'([。！？!\?；\n])', text)
+                if len(sentences) >= 2:
+                    text = sentences[0] + sentences[1]
+                if len(text) > 35:
+                    text = text[:32] + "..."
+                self.buf = text
+
             self.executor._log_activity_dispatcher("AI 计划/答复", self.buf.strip(), user_id=user_id)
             if self.is_voice_reply:
                 style_match = re.match(r'^\[([^\s\]]+)\](.*)', self.buf.strip(), re.DOTALL)
