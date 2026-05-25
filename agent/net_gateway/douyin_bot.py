@@ -1,9 +1,9 @@
 # -*- coding: utf-8 -*-
-"""抖音私信防封隐身网关 - 独立微服务进程主控 (DouyinGateway)
+"""抖音私信网关 - 独立微服务进程主控
 
-基于 CloakBrowser 隐形指纹独立常驻进程驱动。
-剥离了浏览器驱动、DOM轮询及物理发送，单个子模块全部小于 300 行。
-通过 9001 端口 HTTP 接口接收大脑的下行指令，并将捕获消息通过 8000 端口 POST 上报给大脑。
+独立进程，与 QQ 大脑通过 HTTP 通信。
+上行: POST 粉丝消息到 :8000/event
+下行: 接收大脑 :9000/send_private_msg 回复指令
 """
 
 import os
@@ -13,7 +13,6 @@ import logging
 import asyncio
 import aiohttp
 from aiohttp import web
-from typing import Optional
 
 from .douyin_browser import DouyinBrowserManager
 from .douyin_dom_poller import DouyinDomPoller
@@ -21,23 +20,54 @@ from .douyin_dom_sender import DouyinDomSender
 
 logger = logging.getLogger("net_gateway.douyin.main")
 
-# 抖音网关日志重定向绑定
+class FlushingFileHandler(logging.FileHandler):
+    """自定义实时强行刷盘 FileHandler"""
+    def emit(self, record):
+        super().emit(record)
+        try:
+            self.flush()
+        except Exception:
+            pass
+
+# 抖音网关日志统一合流物理刷盘绑定
 try:
+    import sys
     from pathlib import Path
     root_dir = Path(__file__).resolve().parents[2]
     douyin_log_path = root_dir / "logs" / "douyin_gateway.log"
     os.makedirs(douyin_log_path.parent, exist_ok=True)
-    douyin_handler = logging.FileHandler(str(douyin_log_path), encoding="utf-8")
+    
+    parent_logger = logging.getLogger("net_gateway.douyin")
+    # 清理所有历史残留 Handlers 避免重复打印
+    for h in list(parent_logger.handlers):
+        parent_logger.removeHandler(h)
+        
+    # 物理强行实时刷盘 FileHandler
+    douyin_handler = FlushingFileHandler(str(douyin_log_path), encoding="utf-8")
     douyin_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
-    logger.addHandler(douyin_handler)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False
+    parent_logger.addHandler(douyin_handler)
+    
+    # 控制台实时刷盘 StreamHandler
+    class FlushingStreamHandler(logging.StreamHandler):
+        def emit(self, record):
+            super().emit(record)
+            try:
+                self.flush()
+            except Exception:
+                pass
+                
+    console_handler = FlushingStreamHandler(sys.stdout)
+    console_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
+    parent_logger.addHandler(console_handler)
+    
+    parent_logger.setLevel(logging.INFO)
+    parent_logger.propagate = False
 except Exception:
     pass
 
 BRAIN_EVENT_URL = os.getenv("BRAIN_EVENT_URL", "http://127.0.0.1:8000/event")
 BRAIN_QRCODE_URL = os.getenv("BRAIN_QRCODE_URL", "http://127.0.0.1:8000/report_qrcode")
-DOUYIN_PORT = int(os.getenv("DOUYIN_PORT", "9001"))
+DOUYIN_PORT = int(os.getenv("DOUYIN_PORT", "9000"))
 POLLING_BASE_INTERVAL = 45.0
 
 class DouyinGateway:
@@ -52,6 +82,7 @@ class DouyinGateway:
         self.last_processed_msg_map = {}
         self.active_session_key = None
         self.is_first_poll = True
+        self.poll_count = 0
         
         self.current_interval = POLLING_BASE_INTERVAL
         self.consecutive_idle_turns = 0
@@ -60,9 +91,9 @@ class DouyinGateway:
         self._running_task = None
         self._web_runner = None
 
-    def start(self, dispatcher=None) -> None:
-        """多协程拉起抖音独立网关进程（兼容原 OneBot 启动器）。"""
-        logger.info("Initializing Standalone Douyin Gateway Process...")
+    def start(self) -> None:
+        """拉起抖音网关协程。"""
+        logger.info("Douyin Gateway starting...")
         self._running_task = asyncio.create_task(self._run_loop())
         # 独立拉起 aiohttp web server，接收大脑下发指令
         asyncio.create_task(self._start_web_server())
@@ -109,6 +140,7 @@ class DouyinGateway:
         
         while True:
             try:
+                self.poll_count += 1
                 # ── ⚡ 物理发信智能退避与防干扰保护 ──
                 if self.sender.is_sending:
                     logger.info("⏳ [轮询退避] 检测到正在执行物理发信动作，主轮询自动避让中...")
@@ -178,6 +210,23 @@ class DouyinGateway:
                 # 同步心跳假死除颤轮数
                 self.poller.idle_reload_turns = self.poller.idle_reload_turns if not has_new else 0
                 
+                # ── ⚡ A方案极简心跳前缀输出 ──
+                if not has_new:
+                    panel_visible = await self.poller._container_visible(self.browser_mgr.page)
+                    panel_str = "Visible" if panel_visible else "Hidden"
+                    
+                    active_session = self.active_session_key or "None"
+                    if active_session != "None" and self.nickname_map:
+                        nickname = self.nickname_map.get(active_session) or self.nickname_map.get(active_session.split("douyin_", 1)[-1]) or "Unknown"
+                    else:
+                        nickname = "None"
+                    
+                    last_msg = self.last_processed_msg_map.get(nickname) if nickname != "None" else "None"
+                    if last_msg and len(last_msg) > 15:
+                        last_msg = last_msg[:15] + "..."
+                        
+                    logger.info(f"[Poll #{self.poll_count}] Panel={panel_str} | ActiveSession={nickname} | LastMsg={repr(last_msg)} | IdleTurns={self.poller.idle_reload_turns} | NextInterval={self.current_interval:.1f}s")
+                
                 await asyncio.sleep(self.current_interval)
                 
             except asyncio.CancelledError:
@@ -187,7 +236,7 @@ class DouyinGateway:
                 await asyncio.sleep(15)
 
     async def _start_web_server(self) -> None:
-        """开启 9001 端口极轻量 API 监听，接收大脑下达的下行发消息请求及通用视觉操作指令"""
+        """启动 HTTP API 服务，接收大脑下发指令及视觉操作请求"""
         app = web.Application()
         app.router.add_post('/send_private_msg', self._handle_send_msg)
         
@@ -211,8 +260,8 @@ class DouyinGateway:
             message = data.get("message")
             if not user_id or not message:
                 return web.json_response({"status": "failed", "reason": "Missing user_id or message"}, status=400)
-            
-            # 委派给 DOM 发送器执行物理输入
+
+            # 委派给 DOM 发送器执行
             asyncio.create_task(self.sender.send_message(
                 page=self.browser_mgr.page,
                 target_user_id=user_id,

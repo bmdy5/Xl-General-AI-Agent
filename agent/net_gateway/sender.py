@@ -46,7 +46,7 @@ class MessageSender:
         if str(user_id).startswith("douyin_"):
             try:
                 async def _send_http_post():
-                    url = f"http://127.0.0.1:{os.getenv('DOUYIN_PORT', '9001')}/send_private_msg"
+                    url = f"http://127.0.0.1:{os.getenv('DOUYIN_PORT', '9000')}/send_private_msg"
                     payload = {"user_id": str(user_id), "message": text}
                     try:
                         async with aiohttp.ClientSession() as session:

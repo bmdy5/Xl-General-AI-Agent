@@ -338,25 +338,47 @@ CREATE TABLE IF NOT EXISTS active_sessions (
 
 ---
 
-## 12. 📡 抖音主页侧边栏常驻物理微服务网关 (Micro-Gateway Architecture - 2026-05-25)
+## 12. 📡 抖音独立网关微服务 (Micro-Gateway - 2026-05-26 重构)
 
-为了达成最高的系统稳定性、防止循环代码导入以及 100% 抗风控标准，抖音网关已被彻底重构并解耦为**物理独立的微服务进程**。各子模块均严格控制在 300 行以内：
+抖音网关作为**独立系统进程**运行 (`main.py --douyin`)，与 QQ 大脑 (`main.py --gateway`) 通过 HTTP 通信，完全解耦。
 
-### 12.1 抖音独立微服务子包构成 (物理四拆分)
-*   **`douyin_browser.py`** (~100行)：**浏览器与 CDP 管理层**。负责检测 9222 调试端口存活、以 `subprocess.Popen` 拉起孤儿常驻 stealth Chromium 浏览器，以及 CDP 无缝接管。
-*   **`douyin_dom_poller.py`** (~300行)：**DOM 扫描与提取层**。负责已登录状态验证、JS 联合爆破拉起私信侧边栏、以及 JS 活体 DOM 嵌套去重提取粉丝消息。
-*   **`douyin_dom_sender.py`** (~120行)：**DOM 拟真发送层**。负责 Meta+A/Backspace 原清空输入框、`page.keyboard.type` 拟真打字、Enter 发送以及发送结果双重 DOM 校验。
-*   **`douyin_bot.py`** (~180行)：**进程主控与 API 服务层**。作为独立微进程入口，内置 9001 端口 HTTP 服务端，提供 `/send_private_msg` 用于接收大脑下发的下行发送指令并委派发送。
+### 12.1 抖音子模块构成
 
-### 12.2 大脑与独立网关微服务通信协议 (HTTP 无状态总线)
-大脑大进程与抖音网关进程完全脱离 Python 直接依赖，采用标准的 OneBot 格式进行 HTTP 上下行通信：
-*   **上行消息投递 (Events Upstream)**：抖音独立进程通过 HTTP POST 将捕获到的粉丝事件实时上报到大脑进程的 `http://127.0.0.1:8000/event` 接口，交由 `MessageDispatcher` 分发。
-*   **下行私信发送 (Messages Downstream)**：大脑的 `MessageSender` 直接以 HTTP POST 异步将要发送的私信内容投递至抖音独立进程的 `http://127.0.0.1:9001/send_private_msg` 端口。
-*   **扫码自愈上报 (QR Code Report)**：当独立抖音网关检测到登录态失效并截图时，通过 HTTP POST 把图片和提示投递到大脑的 `http://127.0.0.1:8000/report_qrcode`，由大脑调起 `send_image_to_qq` 公共发图组件推送给亮哥，实现极其优雅的零依赖自愈。
+| 文件 | 行数 | 职责 |
+|------|------|------|
+| `douyin_browser.py` | ~316 | CDP 管理、浏览器拉起、视觉引擎 (screenshot/click/type/scroll) |
+| `douyin_dom_poller.py` | ~190 | 登录校验、私信面板检测、消息轮询与气泡提取 |
+| `douyin_dom_sender.py` | ~120 | JS 文字写入、点击发送、发送结果验证 |
+| `douyin_bot.py` | ~330 | 进程主控、9000 端口 HTTP API、轮询调度与视觉 API |
 
-### 12.3 极致防封与并发隔离
-*   **会话级内存隔离**：通过 `user_<QQ号>`、`group_<群号>` 与 `douyin_<MD5昵称>` 将会话内存与历史消息在 RAG 中物理隔绝，多端并行绝不串线。
-*   **物理通道隔离**：`sender.py` 内部通过 user_id 中的 `douyin_` 前缀识别，以 HTTP 发送，不占用 QQ 本身的消息队列和令牌桶限流。`security.py` 提供白名单穿透以支持对抖音普通粉丝的扮演回复。
+### 12.2 通信协议
+
+两个进程通过 HTTP 通信，不共享 Python 对象：
+
+```
+Douyin 进程 (:9000)          QQ 大脑进程 (:8000)
+     │                              │
+     ├── POST :8000/event ─────────→│  上行: 粉丝消息上报
+     ├── POST :8000/report_qrcode ─→│  上行: 扫码自愈图片
+     │                              │
+     │←─ POST :9000/send_private_msg│  下行: 大脑回复指令
+     │←─ POST :9000/vision/* ───────│  下行: 视觉接管 RPC
+```
+
+### 12.3 设计原则
+
+- **零硬编码 CSS class**：所有 DOM 选择器基于语义文本 ("发送消息"、"关闭会话") 和几何约束，不依赖 React hash class
+- **零硬编码用户名**：无特殊账号豁免逻辑
+- **一次 poll 最多两次 JS evaluate**：Phase 1 扫描联系人+点击，Phase 2 提取气泡
+- **JS 文字写入代替 keyboard.type**：通过 `InputEvent` 触发 React 绑定，不模拟逐字打字
+- **不再嵌入 QQ 进程**：`ENABLE_DOUYIN_IN_QQ` 和 `only_douyin` 死分支已移除
+
+### 12.4 启动方式
+
+```bash
+make douyin-restart   # 独立启动/重启抖音网关
+make gateway-restart  # 独立启动/重启 QQ 大脑
+```
 
 ## 13. 📊 AI 开发者 Token 消耗与缓存命中率监测与审计规范
 

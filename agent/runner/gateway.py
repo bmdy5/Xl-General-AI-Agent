@@ -16,8 +16,8 @@ async def run_gateway():
         print("\n  Gateway stopped.")
 
 async def run_douyin_gateway():
-    """Douyin Standalone Gateway 模式：独立拉起抖音私信网关."""
-    print("\n  MyAgent — Douyin Standalone Gateway 模式 (已物理分进程隔离)")
+    """Douyin 独立网关：拉取抖音私信并上报到 QQ 大脑."""
+    print("\n  MyAgent — Douyin Gateway")
     print()
 
     import asyncio
@@ -27,6 +27,6 @@ async def run_douyin_gateway():
         while True:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, asyncio.CancelledError):
-        print("\n  Douyin Standalone Gateway stopped.")
+        print("\n  Douyin Gateway stopped.")
     finally:
         await douyin_gateway.stop()
