@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 """抖音私信防封隐身网关 (DouyinGateway)
 
 基于 CloakBrowser 隐形 Chromium 沙箱物理驱动网页版抖音私信。
@@ -336,10 +337,12 @@ class DouyinGateway:
         if not self.page:
             return False
         
-        # 1. 物理动作防冲突：若当前正处于回复发送期，暂缓轮询，保护物理焦点
+        # 1. 物理动作防冲突：若当前正处于物理打字发送期，为了防止物理点击切换联系人导致输入串台，
+        # 我们开启“安全被动听觉轮询”，仅允许在当前右侧活跃聊天窗口中监听新消息，坚决不进行左侧联系人切换！
+        only_passive_listen = False
         if self.is_sending:
-            logger.info("Current in sending state, skip polling.")
-            return False
+            logger.info("Current in physical sending state. Engaging passive message monitoring without contact switching.")
+            only_passive_listen = True
             
         # === [ WebSocket 假死重载除颤自愈机制 ] ===
         if self.idle_reload_turns >= 2:
@@ -374,13 +377,14 @@ class DouyinGateway:
             ]
             
             unread_node = None
-            for sel in unread_selectors:
-                try:
-                    unread_node = await self.page.query_selector(sel)
-                    if unread_node:
-                        break
-                except Exception:
-                    continue
+            if not only_passive_listen:
+                for sel in unread_selectors:
+                    try:
+                        unread_node = await self.page.query_selector(sel)
+                        if unread_node:
+                            break
+                    except Exception:
+                        continue
             
             contact_container = None
             if unread_node:
@@ -463,30 +467,33 @@ class DouyinGateway:
             except Exception as name_err:
                 logger.warning(f"Failed to extract contact nickname: {name_err}")
 
-            # 5. 物理点击并安全缓冲（强制物理重新点击以激活并刷新右侧 React 视窗，根治离屏背景下 React 停止渲染新消息的顽疾）
-            logger.info(f"Physically clicking/refreshing conversation with: {sender_nickname}...")
-            try:
+            # 5. 物理点击并安全缓冲（仅在非被动监听下允许物理切换，防止正在打字时切走聊天导致打字串台）
+            if not only_passive_listen:
+                logger.info(f"Physically clicking/refreshing conversation with: {sender_nickname}...")
                 try:
-                    # 优先物理鼠标模拟点击（100% 触发 React 合成事件与 mousedown/mouseup/click 链路）
-                    await contact_container.click(force=True, timeout=3000)
-                except Exception as phys_err:
-                    logger.warning(f"Failed physical click during active sync: {phys_err}, trying JS fallback...")
-                    # 物理点击受限时，fallback 至 JS 全层级原生穿透点击
-                    await contact_container.evaluate(
-                        """(node) => {
-                            node.click();
-                            let target = node.querySelector('[class*="name"], [class*="nickname"], [class*="title"], img, [class*="avatar"]');
-                            if (target) target.click();
-                            for (let child of node.children) {
-                                child.click();
-                            }
-                        }"""
-                    )
-                # 强制加入 2.5 - 3.5 秒的安全切换冷却时间，以模拟人类正常视觉和缓冲，抗风控性极高
-                await asyncio.sleep(random.uniform(2.5, 3.5))
-            except Exception as click_err:
-                logger.error(f"Failed to physically click contact item: {click_err}")
-                return False
+                    try:
+                        # 优先物理鼠标模拟点击（100% 触发 React 合成事件与 mousedown/mouseup/click 链路）
+                        await contact_container.click(force=True, timeout=3000)
+                    except Exception as phys_err:
+                        logger.warning(f"Failed physical click during active sync: {phys_err}, trying JS fallback...")
+                        # 物理点击受限时，fallback 至 JS 全层级原生穿透点击
+                        await contact_container.evaluate(
+                            """(node) => {
+                                node.click();
+                                let target = node.querySelector('[class*="name"], [class*="nickname"], [class*="title"], img, [class*="avatar"]');
+                                if (target) target.click();
+                                for (let child of node.children) {
+                                    child.click();
+                                }
+                            }"""
+                        )
+                    # 强制加入 2.5 - 3.5 秒的安全切换冷却时间，以模拟人类正常视觉和缓冲，抗风控性极高
+                    await asyncio.sleep(random.uniform(2.5, 3.5))
+                except Exception as click_err:
+                    logger.error(f"Failed to physically click contact item: {click_err}")
+                    return False
+            else:
+                logger.info(f"Passive monitor: skipping physical click switch for active session of: {sender_nickname}")
 
             # === [新共识：Header 真实昵称终极纠正黑科技] ===
             try:
@@ -580,69 +587,64 @@ class DouyinGateway:
                         continue
             message_nodes = valid_message_nodes
 
-            # 主动心跳同步时的前置去重校验：检查最新一条消息是否由我们自己（小萤）发出
-            # 如果最后一条是我们自己发的，说明我们已经物理回复完成，无需处理
-            if is_active_session_sync:
+            # 一次性快速物理识别所有气泡的 is_self 状态，彻底避免多次 IPC 开销并防范“自说自话”自环
+            is_self_list = []
+            if message_nodes:
                 try:
-                    if not message_nodes:
-                        is_last_self = False
-                    else:
-                        last_msg_node = message_nodes[-1]
-                        # 引入物理水平 X 坐标绝对判定法，彻底抛弃类名混淆，100% 绝对保障自发过滤
-                        is_last_self = await self.page.evaluate(
-                            """(node) => {
+                    is_self_list = await self.page.evaluate(
+                        """(nodes) => {
+                            return nodes.map(node => {
                                 if (!node) return false;
                                 let rect = node.getBoundingClientRect();
                                 let container = node.parentElement;
                                 let containerRect = container ? container.getBoundingClientRect() : { left: 0, width: 800 };
                                 let relativeLeft = rect.left - containerRect.left;
                                 let mid = containerRect.width / 2;
-                                // 若消息气泡的左边缘在聊天容器的中线偏右，100% 绝对是自己发送的消息
                                 let cl = typeof node.className === 'string' ? node.className : (node.className?.baseVal || '');
-                                return relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own');
-                            }""",
-                            last_msg_node
-                        )
-                    logger.info(f"Heartbeat sync checking: is_last_msg_self={is_last_self}")
-                    if is_last_self:
-                        return False
-                except Exception as check_last_err:
-                    logger.warning(f"Failed to check if last message is self via physical X-axis: {check_last_err}")
-
-            latest_partner_msg = ""
-            logger.info(f"Scanning {len(message_nodes)} message bubbles for partner text...")
-            
-            # 倒序遍历聊天气泡，寻找最后一条由对方发送的文本消息
-            for msg_node in reversed(message_nodes):
-                try:
-                    is_self = await self.page.evaluate(
-                        """(node) => {
-                            if (!node) return false;
-                            let rect = node.getBoundingClientRect();
-                            let container = node.parentElement;
-                            let containerRect = container ? container.getBoundingClientRect() : { left: 0, width: 800 };
-                            let relativeLeft = rect.left - containerRect.left;
-                            let mid = containerRect.width / 2;
-                            let cl = typeof node.className === 'string' ? node.className : (node.className?.baseVal || '');
-                            return relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own');
+                                return relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own') || cl.includes('reverse');
+                            });
                         }""",
-                        msg_node
+                        message_nodes
                     )
-                    
-                    if not is_self:
-                        text_element = await msg_node.query_selector('[class*="text"], [class*="content"], [class*="bubble-content"]')
-                        if text_element:
-                            text = await text_element.text_content()  # 用 text_content() 彻底避开非可见 HTMLElement 异常
-                            if text and text.strip():
-                                latest_partner_msg = text.strip()
-                                break
-                except Exception:
-                    continue
+                except Exception as eval_err:
+                    logger.warning(f"Failed to batch evaluate self/partner bubble states: {eval_err}")
+                    return False
+
+            # 寻找最新的小萤回复索引（我方最后一条气泡）
+            last_self_idx = -1
+            if is_self_list:
+                for idx, is_sf in enumerate(is_self_list):
+                    if is_sf:
+                        last_self_idx = idx
+
+            # 提取自最后一个我方回复气泡之后，对方在此期间连续发出的所有新文本，并使用换行符进行物理智能拼接
+            partner_texts = []
+            if message_nodes:
+                start_scan_idx = last_self_idx + 1 if last_self_idx != -1 else 0
+                for idx in range(start_scan_idx, len(message_nodes)):
+                    if not is_self_list[idx]:
+                        msg_node = message_nodes[idx]
+                        try:
+                            text_element = await msg_node.query_selector('[class*="text"], [class*="content"], [class*="bubble-content"]')
+                            if text_element:
+                                text = await text_element.text_content()
+                                if text and text.strip():
+                                    partner_texts.append(text.strip())
+                        except Exception:
+                            continue
+
+            latest_partner_msg = "\n".join(partner_texts) if partner_texts else ""
 
             if not latest_partner_msg:
                 return False
 
-            # 心跳同步时的内容去重比对：若跟上一次处理过的对方消息文本完全一致，则去重忽略，并累加除颤重载计数器
+            # 主动心跳同步时的前置去重校验：最新一条消息必须由对方发出，且内容发生改变
+            if is_active_session_sync:
+                # 如果最后一个气泡是我方发出的，则直接返回 False，不再继续理会
+                if is_self_list and is_self_list[-1]:
+                    return False
+
+            # 心跳同步时的内容去重比对：若拼接出来的最新文本跟上一次处理过的对方消息文本完全一致，则去重忽略，并累加除颤重载计数器
             if is_active_session_sync and self.last_processed_msg_map.get(sender_nickname) == latest_partner_msg:
                 self.idle_reload_turns = getattr(self, "idle_reload_turns", 0) + 1
                 logger.debug(f"No new message during active sync. Idle reload turns: {self.idle_reload_turns}")
