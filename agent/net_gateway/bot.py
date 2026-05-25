@@ -145,18 +145,199 @@ class QQGateway:
                 await self._http.close()
 
     async def _start_brain_server(self) -> None:
-        """启动 8000 端口的大脑 HTTP 服务，接收外部微服务网关上行的 Event 和自愈二维码"""
+        """启动 大脑 HTTP 服务，接收外部微服务网关上行的 Event、自愈二维码、以及 Stitch 预览与一键生成接口"""
         from aiohttp import web
         app = web.Application()
         app.router.add_post('/event', self._handle_brain_event)
         app.router.add_post('/report_qrcode', self._handle_brain_qrcode)
+        app.router.add_get('/stitch_latest', self._handle_stitch_latest)
+        app.router.add_post('/api/stitch/generate', self._handle_api_stitch_generate)
         
         self._brain_runner = web.AppRunner(app)
         await self._brain_runner.setup()
         port = int(os.getenv("BRAIN_PORT", "8000"))
-        site = web.TCPSite(self._brain_runner, '127.0.0.1', port)
+        host = os.getenv("BRAIN_HOST", "0.0.0.0") # 默认自适应绑定 0.0.0.0，彻底打通手机端在局域网内的一键预览与下载！
+        site = web.TCPSite(self._brain_runner, host, port)
         await site.start()
-        logger.info(f"Main Brain Event Server listening on http://127.0.0.1:{port}")
+        logger.info(f"Main Brain Event Server listening on http://{host}:{port}")
+
+        # 后台异步启动 24 小时磁盘自动过期清退自愈任务，保持磁盘高度整洁
+        asyncio.create_task(self._disk_cleanup_loop())
+
+    async def _disk_cleanup_loop(self) -> None:
+        """后台轮询协程：每隔 1 小时自动物理清退超过 24 小时的临时 UUID HTML 文件"""
+        import time
+        from pathlib import Path
+        output_dir = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/resources/stitch_outputs")
+        while True:
+            try:
+                if output_dir.exists():
+                    now = time.time()
+                    for f in output_dir.glob("*.html"):
+                        try:
+                            # 24小时 = 86400 秒
+                            if now - f.stat().st_mtime > 86400:
+                                f.unlink()
+                                logger.info(f"🧹 Cleanup: Successfully deleted expired temporary file {f.name}")
+                        except Exception as file_err:
+                            logger.warning(f"Cleanup file {f.name} error: {file_err}")
+            except Exception as loop_err:
+                logger.error(f"Error in disk cleanup loop: {loop_err}")
+            await asyncio.sleep(3600)
+
+    async def _handle_stitch_latest(self, request) -> web.Response:
+        """GET /stitch_latest 一键预览与流式下载端点。支持 ?id=<UUID> 和 ?download=true 附件下载。"""
+        from aiohttp import web
+        from pathlib import Path
+        try:
+            file_id = request.query.get("id")
+            if file_id:
+                # 过滤路径穿越安全隐患
+                safe_id = "".join([c for c in file_id if c.isalnum() or c in ("-", "_")])
+                file_path = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/resources/stitch_outputs") / f"{safe_id}.html"
+            else:
+                file_path = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/stitch_latest.html")
+
+            if not file_path.exists():
+                return web.Response(
+                    text=json.dumps({"status": "failed", "reason": f"File not found: {file_path.name}"}),
+                    content_type="application/json",
+                    status=404
+                )
+
+            with open(file_path, "r", encoding="utf-8") as f:
+                html_content = f.read()
+
+            # 触发手机/电脑浏览器强制附件下载
+            if request.query.get("download") == "true":
+                return web.Response(
+                    body=html_content.encode("utf-8"),
+                    content_type="application/octet-stream",
+                    headers={
+                        "Content-Disposition": f'attachment; filename="{file_path.name}"'
+                    }
+                )
+
+            # 默认预览网页，并在末尾注入玻璃拟态的精美下载悬浮卡片
+            download_url = f"/stitch_latest?id={file_id}&download=true" if file_id else "/stitch_latest?download=true"
+            
+            inject_js = f"""
+<div id="xl-stitch-control-bar" style="position: fixed; top: 16px; right: 16px; z-index: 999999; display: inline-flex; align-items: center; gap: 12px; padding: 10px 18px; border-radius: 12px; background: rgba(26, 26, 26, 0.85); backdrop-filter: blur(8px); border: 1px solid rgba(255, 255, 255, 0.15); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; transition: all 0.3s ease;">
+    <span style="color: #00ffcc; font-size: 13px; font-weight: 600; text-shadow: 0 0 8px rgba(0,255,204,0.3);">⚡ XL Stitch 预览中</span>
+    <a href="{download_url}" style="display: inline-flex; align-items: center; gap: 4px; padding: 6px 12px; background: #00ffcc; color: #000000; text-decoration: none; border-radius: 6px; font-size: 12px; font-weight: 700; transition: transform 0.2s ease, background 0.2s ease; cursor: pointer;" onmouseover="this.style.background='#00ddaa'; this.style.transform='scale(1.05)';" onmouseout="this.style.background='#00ffcc'; this.style.transform='scale(1)';">
+        📥 手机下载
+    </a>
+</div>
+"""
+            if "</body>" in html_content:
+                html_content = html_content.replace("</body>", f"{inject_js}\n</body>")
+            else:
+                html_content += inject_js
+
+            return web.Response(text=html_content, content_type="text/html", charset="utf-8")
+        except Exception as e:
+            return web.Response(
+                text=json.dumps({"status": "failed", "reason": str(e)}),
+                content_type="application/json",
+                status=500
+            )
+
+    async def _handle_api_stitch_generate(self, request) -> web.Response:
+        """POST /api/stitch/generate 外部通用无状态页面生成接口。支持最长 40s 强制熔断。"""
+        from aiohttp import web
+        import uuid
+        from pathlib import Path
+        try:
+            data = await request.json()
+            prompt = data.get("prompt")
+            if not prompt:
+                return web.Response(
+                    text=json.dumps({"status": "failed", "reason": "prompt is required"}),
+                    content_type="application/json",
+                    status=400
+                )
+
+            style = data.get("style", "")
+            project_id = data.get("projectId", "9177609784991880809")
+
+            # 1. 物理强隔离：分配独立的 UUID
+            file_uuid = str(uuid.uuid4())
+            dest_dir = Path("/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/resources/stitch_outputs")
+            dest_dir.mkdir(parents=True, exist_ok=True)
+            dest_path = dest_dir / f"{file_uuid}.html"
+
+            # 2. 联动 StitchTool 工具实例
+            from agent.tools.mcp.stitch import StitchTool
+            tool = StitchTool()
+
+            # 3. 阻塞执行，最长 40 秒强制熔断保护
+            html_content = ""
+            try:
+                async def _run_tool():
+                    async for res in tool.call({
+                        "prompt": prompt,
+                        "style": style,
+                        "projectId": project_id,
+                        "dest_path": str(dest_path)
+                    }):
+                        if res.type == "result":
+                            return res.data
+                    return ""
+
+                html_content = await asyncio.wait_for(_run_tool(), timeout=40.0)
+            except asyncio.TimeoutError:
+                logger.error(f"Stitch API generate timeout for UUID: {file_uuid}")
+                # 容灾自愈：判断是否实际上已经通过 API 自愈写了盘
+                if dest_path.exists():
+                    with open(dest_path, "r", encoding="utf-8") as f:
+                        html_content = f.read()
+                else:
+                    return web.Response(
+                        text=json.dumps({
+                            "status": "failed",
+                            "reason": "Stitch generation timeout (40s). Please check network or try again."
+                        }),
+                        content_type="application/json",
+                        status=504
+                    )
+
+            # 4. 若接口无有价值返回，再次核对是否存在自愈落盘文件
+            if not html_content or html_content.startswith("Error:"):
+                if dest_path.exists():
+                    with open(dest_path, "r", encoding="utf-8") as f:
+                        html_content = f.read()
+                else:
+                    return web.Response(
+                        text=json.dumps({
+                            "status": "failed",
+                            "reason": html_content or "Stitch generation failed."
+                        }),
+                        content_type="application/json",
+                        status=500
+                    )
+
+            # 5. 组装标准的高可用预览、流式下载 URL
+            host = os.getenv("BRAIN_HOST", "127.0.0.1")
+            port = int(os.getenv("BRAIN_PORT", "8000"))
+            base_url = f"http://{host}:{port}" if host != "0.0.0.0" else f"http://127.0.0.1:{port}"
+
+            return web.Response(
+                text=json.dumps({
+                    "status": "success",
+                    "id": file_uuid,
+                    "preview_url": f"{base_url}/stitch_latest?id={file_uuid}",
+                    "download_url": f"{base_url}/stitch_latest?id={file_uuid}&download=true",
+                    "html": html_content
+                }),
+                content_type="application/json"
+            )
+        except Exception as e:
+            logger.error(f"Error in api_stitch_generate: {e}")
+            return web.Response(
+                text=json.dumps({"status": "failed", "reason": str(e)}),
+                content_type="application/json",
+                status=500
+            )
 
     async def _handle_brain_event(self, request) -> web.Response:
         """处理外部平台独立微网关上报的 OneBot 事件"""
