@@ -45,6 +45,7 @@ class DouyinGateway:
     def __init__(self):
         self.dispatcher = None
         self.context = None
+        self.playwright_context = None
         self.browser_context = None
         self.page = None
         self._running_task = None
@@ -70,6 +71,9 @@ class DouyinGateway:
         # 状态标志，用于防打扰与下行优先
         self.is_sending = False
         self.send_lock = asyncio.Lock()
+        
+        # 冷启动首轮轮询标志，用于在心跳同步时防范历史陈旧消息复活，同时确保后续新消息不被漏回
+        self.is_first_poll = True
 
     def start(self, dispatcher) -> None:
         """多协程拉起抖音私信网关."""
@@ -80,16 +84,18 @@ class DouyinGateway:
         self._running_task = asyncio.create_task(self._run_loop())
 
     async def stop(self) -> None:
-        """优雅关闭网关及浏览器."""
+        """优雅关闭网关，仅温和断开调试连接，保持浏览器桌面常驻."""
         if self._running_task:
             self._running_task.cancel()
             self._running_task = None
         
-        if self.browser_context:
+        if self.playwright_context:
             try:
-                await self.browser_context.close()
+                logger.info("Gently disconnecting CDP debugger without closing the resident browser...")
+                await self.playwright_context.stop()
             except Exception as e:
-                logger.error(f"Error closing CloakBrowser: {e}")
+                logger.error(f"Error stopping Playwright context: {e}")
+            self.playwright_context = None
             self.browser_context = None
             self.page = None
 
@@ -104,6 +110,26 @@ class DouyinGateway:
         
         while True:
             try:
+                # 0. 检测当前 Page 存活性，若失效则自动触发重连
+                page_is_ok = False
+                if self.page:
+                    try:
+                        await self.page.evaluate("1")
+                        page_is_ok = True
+                    except Exception:
+                        logger.warning("Active browser page is lost or closed. Re-triggering browser connection...")
+                        self.page = None
+                        self.browser_context = None
+                        if self.playwright_context:
+                            try:
+                                await self.playwright_context.stop()
+                            except Exception:
+                                pass
+                            self.playwright_context = None
+
+                if not self.page:
+                    await self._init_browser()
+
                 # 1. 登录状态性检测与扫码自愈
                 is_logged_in = await self._ensure_logged_in()
                 if not is_logged_in:
@@ -113,6 +139,7 @@ class DouyinGateway:
                 
                 # 2. 已登录状态下执行 DOM 私信扫描
                 has_new = await self._poll_messages()
+                self.is_first_poll = False
                 
                 # 2.5 实时生成调试截图，以 Artifact 形式供亮哥审查
                 try:
@@ -152,49 +179,107 @@ class DouyinGateway:
                 await asyncio.sleep(15)  # 发生异常，静默 15s 后自愈重试
 
     async def _init_browser(self) -> None:
-        """使用 CloakBrowser 隐形指纹 Profile 初始化 Chromium 沙箱."""
-        from cloakbrowser import launch_persistent_context_async
+        """初始化或热接管常驻 CloakBrowser."""
+        import aiohttp
+        import subprocess
+        from playwright.async_api import async_playwright
         
+        # 1. 优先探测本地 9222 调试端口是否通畅
+        cdp_active = False
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.get("http://127.0.0.1:9222/json/version", timeout=2) as resp:
+                    if resp.status == 200:
+                        cdp_active = True
+        except Exception:
+            pass
+
         profile_dir = os.path.expanduser("~/.my-agent/memory/1705919142/cloak_douyin")
         os.makedirs(profile_dir, exist_ok=True)
         
-        # 【强杀与释放独占锁】强制清除可能冲突的残留孤儿 Chromium 进程，保障 SingletonLock 干净释放
-        logger.info("Clearing SingletonLock and lingering chromium instances to avoid lock conflict...")
-        os.system("ps aux | grep -i 'chromium.*cloak_douyin' | grep -v grep | awk '{print $2}' | xargs kill -9 2>/dev/null")
+        # 释放独占锁，防止锁文件挂住
         lock_file = os.path.join(profile_dir, "SingletonLock")
         if os.path.exists(lock_file):
             try:
                 os.remove(lock_file)
             except Exception:
                 pass
-        
-        logger.info(f"Launching CloakBrowser sandbox with Profile: {profile_dir}")
-        
-        # 物理启动持久化隐形指纹 context (物理有头 + 扔到屏幕外，规避 404 检测并获取高信誉)
-        self.browser_context = await launch_persistent_context_async(
-            user_data_dir=profile_dir,
-            headless=False,  # 物理有头！享有真实 GPU 与高信誉！
-            humanize=True,   # 强制加持人类物理键鼠操作曲线补丁，抗 30/30 设备检测
-            viewport=None,   # 【避坑红线】设为 None，断绝 Playwright 用 Viewport 尺寸强行把物理窗口拉大的冲突 Bug！
-            args=[
-                "--window-position=9999,9999",    # 将窗口物理扔到逻辑分辨率外的右下角极远虚空
-                "--window-size=1280,800",         # 维持标准工业尺寸保证后台全功率重绘渲染与新消息拉取！
-                "--hide-crash-restore-bubble",   # 物理消灭崩溃恢复气泡
-                "--disable-infobars"
+
+        if not cdp_active:
+            logger.info("CDP target not active on port 9222. Launching resident CloakBrowser via standalone subprocess...")
+            from cloakbrowser import ensure_binary, get_default_stealth_args
+            chrome_path = ensure_binary()
+            
+            pos = os.getenv('DOUYIN_BROWSER_POSITION', '1400,900')
+            cmd_args = [
+                chrome_path,
+                f"--user-data-dir={profile_dir}",
+                "--remote-debugging-port=9222",
+                f"--window-position={pos}",
+                "--window-size=1280,800",
+                "--hide-crash-restore-bubble",
+                "--disable-infobars",
+                "--no-first-run",
+                "--no-default-browser-check"
             ]
-        )
+            # 加上默认 of stealth 选项
+            for arg in get_default_stealth_args():
+                # 过滤掉与 position/size 冲突的
+                if not any(arg.split('=', 1)[0] in a for a in cmd_args):
+                    cmd_args.append(arg)
+            
+            # 使用 Popen 抛到后台，使其脱离 Python 生命周期成为独立常驻系统进程
+            subprocess.Popen(cmd_args, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            logger.info("Resident CloakBrowser subprocess launched. Waiting for CDP port to open...")
+            
+            # 等待调试端口就绪，最多等待 10 秒
+            for _ in range(20):
+                await asyncio.sleep(0.5)
+                try:
+                    async with aiohttp.ClientSession() as session:
+                        async with session.get("http://127.0.0.1:9222/json/version", timeout=1) as resp:
+                            if resp.status == 200:
+                                cdp_active = True
+                                logger.info("CDP port 9222 is active!")
+                                break
+                except Exception:
+                    pass
+            
+            if not cdp_active:
+                logger.error("Failed to start resident CloakBrowser subprocess.")
+                raise RuntimeError("Failed to start resident CloakBrowser.")
+        else:
+            logger.info("🎉 Found resident CloakBrowser active on port 9222. Reusing active instance via CDP...")
+
+        # 2. 接管调试端口
+        self.playwright_context = await async_playwright().start()
+        browser = await self.playwright_context.chromium.connect_over_cdp("http://127.0.0.1:9222")
         
-        self.page = await self.browser_context.new_page()
-        # 【物理自愈重塑】动态重置逻辑视口为 1280x800，保证抖音侧边栏布局与 Actionability 判定 100% 完美无瑕！
-        await self.page.set_viewport_size({"width": 1280, "height": 800})
-        self.page.set_default_timeout(30000)
-        
-        # 首次冷启动，导航至主页 (不直达 message，从根源规避已失效 message 页的 404 封锁)
-        try:
-            await self.page.goto(DOUYIN_HOME_URL, wait_until="domcontentloaded")
-            await asyncio.sleep(6)
-        except Exception as e:
-            logger.error(f"Failed to navigate to Douyin Homepage initially: {e}")
+        if browser.contexts:
+            self.browser_context = browser.contexts[0]
+        else:
+            self.browser_context = await browser.new_context()
+
+        # 3. 检索已有的抖音 page
+        self.page = None
+        for pg in self.browser_context.pages:
+            if "douyin.com" in pg.url:
+                self.page = pg
+                logger.info("🎉 Found active Douyin page in existing CloakBrowser context. Reusing it...")
+                break
+
+        if not self.page:
+            logger.info("No active Douyin page found. Creating new page...")
+            self.page = await self.browser_context.new_page()
+            await self.page.set_viewport_size({"width": 1280, "height": 800})
+            self.page.set_default_timeout(30000)
+            
+            # 首次冷启动，导航至主页 (不直达 message，从根源规避已失效 message 页 of 404 封锁)
+            try:
+                await self.page.goto(DOUYIN_HOME_URL, wait_until="domcontentloaded")
+                await asyncio.sleep(6)
+            except Exception as e:
+                logger.error(f"Failed to navigate to Douyin Homepage initially: {e}")
 
     async def _ensure_logged_in(self) -> bool:
         """判定当前是否已处于已登录并打开了私信面板的状态."""
@@ -226,23 +311,54 @@ class DouyinGateway:
                 continue
                 
         if avatar_element:
-            logger.info("[登录状态验证] 页面检测到登录头像。尝试物理展开右侧私信面板...")
-            # 物理点击右上角私信按钮
-            for btn_sel in ['a[href*="message"]', 'text=私信', '[class*="message"]', 'svg:has-text("私信")']:
-                try:
-                    btn = await self.page.query_selector(btn_sel)
-                    if btn:
-                        # 强力穿透与 2 秒灵敏限时点击，打碎隐藏A标签导致的假死卡壳 30 秒
-                        await btn.click(force=True, timeout=2000)
-                        await asyncio.sleep(4)
-                        break
-                except Exception:
-                    continue
+            logger.info("[登录状态验证] 页面检测到登录头像。尝试通过 JS 联合爆破与物理兜底拉起右侧私信面板...")
+            # 1. 优先使用神级 JS 原生穿透联合点击，直接触发 im-entry 元素、类名或文本节点的 click 事件，100% 免疫任何物理遮挡或 Playwright 可交互性限制
+            js_clicked = False
+            try:
+                js_clicked = await self.page.evaluate("""() => {
+                    let btn = document.querySelector('[data-e2e="im-entry"]') || document.querySelector('.igu2_FYl');
+                    if (btn) {
+                        btn.click();
+                        return true;
+                    }
+                    // 兜底：抓取页面中所有文字为“私信”的元素执行原生点击
+                    let all = document.querySelectorAll('*');
+                    for (let el of all) {
+                        if (el.innerText && el.innerText.trim() === '私信') {
+                            el.click();
+                            el.parentElement?.click();
+                            return true;
+                        }
+                    }
+                    return false;
+                }""")
+                logger.info(f"JS joint bypass click private message button result: {js_clicked}")
+            except Exception as js_err:
+                logger.warning(f"JS joint click failed: {js_err}")
+                
+            # 2. 如果 JS 强点击异常，退化回物理点击以作双路防线保障
+            if not js_clicked:
+                for btn_sel in ['[data-e2e="im-entry"]', '.igu2_FYl', 'text=私信', '[class*="message"]']:
+                    try:
+                        btn = await self.page.query_selector(btn_sel)
+                        if btn:
+                            await btn.click(force=True, timeout=2000)
+                            break
+                    except Exception:
+                        continue
+            
+            await asyncio.sleep(4.5)
             
             # 点击后再次检查面板可见性与联系人就绪
             try:
-                # 强制等待侧边栏动画滑动出完毕，且列表第一项对 Playwright 呈现 visible 状态
-                await self.page.locator('.conversationConversationItemwrapper, [class*="ConversationItem"]').first.wait_for(state="visible", timeout=6000)
+                # 强制等待侧边栏动画滑动出完毕，对联系人列表呈现 visible 状态进行弹性尝试
+                try:
+                    await self.page.locator('.conversationConversationItemwrapper, [class*="ConversationItem"]').first.wait_for(state="visible", timeout=4000)
+                except Exception:
+                    pass
+                
+                # 最终以侧边栏大容器可见性作为展开完毕的标准，注入 10 秒高容错弹性超时以规避网络大抖动
+                await self.page.locator('#imSaasContainerId').wait_for(state="visible", timeout=10000)
                 is_visible = await self.page.locator('#imSaasContainerId').is_visible()
                 if is_visible:
                     return True
@@ -653,10 +769,14 @@ class DouyinGateway:
 
             # 如果是心跳活跃同步，且当前内存缓存里还没有此用户的处理记录（如网关刚刚热重启）
             # 直接同步当前最新消息到缓存中，坚决不回复陈旧历史老消息，彻底防范重启时的老消息复活自环
+            # 【优化】只有在冷启动的首轮轮询中，我们才将未读用户加入缓存并忽略；后续轮询中新出现的用户，说明是真正的新会话，必须予以回复！
             if is_active_session_sync and sender_nickname not in self.last_processed_msg_map:
                 self.last_processed_msg_map[sender_nickname] = latest_partner_msg
-                logger.info(f"Initialized active session message cache for: {sender_nickname}. Prevented legacy reply.")
-                return False
+                if getattr(self, "is_first_poll", True):
+                    logger.info(f"Initialized active session message cache for legacy user: {sender_nickname}. Prevented legacy reply.")
+                    return False
+                else:
+                    logger.info(f"New session detected for user: {sender_nickname} after initialization. Proceeding with active reply.")
 
             # 心跳同步时的内容去重比对：若拼接出来的最新文本跟上一次处理过的对方消息文本完全一致，则去重忽略，并累加除颤重载计数器
             if is_active_session_sync and self.last_processed_msg_map.get(sender_nickname) == latest_partner_msg:
