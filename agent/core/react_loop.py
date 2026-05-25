@@ -145,15 +145,42 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
 
         dynamic_system_prompt = "\n\n".join(context_parts)
         
-        llm_messages = [
-            {"role": "system", "content": system_prompt},
-            {"role": "system", "content": dynamic_system_prompt}
-        ]
-        for m in agent.messages:
-            copy = dict(m)
-            if "deepseek" not in agent.llm.model.lower():
-                copy.pop("reasoning_content", None)
-            llm_messages.append(copy)
+        # 寻找当前回合的发起 User 消息索引
+        user_idx = -1
+        for idx in range(len(agent.messages) - 1, -1, -1):
+            if agent.messages[idx].get("role") == "user":
+                user_idx = idx
+                break
+
+        # 基于插入点极简分片重组，杜绝冗余
+        llm_messages = []
+        llm_messages.append({"role": "system", "content": system_prompt})
+
+        if user_idx != -1:
+            # 1. 历史会话（静态，100% 缓存）
+            for m in agent.messages[:user_idx]:
+                copy = dict(m)
+                if "deepseek" not in agent.llm.model.lower():
+                    copy.pop("reasoning_content", None)
+                llm_messages.append(copy)
+            
+            # 2. 插入点：动态上下文（Time + RAG）
+            llm_messages.append({"role": "system", "content": dynamic_system_prompt})
+            
+            # 3. 当前回合活动消息（提问 + 随后的 ToolCall/Result）
+            for m in agent.messages[user_idx:]:
+                copy = dict(m)
+                if "deepseek" not in agent.llm.model.lower():
+                    copy.pop("reasoning_content", None)
+                llm_messages.append(copy)
+        else:
+            # Fallback 兜底防灾
+            llm_messages.append({"role": "system", "content": dynamic_system_prompt})
+            for m in agent.messages:
+                copy = dict(m)
+                if "deepseek" not in agent.llm.model.lower():
+                    copy.pop("reasoning_content", None)
+                llm_messages.append(copy)
 
         tools = agent.registry.get_definitions()
         
