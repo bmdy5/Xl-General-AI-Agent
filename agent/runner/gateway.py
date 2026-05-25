@@ -14,3 +14,14 @@ async def run_gateway():
         await gw.run()
     except KeyboardInterrupt:
         print("\n  Gateway stopped.")
+
+async def run_douyin_gateway():
+    """Douyin Standalone Gateway 模式：独立拉起抖音私信网关."""
+    print("\n  MyAgent — Douyin Standalone Gateway 模式 (已物理分进程隔离)")
+    print()
+
+    gw = QQGateway(build_agent)
+    try:
+        await gw.run(only_douyin=True)
+    except KeyboardInterrupt:
+        print("\n  Douyin Standalone Gateway stopped.")

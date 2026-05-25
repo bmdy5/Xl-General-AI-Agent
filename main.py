@@ -14,7 +14,8 @@ from agent.runner import (
     run_auto_learn,
     run_dashboard,
     run_dashboard_learn,
-    run_gateway
+    run_gateway,
+    run_douyin_gateway
 )
 
 def _run_safe(coro):
@@ -33,6 +34,8 @@ if __name__ == "__main__":
         arg = sys.argv[1]
         if arg == "--gateway":
             _run_safe(run_gateway())
+        elif arg == "--douyin":
+            _run_safe(run_douyin_gateway())
         elif arg == "--auto-learn":
             _run_safe(run_auto_learn())
         elif arg == "--cleanup":
