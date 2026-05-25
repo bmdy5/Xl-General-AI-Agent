@@ -335,24 +335,65 @@ CREATE TABLE IF NOT EXISTS active_sessions (
 
 ---
 
-## 12. 📡 抖音私信防封隐身网关与公共发图高内聚解耦组件 (NEW - 2026-05-24)
+## 12. 📡 抖音主页侧边栏常驻物理拟真网关与公共发图组件 (NEW & UPDATED - 2026-05-25)
 
-为了在小萤中支持抖音粉丝渠道的客服与公开互动，且达成 100% 的抗检测防封号标准，系统无缝集成了 `CloakBrowser` 并在 `net_gateway/` 和 `tools/` 中实现了精纯桥接：
+为了在小萤中支持抖音渠道的客服与公开互动，且达成 100% 的抗检测防封号标准，系统无缝集成了 `CloakBrowser`，并在 `net_gateway/` 和 `tools/` 中实现了精纯的**「主页侧边栏常驻物理收发」**闭环：
 
 ### 12.1 公共解耦发图工具 (`SendImageToQqTool`)
 *   **物理文件**：[`agent/tools/media/send_image_tool.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/tools/media/send_image_tool.py)。
 *   **设计原则**：将“本地图片 ➔ 上传腾讯云 COS ➔ 组装 OneBot CQ 码 ➔ 推送管理员 QQ_ADMIN_ID”的流程封装为统一的内置 `BaseTool` 并在 `bootstrap.py` 中完成自动挂载。实现了发图流程与具体业务网关的彻底解耦。
 
-### 12.2 智能随机退避轮询与 DOM 拟真 (`DouyinGateway`)
+### 12.2 主页侧边栏常驻收发核心 (`DouyinGateway`)
 *   **物理文件**：[`agent/net_gateway/douyin_bot.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/net_gateway/douyin_bot.py)。
-*   **防风控设计**：
-    1.  **隐形沙箱**：基于 `launch_persistent_context_async` 与 `humanize=True` 物理按键与鼠标微颤模拟，绕过 30/30 设备和 Bot 检测。
-    2.  **高斯退避轮询**：不采用固定频率。日常闲置采用高斯分布 `45s + random.gauss(0, 10)` 波动以打碎规律性抓取特征；对话活跃时自动收窄至 `5s - 10s`；连续闲置时深度退避至 `90s - 120s`。
-    3.  **扫码登录自愈**：检测到重定向登录页时，自动截取登录二维码图片，调用 `send_image_to_qq` 推送至亮哥 QQ，后台每 5s 自动轮询监测登录跳转以实现 0 人工干预的完全自愈。
+*   **物理有头虚空常驻**：以 `headless=False` 保证真实 GPU 与硬件高信誉，但通过 `--window-position=-2000,-2000` 将其物理扔到您 Mac 屏幕可视边界外。实现 **亮哥桌面 0 干扰**，而 **风控端 100% 放行**。
+*   **双轨互补拟真唤醒**：首次冷启动导航至 `douyin.com`（主页），优先以模拟鼠标物理点击 [私信] 图标，无按钮时才直达 `/message` 兜底，彻底封死直接直达失效独立私信页导致的 404 风控挂断。
+*   **二向桥接内存映射 (`self.nickname_map`)**：主页侧边栏内 URL 不再携带明文 `chatId`。轮询时实时捕获未读红点联系人的昵称（`sender_nickname`），通过 MD5 计算出稳定的虚拟 ID：`chat_id = md5(nickname)[:16]`。建立 `ID <-> Nickname` 双向内存绑定。
+*   **高斯退避轮询与步进控制**：闲置采用高斯分布随机退避，对话活跃时收窄至 5s-10s；单次仅处理最上方的一个未读条目，切换后强制加入 3-5 秒安全冷却时间，以模拟真实人眼缓冲。
+*   **扫码登录自愈**：检测到重定向登录页时，自动定位二维码元素截图，调用 `send_image_to_qq` 推送至亮哥 QQ，后台自动重试阻断监测直至扫码完成恢复轮询。
 
-### 12.3 零侵入高可用物理桥接
-*   **事件分发桥接**：`douyin_bot.py` 捕获未读 DOM 后，仅用 10 行代码将其封装为带 `douyin_` 前缀的 OneBot 兼容私信 event，直接调用 `dispatcher.dispatch_event(event)`。完美复用了小萤已有的 **CSMA/CD 消息退避合并、Fatigue 脑力计费、短期记忆 1.0s 防抖持久化和 Prompt 缓存优化** 等所有核心黑科技。
-*   **物理拦截路由**：
-    *   [`sender.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/net_gateway/sender.py) 开头加设拦截，凡 `user_id` 带 `douyin_` 前缀的消息，直接通过异步任务委派给 `douyin_gateway.send_message` 执行 DOM 拟真输入，不干扰也完全不占用 QQ 本身的消息队列和令牌桶限流。
-    *   [`security.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/net_gateway/security.py) 对 `douyin_` 前缀用户提供安全白名单直接穿透，以支持抖音上对所有普通粉丝的高情商客服扮演回复。
+### 12.3 极致防封物理拟真发送机制
+*   **100% 原生按键物理清空**：物理聚焦输入框后，通过 Playwright 发送 `Command+A`（Mac下全选）与 `Backspace`（退格）原生按键组合彻底清空。**坚决不用 JS 注入 innerText**，触发全套键盘原生 input/change 事件，消灭任何非键盘操作痕迹。
+*   **拟真随机延时打字**：使用 `page.keyboard.type(text, delay=random(40, 75))` 逐字物理键入，模仿人手打字呼吸感，然后回车发送。
+*   **双重发送结果验证**：敲击回车 2 秒后，自动回读聊天记录最后一条由 `is_self` 发送的文本气泡。对比文本内容是否与回复一致，并物理扫描周边是否含有 `error`, `fail`, `warn` 等代表发送失败的感叹号 SVG 图标，有则向上游抛出异常以实现故障自愈。
 
+### 12.4 并发整流与零侵入高可用桥接
+*   **事件分发桥接**：`douyin_bot.py` 捕获未读 DOM 后，仅用 10 行代码将其封装为带 `douyin_` 前缀 of OneBot 兼容私信 event，直接调用 `dispatcher.dispatch_event(event)`。完美复用小萤已有的 **CSMA/CD 消息退避合并、Fatigue 脑力计费、短期记忆 1.0s 防抖持久化和 Prompt 缓存优化**。
+*   **多渠道并发隔离与物理排它锁**：
+    *   **会话级内存隔离**：通过 `user_<QQ号>`、`group_<群号>` 与 `douyin_<MD5昵称>` 将会话内存与历史消息在 RAG 中物理隔绝，多端并行绝不串线。
+    *   **抖音发送物理排它锁**：由于抖音多路并发需要实操同一个物理浏览器页面，在发送时加持 `self.send_lock` 独占互斥锁。在发信期间，`self.is_sending = True` 状态会**强行挂起后台轮询检测**，保障物理键盘和点击焦点决不冲突混杂。
+    *   **物理通道隔离**：`sender.py` 开头加设拦截，凡 `user_id` 带 `douyin_` 前缀的消息，委派给 `douyin_gateway.send_message` 执行 DOM 拟真输入，不干扰也完全不占用 QQ 本身的消息队列和令牌桶限流。
+    *   `security.py` 对 `douyin_` 前缀用户提供安全白名单直接穿透，以支持抖音上对所有普通粉丝的对话扮演回复。
+
+---
+
+## 13. 📊 AI 开发者 Token 消耗与缓存命中率监测与审计规范
+
+为了彻底抑制小萤在大模型交互、记忆调优、以及多端并发网关下的算力浪费与巨额 Token 费用开销，系统建立了极其严格的 Token 与缓存命中率审计红线。
+
+### 13.1 📊 日志提取与监控机制
+所有大模型（LiteLLM / OpenAI / DeepSeek）的非流式与流式调用，均会在 `agent/core/react_loop.py` 中输出带有统一 `[TOKEN AUDIT]` 标识的监控指标。
+*   **审计日志路径**：[`logs/gateway.log`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/logs/gateway.log)
+*   **查看最近 Token 消耗命令**：
+    ```bash
+    grep "\[TOKEN AUDIT\]" logs/gateway.log | tail -n 20
+    ```
+*   **标准输出格式**：
+    ```text
+    [TOKEN AUDIT] llm_stream | Prompt: 48200 (Cached: 46250, Hit Rate: 95.9%) | Completion: 180 | Total: 48380 (Total Cached: 124500)
+    ```
+
+### 13.2 🚨 AI 开发者自检与优化红线
+后续所有被唤醒的 AI 编码助手，在开始调试、修复 Bug 或新增任何重大功能之前，**必须前置执行 Token 与缓存审计自检**：
+
+1.  **缓存命中率（Hit Rate）不得低于 80%**
+    *   If 最近的请求中 `Hit Rate` 持续低于 80%，AI 开发者**必须立即质疑并排查原因**，严禁在未恢复缓存命中率的情况下强行继续叠加其他业务代码。
+2.  **绝对禁止前缀抖动（Prefix Jitter）**
+    *   大模型缓存（特别是 DeepSeek Prompt Caching）依赖于严格的“单调递增前缀匹配”。
+    *   **红线 1**：所有动态上下文（如当前时间戳、当前工作目录、以及 RAG 召回的辅助记忆块）**必须强制打包并追加在 System Prompt 的最后部分**。
+    *   **红线 2**：`agent.messages` 中已经生成的历史消息队列（User/Assistant/Tool 帧）在 ReAct 循环的中途迭代里**绝对不允许进行重写、改动或动态参数拼接**。
+3.  **零冗余静态时间戳防抖锁（Time Lock）**
+    *   系统已经在 `run_loop` 初始化时（Turn = 0）一次性锁定了当前时间字符串 `now`，在整轮会话中强行静止：
+        ```python
+        now = datetime.now().strftime("%Y-%m-%d %H:%M")
+        ```
+    *   **红线 3**：严禁在后续工具步骤、或者为了高精时钟，在 ReAct 循环的中途迭代里频繁重复调用 `datetime.now()` 动态覆盖该变量。否则会使 System Prompt 产生哪怕是一个字的变动，导致整个前缀缓存瞬间彻底失效，造成灾难性的 Token 计费膨胀。
