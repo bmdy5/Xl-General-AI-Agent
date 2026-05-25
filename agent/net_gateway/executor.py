@@ -219,7 +219,7 @@ class AgentExecutor:
                     self._log_activity_dispatcher("系统异常", f"Agent 报错: {evt['content']}", user_id=user_id)
                     await self.context.send_msg(msg_type, user_id, group_id, evt["content"], skip_delay=True)
                     return
-                elif evt["type"] == "_done":
+                elif evt["type"] in ("_done", "completed"):
                     prompt_tokens = getattr(agent, "_prompt_tokens", 0)
                     cached_tokens = getattr(agent, "_cached_tokens", 0)
                     completion_tokens = getattr(agent, "_completion_tokens", 0)

@@ -391,3 +391,67 @@ async def test_json_repair_safety_sandboxing_分流():
     with pytest.raises(Exception):
         async for _ in run_loop(agent_write, "test", turn=0, stream=True):
             pass
+
+
+# ── 用例 8: 校验 AgentExecutor 在接收到 completed 事件时成功触发 unified token metrics 审计日志 ──
+@pytest.mark.asyncio
+async def test_executor_completed_event_token_metrics(monkeypatch):
+    from agent.net_gateway.executor import AgentExecutor
+    
+    # 模拟 context, bus, dispatcher 等网关底层对象
+    mock_context = MagicMock()
+    mock_context.activity_logger = MagicMock()
+    mock_context.send_msg = AsyncMock()
+    mock_context._last_voice_time = 0.0
+    
+    mock_bus = MagicMock()
+    mock_bus.wait_for_carrier_sense = AsyncMock(return_value=False)
+    mock_bus.is_collision = MagicMock(return_value=False)
+    
+    mock_dispatcher = MagicMock()
+    mock_dispatcher.bot = MagicMock()
+    mock_dispatcher.bus = mock_bus
+    
+    executor = AgentExecutor(
+        context=mock_context,
+        dispatcher=mock_dispatcher
+    )
+    
+    # 模拟 Agent 和它的 run() 方法 yield "completed" 事件
+    mock_agent = MagicMock()
+    mock_agent._prompt_tokens = 30000
+    mock_agent._cached_tokens = 20000
+    mock_agent._completion_tokens = 5000
+    mock_agent._total_tokens = 35000
+    mock_agent.compressor = None
+    
+    async def mock_run(*args, **kwargs):
+        yield {"type": "completed"}
+        
+    mock_agent.run = mock_run
+    
+    # 执行 execute_agent_run
+    session_key = "user_12345"
+    import time
+    await executor.execute_agent_run(
+        agent=mock_agent,
+        raw="你好",
+        session_key=session_key,
+        msg_type="private",
+        user_id="12345",
+        group_id="",
+        sender_name="亮哥",
+        task_start_time=time.time()
+    )
+    
+    # 验证 log_metrics 确实被调用了，并且传入了正确的 tokens 与命中率参数
+    mock_context.activity_logger.log_metrics.assert_called_once_with(
+        session_key=session_key,
+        prompt_tokens=30000,
+        cached_tokens=20000,
+        completion_tokens=5000,
+        total_tokens=35000,
+        is_estimated=False,
+        user_id="12345"
+    )
+
