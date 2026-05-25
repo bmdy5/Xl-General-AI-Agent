@@ -67,7 +67,7 @@ def test_cache_hit_rate_observability():
 @pytest.mark.asyncio
 async def test_embedding_circuit_breaker_cooldown():
     # 模拟 _LOCAL_MODEL_CACHE
-    import agent.memory.index as idx_mod
+    import agent.memory.embedding as idx_mod
     if hasattr(idx_mod, "_LOCAL_MODEL_CACHE"):
         delattr(idx_mod, "_LOCAL_MODEL_CACHE")
         
