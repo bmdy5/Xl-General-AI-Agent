@@ -443,7 +443,7 @@ class DouyinGateway:
                 if name_element:
                     text_content = await name_element.inner_text()
                     if text_content.strip():
-                        sender_nickname = text_content.strip()
+                        sender_nickname = text_content.strip().split('\n')[0].strip()
                 
                 # 如果匹配失败退化为了默认值，启用超强兜底：使用 innerText 智能拆分过滤法提取真实昵称
                 if sender_nickname in ["抖音粉丝", "未知", ""]:
@@ -713,6 +713,10 @@ class DouyinGateway:
                 if not nickname:
                     # 如果没有映射，以 chat_id 作为备用昵称进行匹配
                     nickname = chat_id
+                
+                # 净化昵称，截断可能存在的换行与时间标签（如“刚刚”、“2分钟前”），保证 selector 不抛 BADSTRING 异常
+                if nickname:
+                    nickname = nickname.split('\n')[0].strip()
                     
                 logger.info(f"Looking for contact with nickname: {nickname}")
                 
