@@ -225,7 +225,21 @@ class AgentExecutor:
                         ctx_tokens = agent.compressor.estimate_tokens(agent.messages) if agent.compressor else 0
                     except AttributeError:
                         ctx_tokens = 0
-                    self._log_activity_dispatcher("系统调度", f"本次推理完成。大模型总共消耗约 {total_sent_tokens} Tokens，当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
+                    
+                    # 💡 物理自愈兜底机制：若 API 没有正常返回 Token 消耗（被 Mock 或中转渠道抹除）
+                    if total_sent_tokens <= 0:
+                        # 估算 Completion Tokens (当前回复的 tokens 消耗)
+                        reply_text = agent.messages[-1]["content"] if (agent.messages and agent.messages[-1].get("role") == "assistant") else ""
+                        est_completion = self._count_tokens(reply_text)
+                        
+                        # 保守上限法：总消耗估算 = 上下文 tokens (输入) + 输出 tokens (不扣除缓存折减，以最高上限保护账单计费)
+                        total_sent_tokens = ctx_tokens + est_completion
+                        is_estimated = True
+                    else:
+                        is_estimated = False
+                        
+                    token_desc = f"约 {total_sent_tokens} Tokens (智能估算)" if is_estimated else f"{total_sent_tokens} Tokens"
+                    self._log_activity_dispatcher("系统调度", f"本次推理完成。大模型总共消耗{token_desc}，当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
 
             # ── 冲突检测 (Collision Detection) 第二阶段 ──
             if self.bus.is_collision(session_key, task_start_time):

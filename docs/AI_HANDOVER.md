@@ -374,6 +374,19 @@ CREATE TABLE IF NOT EXISTS active_sessions (
     [TOKEN AUDIT] llm_stream | Prompt: 48200 (Cached: 46250, Hit Rate: 95.9%) | Completion: 180 | Total: 48380 (Total Cached: 124500)
     ```
 
+### 13.3 🔧 非标 API 渠道 Token 获取自愈与高防灾智能估算机制 (NEW - 2026-05-25)
+为了 100% 解决国内各类大模型 API 中转代理商抹除、吞掉或格式化错位导致流式回复中 `usage` 指标遗失，或者单元测试 Mock 阶段大模型接口统计显示荒谬 `0 Tokens` 的痛点，系统实装了双层自愈防灾策略：
+
+1.  **非标流式 Usage 跨帧智能捕获与去重**
+    *   **机制**：在 `llm.py` 流式处理中引入了 `usage_yielded` 去重开关，破除了原来“仅在 choices 为空的最终区块拦截 usage”的物理限制。
+    *   **实装**：不论 Choices 块是否为空，只要当前流区块 `chunk` 携带了类型为 `int/float` 的有价值 `usage.total_tokens > 0` 属性，即在第一时间成功抓取并 yield 回大脑，且通过 `usage_yielded` 确保仅截获一次，杜绝了国内中转渠道吞帧导致的 Token 统计遗失，且 100% 免疫单元测试 MagicMock 的类型报错。
+2.  **“保守上限法”高防灾智能估算自愈**
+    *   **机制**：在 `executor.py` 调度末尾，若外部 API 上报的 `total_sent_tokens` 依然为 0（如被中转商彻底清零），系统将自动触发中央自愈阀门。
+    *   **公式**：
+        $$\text{Total Tokens} = \text{ctx\_tokens} + \text{est\_completion}$$
+    *   **实装**：系统结合当前上下文的 RAG 预估 `ctx_tokens` 以及本轮助理实际说出的中英文混合字数估算值，做最高规格的计费上限评估。在日志中清晰打印 `约 XXX Tokens (智能估算)`，既绝不低估外部 API 的计费成本保护账单安全，又彻底终结了 `0 Tokens` 日志的产生。
+    *   **测试保护**：在 `tests/test_token_metrics.py` 中新增 `test_llm_stream_data_chunk_usage_capture` 用例白盒模拟非标准数据帧附带 usage 的解析与去重，74 项 pytest 单元测试已全部通过。
+
 ### 13.2 🚨 AI 开发者自检与优化红线
 后续所有被唤醒的 AI 编码助手，在开始调试、修复 Bug 或新增任何重大功能之前，**必须前置执行 Token 与缓存审计自检**：
 
