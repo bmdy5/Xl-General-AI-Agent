@@ -72,7 +72,7 @@ clean:
 
 # ── 重启 QQ Gateway（改完代码后执行） ──
 gateway-restart:
-	@echo "🔄 正在重启 QQ Gateway (已物理隔离并禁用抖音)..."
+	@echo "🔄 正在重启 QQ Gateway..."
 	@if launchctl list 2>/dev/null | grep -q com.myagent.qqgateway; then \
 		echo "   - 检测到 launchd 托管服务，正在通过 launchctl 执行干净、安全的卸载与重新装载重启..."; \
 		launchctl unload ~/Library/LaunchAgents/com.myagent.qqgateway.plist 2>/dev/null || true; \
@@ -83,7 +83,7 @@ gateway-restart:
 		pkill -9 -f "main.py --gateway" 2>/dev/null || true; \
 		sleep 1; \
 		mkdir -p logs; \
-		ENABLE_DOUYIN_IN_QQ=false nohup venv/bin/python main.py --gateway >> logs/gateway.log 2>&1 & \
+		nohup venv/bin/python -u main.py --gateway >> logs/gateway.log 2>&1 & \
 	fi
 
 	@echo "✅ QQ Gateway 重启完成"
@@ -95,7 +95,7 @@ douyin-restart:
 	@pkill -9 -f "main.py --douyin" 2>/dev/null || true
 	@sleep 1
 	@mkdir -p logs
-	@nohup venv/bin/python main.py --douyin >> logs/douyin_gateway.log 2>&1 &
+	@nohup venv/bin/python -u main.py --douyin >> logs/douyin_gateway.log 2>&1 &
 	@echo "✅ 独立 Douyin Gateway 重启完成"
 	@echo "   查看日志: tail -f logs/douyin_gateway.log"
 
