@@ -220,12 +220,17 @@ class AgentExecutor:
                     await self.context.send_msg(msg_type, user_id, group_id, evt["content"], skip_delay=True)
                     return
                 elif evt["type"] == "_done":
+                    prompt_tokens = getattr(agent, "_prompt_tokens", 0)
+                    cached_tokens = getattr(agent, "_cached_tokens", 0)
+                    completion_tokens = getattr(agent, "_completion_tokens", 0)
                     total_sent_tokens = getattr(agent, "_total_tokens", 0)
+                    
                     try:
                         ctx_tokens = agent.compressor.estimate_tokens(agent.messages) if agent.compressor else 0
                     except AttributeError:
                         ctx_tokens = 0
                     
+                    is_estimated = False
                     # 💡 物理自愈兜底机制：若 API 没有正常返回 Token 消耗（被 Mock 或中转渠道抹除）
                     if total_sent_tokens <= 0:
                         # 估算 Completion Tokens (当前回复的 tokens 消耗)
@@ -233,13 +238,28 @@ class AgentExecutor:
                         est_completion = self._count_tokens(reply_text)
                         
                         # 保守上限法：总消耗估算 = 上下文 tokens (输入) + 输出 tokens (不扣除缓存折减，以最高上限保护账单计费)
-                        total_sent_tokens = ctx_tokens + est_completion
+                        prompt_tokens = ctx_tokens
+                        completion_tokens = est_completion
+                        cached_tokens = 0
+                        total_sent_tokens = prompt_tokens + completion_tokens
                         is_estimated = True
+
+                    # 统一调用 ActivityLogger 的 log_metrics 进行高内聚打印！
+                    if hasattr(self.context, "activity_logger") and self.context.activity_logger:
+                        self.context.activity_logger.log_metrics(
+                            session_key=session_key,
+                            prompt_tokens=prompt_tokens,
+                            cached_tokens=cached_tokens,
+                            completion_tokens=completion_tokens,
+                            total_tokens=total_sent_tokens,
+                            is_estimated=is_estimated,
+                            user_id=user_id
+                        )
+                        # 物理追加当前上下文预估，确保原有信息完备
+                        self._log_activity_dispatcher("系统调度", f"当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
                     else:
-                        is_estimated = False
-                        
-                    token_desc = f"约 {total_sent_tokens} Tokens (智能估算)" if is_estimated else f"{total_sent_tokens} Tokens"
-                    self._log_activity_dispatcher("系统调度", f"本次推理完成。大模型总共消耗{token_desc}，当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
+                        token_desc = f"约 {total_sent_tokens} Tokens (智能估算)" if is_estimated else f"{total_sent_tokens} Tokens"
+                        self._log_activity_dispatcher("系统调度", f"本次推理完成。大模型总共消耗{token_desc}，当前会话上下文预估: {ctx_tokens} Tokens", user_id=user_id)
 
             # ── 冲突检测 (Collision Detection) 第二阶段 ──
             if self.bus.is_collision(session_key, task_start_time):
