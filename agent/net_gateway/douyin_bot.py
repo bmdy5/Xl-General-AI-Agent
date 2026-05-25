@@ -167,7 +167,7 @@ class DouyinGateway:
             viewport=None,   # 【避坑红线】设为 None，断绝 Playwright 用 Viewport 尺寸强行把物理窗口拉大的冲突 Bug！
             args=[
                 "--window-position=9999,9999",    # 将窗口物理扔到逻辑分辨率外的右下角极远虚空
-                "--window-size=10,10",            # 物理尺寸缩小为 10x10 的微米级纳微尘埃点，macOS 强制居中也完全不可见！
+                "--window-size=1280,800",         # 维持标准工业尺寸保证后台全功率重绘渲染与新消息拉取！
                 "--hide-crash-restore-bubble",   # 物理消灭崩溃恢复气泡
                 "--disable-infobars"
             ]
