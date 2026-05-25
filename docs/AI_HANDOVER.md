@@ -389,3 +389,49 @@ CREATE TABLE IF NOT EXISTS active_sessions (
         now = datetime.now().strftime("%Y-%m-%d %H:%M")
         ```
     *   **红线 3**：严禁在后续工具步骤、或者为了高精时钟，在 ReAct 循环的中途迭代里频繁重复调用 `datetime.now()` 动态覆盖该变量。否则会使 System Prompt 产生哪怕是一个字的变动，导致整个前缀缓存瞬间彻底失效，造成灾难性的 Token 计费膨胀。
+
+---
+
+## 14. 💎 极致精炼与优雅解耦：高行数核心模块无损拆分架构规范 (NEW - 2026-05-25)
+
+为了降低系统核心文件的行数与认知复杂度，系统于 2026-05-25 执行了划时代的**高行数核心模块优雅解耦**。
+
+### 14.1 核心拆分设计详单 (适度解耦原则)
+我们严格遵守“最小修改”与“适度解耦”的高内聚理念，仅将各主文件中职责偏离度最高的核心臃肿部分平移出去，拒绝制造微型小文件碎屑：
+
+1.  **`agent/evolution/dream.py`** (632 行 ➔ ~450 行)：
+    *   **剥离部分**：将所有长 Prompt 静态字符串（共约 174 行）剥离到独立的配置包中。
+    *   **新文件**：📂 [`agent/evolution/dream_prompts.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/evolution/dream_prompts.py)
+    *   **兼容处理**：在 `dream.py` 头部通过 `from .dream_prompts import (...)` 原样导入，保持 100% 相同命名空间，业务核心逻辑一行未改。
+
+2.  **`agent/memory/manager.py`** (513 行 ➔ ~320 行)：
+    *   **剥离部分**：将极其独立的 SQLite 双旧库 ATTACH 原子热熔合与物理 Markdown 微米级去重合并搬家搬迁引擎（共约 200 行）剥离出去。
+    *   **新文件**：📂 [`agent/memory/migration.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/memory/migration.py)
+    *   **兼容处理**：在 `manager.py` 头部引入它，并在 `MemoryManager` 类内部保留原本同名的 Proxy 代理接口以向下兼容：
+        ```python
+        def _run_hot_migration_if_needed(self, old_base_dir_override: Optional[Path] = None):
+            return _run_hot_migration_if_needed(self, old_base_dir_override)
+        ```
+
+3.  **`agent/memory/index.py`** (501 行 ➔ ~230 行)：
+    *   **剥离部分**：将语义缓存 LRU 核心组件 `MemoryCache` 以及 SentenceTransformer 本地/远程向量提取模块（共约 270 行）进行物理移位。
+    *   **新文件**：
+        - 📂 [`agent/memory/cache.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/memory/cache.py)：写入带语义模糊命中的高精度 LRU 缓存类 `MemoryCache`。
+        - 📂 [`agent/memory/embedding.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/memory/embedding.py)：写入向量提取与本地离线模型 SentenceTransformer 自动熔断保活加载模块。
+    *   **兼容处理**：在 `index.py` 头部通过代理方式导入，保障外部调用者**绝对零感知、零修改**：
+        ```python
+        from .cache import MemoryCache
+        from .embedding import _get_embedding, save_ki_embedding
+        ```
+
+### 14.2 🚨 AI 开发者后续拆分红线 (API 零感知兼容原则)
+后续有任何 AI 或人类开发者在面对代码行数增长需要进一步解耦拆分时，**必须强制遵守以下双重红线**，坚决维护系统功能的无损高可用：
+
+*   **红线 1：100% 维持外部及内部原 API 签名**
+    大解耦不得对任何已有功能的引用链产生级联修改。被平移出去的类或方法，必须在原主文件中以代理导入（如 `from .new_module import target`）在原命名空间内向外原样暴露。确保外部调用方（如 `douyin_browser.py`、`main.py` 及单元测试套件）能够 100% 成功解析且无需修改任何代码。
+*   **红线 2：回归测试必须 100% 绿屏**
+    重构后必须在 `PYTHONPATH=.` 环境变量下完整跑通整个 Pytest 测试套件：
+    ```bash
+    PYTHONPATH=. venv/bin/pytest tests/
+    ```
+    只有在 `73 passed` 完美绿屏的测试环境下，重构才被判定为真正成功。
