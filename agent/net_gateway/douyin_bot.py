@@ -571,11 +571,13 @@ class DouyinGateway:
                             """(node) => {
                                 if (!node) return false;
                                 let rect = node.getBoundingClientRect();
-                                let container = document.querySelector('#imSaasContainerId');
-                                let mid = container ? container.offsetWidth / 2 : 400;
+                                let container = document.querySelector('[class*="chat-container"], [class*="message-list"], #imSaasContainerId') || node.parentElement;
+                                let containerRect = container ? container.getBoundingClientRect() : { left: 0, width: 800 };
+                                let relativeLeft = rect.left - containerRect.left;
+                                let mid = containerRect.width / 2;
                                 // 若消息气泡的左边缘在聊天容器的中线偏右，100% 绝对是自己发送的消息
                                 let cl = typeof node.className === 'string' ? node.className : (node.className?.baseVal || '');
-                                return rect.left > mid || cl.includes('right') || cl.includes('self') || cl.includes('own');
+                                return relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own');
                             }""",
                             last_msg_node
                         )
@@ -595,10 +597,12 @@ class DouyinGateway:
                         """(node) => {
                             if (!node) return false;
                             let rect = node.getBoundingClientRect();
-                            let container = document.querySelector('#imSaasContainerId');
-                            let mid = container ? container.offsetWidth / 2 : 400;
+                            let container = document.querySelector('[class*="chat-container"], [class*="message-list"], #imSaasContainerId') || node.parentElement;
+                            let containerRect = container ? container.getBoundingClientRect() : { left: 0, width: 800 };
+                            let relativeLeft = rect.left - containerRect.left;
+                            let mid = containerRect.width / 2;
                             let cl = typeof node.className === 'string' ? node.className : (node.className?.baseVal || '');
-                            return rect.left > mid || cl.includes('right') || cl.includes('self') || cl.includes('own');
+                            return relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own');
                         }""",
                         msg_node
                     )
