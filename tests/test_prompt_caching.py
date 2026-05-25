@@ -160,3 +160,110 @@ async def test_react_loop_caching_front_injection(test_env):
     
     # Index 1 (User 消息，倒数第二个) 也应该有打标
     assert claude_msgs[1]["content"][-1]["cache_control"] == {"type": "ephemeral"}
+
+
+# ── 用例 3: 校验在多轮 ReAct 工具交互中，动态 System 消息（RAG + Time）被精准锁死在回合发起 User 消息的前面且保持静止 ──
+@pytest.mark.asyncio
+async def test_react_loop_dynamic_insertion_point(test_env):
+    import asyncio
+    from unittest.mock import patch
+    manager = test_env["manager"]
+    
+    # Mock 一个极简 agent，使其支持 ReAct 循环
+    agent = MagicMock()
+    agent.max_turns = 2
+    agent._mode.value = "normal"
+    agent._task_start_time = asyncio.get_event_loop().time()
+    
+    agent._build_system_prompt = AsyncMock(return_value="静态核心提示词")
+    agent._build_memory_block = AsyncMock(return_value="RAG召回记忆")
+    agent._repair_history = AsyncMock()
+    agent._apply_sliding_window_and_scratchpad = AsyncMock()
+    agent._abort = asyncio.Event()
+    from agent.core.agent import AgentMode
+    agent._mode = AgentMode.NORMAL
+    agent._turn_count = 0
+    agent._prompt_tokens = 0
+    agent._cached_tokens = 0
+    agent._completion_tokens = 0
+    agent._total_tokens = 0
+    agent.session = None
+    agent.session_key = None
+    agent.current_state_prefix = ""
+    agent.compressor = MagicMock()
+    agent.compressor.estimate_tokens = MagicMock(return_value=1000)
+    agent.compressor.should_compress = MagicMock(return_value=False)
+    
+    agent.llm.model = "deepseek/deepseek-chat"
+    
+    # 模拟工具注册
+    agent.registry.get_definitions = MagicMock(return_value=[])
+    
+    # 捕获 LLM 最终收到的 messages 列表
+    captured_inputs = []
+    
+    async def mock_chat(messages, tools=None, **kwargs):
+        captured_inputs.append(messages)
+        # 第一轮：模拟触发 tool 调用
+        if len(captured_inputs) == 1:
+            return {
+                "content": "思考中...",
+                "tool_calls": [{"id": "call_1", "type": "function", "function": {"name": "read_file", "arguments": '{"AbsolutePath": "/test.py"}'}}],
+                "tokens_used": 100,
+                "metrics": {"prompt_tokens": 80, "completion_tokens": 20, "cached_tokens": 0}
+            }
+        # 第二轮：结束
+        return {
+            "content": "搞定了！",
+            "tool_calls": [],
+            "tokens_used": 100,
+            "metrics": {"prompt_tokens": 80, "completion_tokens": 20, "cached_tokens": 0}
+        }
+        
+    agent.llm.chat = mock_chat
+    
+    # 准备历史对话消息
+    agent.messages = [
+        {"role": "user", "content": "第一轮历史提问"},
+        {"role": "assistant", "content": "第一轮小萤回复"}
+    ]
+    
+    user_input = "第二轮最新提问"
+    agent.messages.append({"role": "user", "content": user_input})
+    
+    # 模拟工具执行返回
+    async def mock_dispatch(name, args, context):
+        return "tool result content"
+    agent.registry.dispatch = mock_dispatch
+    agent.registry.get = MagicMock(return_value=None)
+    agent._classify_permission = MagicMock(return_value=MagicMock())
+    
+    # 执行 run_loop
+    async for event in run_loop(agent, user_input, turn=0, stream=False):
+        pass
+        
+    # 验证第一轮和第二轮 ReAct 中动态 System 消息的位置 and 内容
+    assert len(captured_inputs) == 2
+    
+    # 验证第一轮 ReAct 输入
+    input_1 = captured_inputs[0]
+    # 结构：[静态System] -> [第一轮历史User] -> [第一轮历史Assistant] -> [动态System] -> [第二轮最新User]
+    assert len(input_1) == 5
+    assert input_1[0]["role"] == "system" and "静态核心" in input_1[0]["content"]
+    assert input_1[1]["role"] == "user" and "第一轮历史提问" in input_1[1]["content"]
+    assert input_1[2]["role"] == "assistant" and "第一轮小萤回复" in input_1[2]["content"]
+    assert input_1[3]["role"] == "system" and "RAG召回" in input_1[3]["content"]
+    assert input_1[4]["role"] == "user" and "第二轮最新提问" in input_1[4]["content"]
+    
+    # 验证第二轮 ReAct 输入（当 ToolCall 和 ToolResult 追加在尾部时，插入点保持绝对静止，不向后漂移！）
+    input_2 = captured_inputs[1]
+    # 结构：[静态System] -> [第一轮历史User] -> [第一轮历史Assistant] -> [动态System] -> [第二轮最新User] -> [ToolCall] -> [ToolResult]
+    assert len(input_2) == 7
+    assert input_2[0]["role"] == "system" and "静态核心" in input_2[0]["content"]
+    assert input_2[1]["role"] == "user" and "第一轮历史提问" in input_2[1]["content"]
+    assert input_2[2]["role"] == "assistant" and "第一轮小萤回复" in input_2[2]["content"]
+    # 关键断言：动态 System 消息（RAG + Time）必须牢牢锁在第 3 个索引处（发起 User 消息的前面），完全静止！
+    assert input_2[3]["role"] == "system" and "RAG召回" in input_2[3]["content"]
+    assert input_2[4]["role"] == "user" and "第二轮最新提问" in input_2[4]["content"]
+    assert input_2[5]["role"] == "assistant" and "思考中" in input_2[5]["content"]
+    assert input_2[6]["role"] == "tool" and "tool result content" in input_2[6]["content"]
