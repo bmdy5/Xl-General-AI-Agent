@@ -229,11 +229,26 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                     agent.memory.save_active_session_async(agent.session_key, agent.messages)
                 return
 
+            # 🛠️ 异常防灾双融合：安全分流 JSON 自愈与截断写入熔断
             tool_name = tc["function"]["name"]
+            raw_args = tc["function"]["arguments"]
+            DANGEROUS_WRITE_TOOLS = {"write_file", "edit_file", "bash", "multi_replace_file_content"}
+            is_write_tool = tool_name.lower() in DANGEROUS_WRITE_TOOLS
+            
             try:
-                tool_args = json.loads(tc["function"]["arguments"])
-            except json.JSONDecodeError:
-                tool_args = {}
+                tool_args = json.loads(raw_args)
+            except json.JSONDecodeError as jde:
+                if is_write_tool:
+                    logger.warning(f"🚨 [JSON 截断熔断保护] 高危写入工具 {tool_name} 参数被截断，拒绝自愈！参数原文 preview: {raw_args[:100]}")
+                    raise jde
+                else:
+                    from .history_repair import repair_truncated_json
+                    repaired = repair_truncated_json(raw_args)
+                    try:
+                        tool_args = json.loads(repaired)
+                        logger.info(f"💡 [JSON Repair 自愈] 成功对只读工具 {tool_name} 进行参数自愈: {repaired}")
+                    except Exception:
+                        tool_args = {}
 
             # 🛠️ 降维防灾：ReAct 循环死循环熔断器 (Deadlock Fuse)
             consecutive_count = 0
@@ -409,7 +424,18 @@ async def llm_chat(agent, messages: list[dict], tools: list[dict]) -> tuple:
         )
         
         tc = response.get("tool_calls")
-        return response["content"], response.get("reasoning_content"), tc if tc else []
+        tool_calls_list = tc if tc else []
+        if not tool_calls_list:
+            from .history_repair import scavenge_tool_calls
+            combined_text = "\n".join([
+                response.get("reasoning_content") or "",
+                response.get("content") or ""
+            ])
+            scavenged = scavenge_tool_calls(combined_text, agent.registry.list_names())
+            if scavenged:
+                tool_calls_list = scavenged
+                logger.info(f"💡 [Scavenger 自愈] 成功从非流式文本中抢救出工具调用: {[t['function']['name'] for t in scavenged]}")
+        return response["content"], response.get("reasoning_content"), tool_calls_list
     except Exception as e:
         logger.error(f"Error in llm_chat: {e}", exc_info=True)
         return None, None, None
@@ -469,5 +495,14 @@ async def llm_stream(agent, messages: list[dict], tools: list[dict]) -> AsyncGen
             yield {"type": "exploring_done"}
         yield {"type": "error", "content": f"LLM call failed: {e}"}
         return
+
+    # ── 异常防灾自愈：从流式输出文本/思考流中抢救工具调用 ──
+    if not tool_calls:
+        from .history_repair import scavenge_tool_calls
+        combined_text = "\n".join(["".join(reasoning_parts), "".join(text_parts)])
+        scavenged = scavenge_tool_calls(combined_text, agent.registry.list_names())
+        if scavenged:
+            tool_calls = scavenged
+            logger.info(f"💡 [Scavenger 自愈] 成功从流式思考中抢救出思维泄漏的工具调用: {[t['function']['name'] for t in scavenged]}")
 
     yield {"type": "_done", "text_parts": text_parts, "reasoning_parts": reasoning_parts, "tool_calls": tool_calls}
