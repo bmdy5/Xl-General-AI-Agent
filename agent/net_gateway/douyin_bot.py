@@ -63,7 +63,8 @@ class DouyinGateway:
         self.last_processed_msg_map = {}
         
         # 连续闲置（无消息变化）计数器，用于触发 WebSocket 重载除颤自愈
-        self.idle_reload_turns = 0
+        # 默认设为 2，以保障冷启动首轮在去重时瞬间触发强力 Reload 激活最新离线长连接
+        self.idle_reload_turns = 2
         
         # 状态标志，用于防打扰与下行优先
         self.is_sending = False
