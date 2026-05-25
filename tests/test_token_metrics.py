@@ -181,9 +181,10 @@ async def test_react_prefix_purification():
     assert len(llm_calls_history) == 1
     sent_msgs = llm_calls_history[0]
     
-    # 黄金断言 1: 首条消息是包含了当前环境上下文的 System 消息 (物理合并注入以彻底阻断前缀抖动)
+    # 黄金断言 1: 静态核心 Prompt 和动态环境上下文被分拆成两条独立的 System 消息以彻底阻断前缀抖动
     assert sent_msgs[0]["role"] == "system"
-    assert "当前环境上下文" in sent_msgs[0]["content"]
+    assert sent_msgs[1]["role"] == "system"
+    assert "当前环境上下文" in sent_msgs[1]["content"]
     
     # 黄金断言 2: 最尾端的消息就是用户最新发送的消息，它不再受到尾部临时消息的抖动干扰
     assert sent_msgs[-1]["role"] == "user"

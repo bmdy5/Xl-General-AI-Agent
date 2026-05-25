@@ -126,7 +126,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         fatigue_threshold = 100000 if is_debugging else 64000
         is_fatigued = agent.compressor.estimate_tokens(agent.messages) > fatigue_threshold
 
-        # 构建动态环境上下文，将其直接合并注入首条 System Prompt 中以彻底抑制前缀缓存抖动
+        # 构建动态环境上下文，将其作为第二条 System 消息以彻底抑制最前面巨大核心 Prompt 的前缀缓存抖动
         context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
         if memory_block:
             context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
@@ -143,9 +143,12 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                 "注意：必须明确提及在完成手头这一轮工作之后，你要求去大睡一觉以整理大脑记忆。"
             )
 
-        full_system_prompt = system_prompt + "\n\n" + "\n\n".join(context_parts)
+        dynamic_system_prompt = "\n\n".join(context_parts)
         
-        llm_messages = [{"role": "system", "content": full_system_prompt}]
+        llm_messages = [
+            {"role": "system", "content": system_prompt},
+            {"role": "system", "content": dynamic_system_prompt}
+        ]
         for m in agent.messages:
             copy = dict(m)
             if "deepseek" not in agent.llm.model.lower():
