@@ -477,19 +477,25 @@ class DouyinGateway:
             if not message_nodes:
                 # 终极冷启动自愈：若右侧聊天视窗未打开（新重载无消息节点），主动物理点击锁定列表第一项，强制拉起会话窗口
                 if is_active_session_sync and contact_container:
-                    logger.info("Chat panel is blank initially. Activating conversation via multi-level native JS click bypass...")
+                    logger.info("Chat panel is blank initially. Activating conversation via dual-track click bypass...")
                     try:
-                        # 使用 JS 原生全层级联合爆破穿透点击，同时点击外层、内层核心昵称/头像及所有直接子元素，100% 强力穿透 React 事件代理！
-                        await contact_container.evaluate(
-                            """(node) => {
-                                node.click();
-                                let target = node.querySelector('[class*="name"], [class*="nickname"], [class*="title"], img, [class*="avatar"]');
-                                if (target) target.click();
-                                for (let child of node.children) {
-                                    child.click();
-                                }
-                            }"""
-                        )
+                        try:
+                            # 优先使用真实系统级物理鼠标模拟点击（100% 触发 React 合成事件与 mousedown/mouseup/click 链路）
+                            await contact_container.click(force=True, timeout=3000)
+                            logger.info("Successfully executed Playwright physical click on contact container.")
+                        except Exception as phys_click_err:
+                            logger.warning(f"Physical click failed: {phys_click_err}, trying multi-level JS fallback...")
+                            # 物理点击受限时，fallback 至 JS 全层级原生穿透点击
+                            await contact_container.evaluate(
+                                """(node) => {
+                                    node.click();
+                                    let target = node.querySelector('[class*="name"], [class*="nickname"], [class*="title"], img, [class*="avatar"]');
+                                    if (target) target.click();
+                                    for (let child of node.children) {
+                                        child.click();
+                                    }
+                                }"""
+                            )
                         await asyncio.sleep(random.uniform(3.0, 4.5))
                         # 点击后重新获取消息节点
                         message_nodes = await self.page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], #imSaasContainerId [class*="chat-item"]')
