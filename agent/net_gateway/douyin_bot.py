@@ -113,6 +113,16 @@ class DouyinGateway:
                 # 2. 已登录状态下执行 DOM 私信扫描
                 has_new = await self._poll_messages()
                 
+                # 2.5 实时生成调试截图，以 Artifact 形式供亮哥审查
+                try:
+                    if self.page:
+                        import os
+                        os.makedirs("/Users/xiaofeng/.gemini/antigravity-ide/brain/e4d4d097-84cc-4c05-a164-25bdd4bb5985", exist_ok=True)
+                        await self.page.screenshot(path="/Users/xiaofeng/.gemini/antigravity-ide/brain/e4d4d097-84cc-4c05-a164-25bdd4bb5985/debug_reply_success.png")
+                        logger.info("Successfully updated real-time browser screenshot 'debug_reply_success.png'")
+                except Exception as snap_err:
+                    logger.warning(f"Failed to update real-time debug snapshot: {snap_err}")
+                
                 # 3. 智能退避时间调节（高斯抖动）
                 if has_new:
                     # 对话活跃期：下一次轮询收窄到 5-10 秒，保证即时聊天的体验
