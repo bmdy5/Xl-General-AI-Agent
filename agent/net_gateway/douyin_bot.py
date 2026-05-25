@@ -651,6 +651,13 @@ class DouyinGateway:
                 if bubbles_data and bubbles_data[-1]["isSelf"]:
                     return False
 
+            # 如果是心跳活跃同步，且当前内存缓存里还没有此用户的处理记录（如网关刚刚热重启）
+            # 直接同步当前最新消息到缓存中，坚决不回复陈旧历史老消息，彻底防范重启时的老消息复活自环
+            if is_active_session_sync and sender_nickname not in self.last_processed_msg_map:
+                self.last_processed_msg_map[sender_nickname] = latest_partner_msg
+                logger.info(f"Initialized active session message cache for: {sender_nickname}. Prevented legacy reply.")
+                return False
+
             # 心跳同步时的内容去重比对：若拼接出来的最新文本跟上一次处理过的对方消息文本完全一致，则去重忽略，并累加除颤重载计数器
             if is_active_session_sync and self.last_processed_msg_map.get(sender_nickname) == latest_partner_msg:
                 self.idle_reload_turns = getattr(self, "idle_reload_turns", 0) + 1
