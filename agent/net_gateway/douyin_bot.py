@@ -575,73 +575,80 @@ class DouyinGateway:
                 if not message_nodes and not has_active_header:
                     return False
 
-            # 过滤只保留承载真正聊天文本的消息气泡，彻底屏蔽时间标签或通知横幅的坐标误判
-            valid_message_nodes = []
-            if message_nodes:
-                for node in message_nodes:
-                    try:
-                        has_text = await node.query_selector('[class*="text"], [class*="content"], [class*="bubble-content"]')
-                        if has_text:
-                            valid_message_nodes.append(node)
-                    except Exception:
-                        continue
-            message_nodes = valid_message_nodes
-
-            # 一次性快速物理识别所有气泡的 is_self 状态，彻底避免多次 IPC 开销并防范“自说自话”自环
-            is_self_list = []
-            if message_nodes:
-                try:
-                    is_self_list = await self.page.evaluate(
-                        """(nodes) => {
-                            return nodes.map(node => {
-                                if (!node) return false;
-                                let rect = node.getBoundingClientRect();
-                                let container = node.parentElement;
-                                let containerRect = container ? container.getBoundingClientRect() : { left: 0, width: 800 };
-                                let relativeLeft = rect.left - containerRect.left;
-                                let mid = containerRect.width / 2;
-                                let cl = typeof node.className === 'string' ? node.className : (node.className?.baseVal || '');
-                                return relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own') || cl.includes('reverse');
+            # === [新共识：高并发去重与浏览器一体化提取算法] ===
+            # 彻底屏蔽时间标签或通知横幅，并 100% 物理精准去重嵌套 DOM 节点
+            bubbles_data = []
+            try:
+                bubbles_data = await self.page.evaluate(
+                    """() => {
+                        let container = document.querySelector('#imSaasContainerId');
+                        if (!container) return [];
+                        
+                        // 1. 抓取所有可能的消息、气泡和列表项节点
+                        let rawNodes = Array.from(container.querySelectorAll('[class*="message"], [class*="bubble"], [class*="chat-item"]'));
+                        
+                        // 2. 教科书级物理去重嵌套元素：若 otherNode 包含 node，则 node 是子节点，应被剔除，只保留最外层的独立消息容器
+                        let uniqueNodes = rawNodes.filter((node, index) => {
+                            return !rawNodes.some((otherNode, otherIndex) => {
+                                return otherIndex !== index && otherNode.contains(node);
                             });
-                        }""",
-                        message_nodes
-                    )
-                except Exception as eval_err:
-                    logger.warning(f"Failed to batch evaluate self/partner bubble states: {eval_err}")
-                    return False
+                        });
+                        
+                        // 3. 提取承载真正聊天文本且可见的消息气泡内容及属性
+                        let result = [];
+                        for (let node of uniqueNodes) {
+                            // 精准检索文本容器
+                            let textEl = node.querySelector('[class*="text"], [class*="content"], [class*="bubble-content"]');
+                            if (!textEl) continue;
+                            
+                            let text = textEl.innerText || textEl.textContent || '';
+                            text = text.trim();
+                            if (!text) continue;
+                            
+                            // 物理坐标敌我判定（防自环与自说自话自保防线）
+                            let rect = node.getBoundingClientRect();
+                            let parent = node.parentElement;
+                            let parentRect = parent ? parent.getBoundingClientRect() : { left: 0, width: 800 };
+                            let relativeLeft = rect.left - parentRect.left;
+                            let mid = parentRect.width / 2;
+                            let cl = typeof node.className === 'string' ? node.className : (node.className?.baseVal || '');
+                            
+                            let isSelf = relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own') || cl.includes('reverse');
+                            
+                            result.push({
+                                text: text,
+                                isSelf: isSelf
+                            });
+                        }
+                        return result;
+                    }"""
+                )
+            except Exception as eval_err:
+                logger.error(f"Failed to batch extract and deduplicate chat bubbles via JS: {eval_err}")
+                return False
 
-            # 寻找最新的小萤回复索引（我方最后一条气泡）
+            # 4. 寻找最新的小萤回复索引（我方最后一条气泡）
             last_self_idx = -1
-            if is_self_list:
-                for idx, is_sf in enumerate(is_self_list):
-                    if is_sf:
-                        last_self_idx = idx
+            for idx, bubble in enumerate(bubbles_data):
+                if bubble["isSelf"]:
+                    last_self_idx = idx
 
-            # 提取自最后一个我方回复气泡之后，对方在此期间连续发出的所有新文本，并使用换行符进行物理智能拼接
+            # 5. 提取自最后一个我方回复气泡之后，对方在此期间连续发出的所有新文本，并使用换行符进行物理智能拼接
             partner_texts = []
-            if message_nodes:
-                start_scan_idx = last_self_idx + 1 if last_self_idx != -1 else 0
-                for idx in range(start_scan_idx, len(message_nodes)):
-                    if not is_self_list[idx]:
-                        msg_node = message_nodes[idx]
-                        try:
-                            text_element = await msg_node.query_selector('[class*="text"], [class*="content"], [class*="bubble-content"]')
-                            if text_element:
-                                text = await text_element.text_content()
-                                if text and text.strip():
-                                    partner_texts.append(text.strip())
-                        except Exception:
-                            continue
+            start_scan_idx = last_self_idx + 1 if last_self_idx != -1 else 0
+            for idx in range(start_scan_idx, len(bubbles_data)):
+                if not bubbles_data[idx]["isSelf"]:
+                    partner_texts.append(bubbles_data[idx]["text"])
 
             latest_partner_msg = "\n".join(partner_texts) if partner_texts else ""
 
             if not latest_partner_msg:
                 return False
 
-            # 主动心跳同步时的前置去重校验：最新一条消息必须由对方发出，且内容发生改变
+            # 6. 主动心跳同步时的前置去重校验：最新一条消息必须由对方发出，且内容发生改变
             if is_active_session_sync:
                 # 如果最后一个气泡是我方发出的，则直接返回 False，不再继续理会
-                if is_self_list and is_self_list[-1]:
+                if bubbles_data and bubbles_data[-1]["isSelf"]:
                     return False
 
             # 心跳同步时的内容去重比对：若拼接出来的最新文本跟上一次处理过的对方消息文本完全一致，则去重忽略，并累加除颤重载计数器
