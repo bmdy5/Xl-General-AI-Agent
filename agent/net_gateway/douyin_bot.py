@@ -62,6 +62,9 @@ class DouyinGateway:
         # 缓存每个粉丝最后一次已处理的对方消息文本，支持无红点高亮会话的主动心跳扫描
         self.last_processed_msg_map = {}
         
+        # 连续闲置（无消息变化）计数器，用于触发 WebSocket 重载除颤自愈
+        self.idle_reload_turns = 0
+        
         # 状态标志，用于防打扰与下行优先
         self.is_sending = False
         self.send_lock = asyncio.Lock()
@@ -326,6 +329,18 @@ class DouyinGateway:
         if self.is_sending:
             logger.info("Current in sending state, skip polling.")
             return False
+            
+        # === [ WebSocket 假死重载除颤自愈机制 ] ===
+        if self.idle_reload_turns >= 2:
+            logger.info("ℹ️ Detected 2 consecutive idle turns without message change. Triggering F5 page reload to heal WebSocket connection...")
+            try:
+                await self.page.reload(wait_until="domcontentloaded")
+                await asyncio.sleep(6.0)
+                # 重新展开侧边栏（如果重载后关闭了）
+                await self._ensure_logged_in()
+            except Exception as reload_err:
+                logger.error(f"Failed to reload page for WebSocket healing: {reload_err}")
+            self.idle_reload_turns = 0
             
         # 确认私信侧边栏是否可见，不可见则无法轮询
         try:
@@ -600,8 +615,10 @@ class DouyinGateway:
             if not latest_partner_msg:
                 return False
 
-            # 心跳同步时的内容去重比对：若跟上一次处理过的对方消息文本完全一致，则去重忽略
+            # 心跳同步时的内容去重比对：若跟上一次处理过的对方消息文本完全一致，则去重忽略，并累加除颤重载计数器
             if is_active_session_sync and self.last_processed_msg_map.get(sender_nickname) == latest_partner_msg:
+                self.idle_reload_turns = getattr(self, "idle_reload_turns", 0) + 1
+                logger.debug(f"No new message during active sync. Idle reload turns: {self.idle_reload_turns}")
                 return False
 
             # 7. 使用 MD5 构造稳定的虚拟 chat_id
@@ -611,6 +628,9 @@ class DouyinGateway:
             
             # 更新已处理对方消息的全局缓存，防止下一次轮询重复触发
             self.last_processed_msg_map[sender_nickname] = latest_partner_msg
+            
+            # 成功捕获并解析到对方的新消息，立刻将 WebSocket 除颤重载计数器清零
+            self.idle_reload_turns = 0
             
             logger.info(f"Received message from fan {sender_nickname} ({chat_id}): {latest_partner_msg}")
             
