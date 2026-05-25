@@ -20,8 +20,13 @@ async def run_douyin_gateway():
     print("\n  MyAgent — Douyin Standalone Gateway 模式 (已物理分进程隔离)")
     print()
 
-    gw = QQGateway(build_agent)
+    import asyncio
+    from agent.net_gateway.douyin_bot import douyin_gateway
     try:
-        await gw.run(only_douyin=True)
-    except KeyboardInterrupt:
+        douyin_gateway.start()
+        while True:
+            await asyncio.sleep(3600)
+    except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n  Douyin Standalone Gateway stopped.")
+    finally:
+        await douyin_gateway.stop()

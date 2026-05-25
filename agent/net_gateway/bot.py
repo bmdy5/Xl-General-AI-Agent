@@ -102,6 +102,9 @@ class QQGateway:
         logger.info(f"WebSocket: {NC_WS_URL}")
         logger.info(f"HTTP API:  {NC_HTTP_URL}")
         
+        # 启动大脑端事件 API 服务端，接收外部独立进程的消息上行投递
+        asyncio.create_task(self._start_brain_server())
+        
         self._http = aiohttp.ClientSession()
         try:
             # 1. 仅在明确启用时，在 QQ 进程中并行挂载并启动抖音私信网关
@@ -134,9 +137,60 @@ class QQGateway:
                 except Exception as douyin_stop_err:
                     logger.error(f"Error when stopping Douyin Gateway: {douyin_stop_err}")
 
+            if hasattr(self, "_brain_runner") and self._brain_runner:
+                await self._brain_runner.cleanup()
+
             await self.scheduler.stop()
             if self._http and not self._http.closed:
                 await self._http.close()
+
+    async def _start_brain_server(self) -> None:
+        """启动 8000 端口的大脑 HTTP 服务，接收外部微服务网关上行的 Event 和自愈二维码"""
+        from aiohttp import web
+        app = web.Application()
+        app.router.add_post('/event', self._handle_brain_event)
+        app.router.add_post('/report_qrcode', self._handle_brain_qrcode)
+        
+        self._brain_runner = web.AppRunner(app)
+        await self._brain_runner.setup()
+        port = int(os.getenv("BRAIN_PORT", "8000"))
+        site = web.TCPSite(self._brain_runner, '127.0.0.1', port)
+        await site.start()
+        logger.info(f"Main Brain Event Server listening on http://127.0.0.1:{port}")
+
+    async def _handle_brain_event(self, request) -> web.Response:
+        """处理外部平台独立微网关上报的 OneBot 事件"""
+        from aiohttp import web
+        try:
+            event = await request.json()
+            asyncio.create_task(self.dispatcher.dispatch_event(event))
+            return web.Response(text=json.dumps({"status": "ok"}), content_type="application/json")
+        except Exception as e:
+            return web.Response(text=json.dumps({"status": "failed", "reason": str(e)}), content_type="application/json", status=500)
+
+    async def _handle_brain_qrcode(self, request) -> web.Response:
+        """接收外部独立网关进程发送的扫码自愈二维码，并委派大脑公共工具推送至亮哥 QQ"""
+        from aiohttp import web
+        try:
+            data = await request.json()
+            local_path = data.get("local_path")
+            message = data.get("message")
+            if local_path:
+                from agent.tools.registry import registry
+                image_tool = registry.get("send_image_to_qq")
+                if image_tool:
+                    async def _push():
+                        async for res in image_tool.call({
+                            "local_path": local_path,
+                            "cos_key_suffix": "douyin_qrcode/login.png",
+                            "message_prefix": message
+                        }):
+                            pass
+                    asyncio.create_task(_push())
+                    logger.info("Successfully scheduled QR code push task via send_image_to_qq.")
+            return web.Response(text=json.dumps({"status": "ok"}), content_type="application/json")
+        except Exception as e:
+            return web.Response(text=json.dumps({"status": "failed", "reason": str(e)}), content_type="application/json", status=500)
 
     async def _ws_loop(self):
         """WebSocket 收包内循环。"""
