@@ -28,16 +28,38 @@ class DouyinDomPoller:
             await self._handle_login_self_healing(page, report_qrcode_cb)
             return False
         
-        # 1. 优先使用私信面板可见性作为就绪标准
-        is_visible = False
+        # 1. 优先使用私信面板可见性作为就绪标准 (兼容大页面和主页半高悬浮窗 - 基于物理特征探针)
         try:
-            is_visible = await page.locator('#imSaasContainerId').is_visible()
+            is_visible = await page.evaluate("""() => {
+                let sidebar = document.querySelector('#imSaasContainerId');
+                if (sidebar && sidebar.offsetHeight > 100) return true;
+                
+                let divs = document.querySelectorAll('div');
+                for (let div of divs) {
+                    if (div.offsetWidth > 150 && div.offsetWidth < 500 && div.offsetHeight > 150) {
+                        let text = div.innerText || '';
+                        if (
+                            text.includes('前线') || 
+                            text.includes('在线') || 
+                            text.includes('天前') || 
+                            text.includes('分钟') || 
+                            text.includes('小时') ||
+                            text.includes('昨天') || 
+                            text.includes('今天') || 
+                            text.includes('星期')
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""")
             if is_visible:
                 return True
         except Exception:
             pass
             
-        # 2. 面板不可见但主页显示登录（如头像存在），JS 爆破点击右上角私信
+        # 2. 面板不可见但主页显示登录（如头像存在），执行物理 Hover 并 Click 强力拉起私信
         avatar_element = None
         for avatar_sel in ['.dy-avatar', '[class*="avatar"]', '[class*="header"] [src*="avatar"]']:
             try:
@@ -48,53 +70,92 @@ class DouyinDomPoller:
                 continue
                 
         if avatar_element:
-            logger.info("[登录验证] 检测到登录头像。尝试 JS 联合爆破拉起右侧私信面板...")
-            js_clicked = False
-            try:
-                js_clicked = await page.evaluate("""() => {
-                    let btn = document.querySelector('[data-e2e="im-entry"]') || document.querySelector('.igu2_FYl');
-                    if (btn) {
-                        btn.click();
-                        return true;
-                    }
-                    let all = document.querySelectorAll('*');
-                    for (let el of all) {
-                        if (el.innerText && el.innerText.trim() === '私信') {
-                            el.click();
-                            el.parentElement?.click();
+            logger.info("[登录验证] 检测到登录头像。尝试物理拟真点击拉起右侧私信面板...")
+            
+            # 第一防线：Playwright 物理拟真 Hover + Click
+            btn_selectors = [
+                '[data-e2e="im-entry"]',
+                'a[href*="message"]',
+                '.igu2_FYl',
+                'text=私信',
+                '[class*="message"]'
+            ]
+            
+            click_success = False
+            for btn_sel in btn_selectors:
+                try:
+                    loc = page.locator(btn_sel).first
+                    if await loc.is_visible():
+                        # 物理 Hover 模拟真人
+                        await loc.hover()
+                        await asyncio.sleep(0.5)
+                        # 物理 Click 触发 React 响应
+                        await loc.click(force=True)
+                        logger.info(f"Physically hovered and clicked private msg entry: {btn_sel}")
+                        click_success = True
+                        break
+                except Exception as e:
+                    logger.warning(f"Failed physical click on {btn_sel}: {e}")
+                    continue
+            
+            # 第二防线：JS 联合爆破兜底（仅在物理点击未发生时）
+            if not click_success:
+                logger.warning("Physical click entries not visible. Invoking JS fallback click...")
+                try:
+                    js_clicked = await page.evaluate("""() => {
+                        let btn = document.querySelector('[data-e2e="im-entry"]') || document.querySelector('.igu2_FYl');
+                        if (btn) {
+                            btn.click();
                             return true;
                         }
-                    }
-                    return false;
-                }""")
-                logger.info(f"JS joint bypass click private button result: {js_clicked}")
-            except Exception as js_err:
-                logger.warning(f"JS joint click failed: {js_err}")
-                
-            if not js_clicked:
-                for btn_sel in ['[data-e2e="im-entry"]', '.igu2_FYl', 'text=私信', '[class*="message"]']:
-                    try:
-                        btn = await page.query_selector(btn_sel)
-                        if btn:
-                            await btn.click(force=True, timeout=2000)
-                            break
-                    except Exception:
-                        continue
+                        let all = document.querySelectorAll('*');
+                        for (let el of all) {
+                            if (el.innerText && el.innerText.trim() === '私信') {
+                                el.click();
+                                el.parentElement?.click();
+                                return true;
+                            }
+                        }
+                        return false;
+                    }""")
+                    logger.info(f"JS fallback click result: {js_clicked}")
+                except Exception as js_err:
+                    logger.error(f"JS fallback click failed: {js_err}")
             
-            await asyncio.sleep(4.5)
-            
-            try:
+            # 3. 循环等待并校验私信面板是否真的显现 (基于物理特征探针)
+            await asyncio.sleep(0.8)
+            for _ in range(8):
                 try:
-                    await page.locator('.conversationConversationItemwrapper, [class*="ConversationItem"]').first.wait_for(state="visible", timeout=4000)
+                    is_visible = await page.evaluate("""() => {
+                        let sidebar = document.querySelector('#imSaasContainerId');
+                        if (sidebar && sidebar.offsetHeight > 100) return true;
+                        
+                        let divs = document.querySelectorAll('div');
+                        for (let div of divs) {
+                            if (div.offsetWidth > 150 && div.offsetWidth < 500 && div.offsetHeight > 150) {
+                                let text = div.innerText || '';
+                                if (
+                                    text.includes('前线') || 
+                                    text.includes('在线') || 
+                                    text.includes('天前') || 
+                                    text.includes('分钟') || 
+                                    text.includes('小时') ||
+                                    text.includes('昨天') || 
+                                    text.includes('今天') || 
+                                    text.includes('星期')
+                                ) {
+                                    return true;
+                                }
+                            }
+                        }
+                        return false;
+                    }""")
+                    if is_visible:
+                        logger.info("🎉 ImSaas message panel or popover is successfully visible now!")
+                        return True
                 except Exception:
                     pass
-                
-                await page.locator('#imSaasContainerId').wait_for(state="visible", timeout=10000)
-                is_visible = await page.locator('#imSaasContainerId').is_visible()
-                if is_visible:
-                    return True
-            except Exception:
-                pass
+                await asyncio.sleep(0.5)
                 
         return False
 
@@ -168,16 +229,44 @@ class DouyinDomPoller:
             return []
             
         try:
-            is_sidebar_visible = await page.locator('#imSaasContainerId').is_visible()
-            if not is_sidebar_visible:
+            # 兼容大页面和主页半高悬浮私信卡片 (基于高精度特征探针)
+            is_visible = await page.evaluate("""() => {
+                let sidebar = document.querySelector('#imSaasContainerId');
+                if (sidebar && sidebar.offsetHeight > 100) return true;
+                
+                let divs = document.querySelectorAll('div');
+                for (let div of divs) {
+                    if (div.offsetWidth > 150 && div.offsetWidth < 500 && div.offsetHeight > 150) {
+                        let text = div.innerText || '';
+                        if (
+                            text.includes('前线') || 
+                            text.includes('在线') || 
+                            text.includes('天前') || 
+                            text.includes('分钟') || 
+                            text.includes('小时') ||
+                            text.includes('昨天') || 
+                            text.includes('今天') || 
+                            text.includes('星期')
+                        ) {
+                            return true;
+                        }
+                    }
+                }
+                return false;
+            }""")
+            if not is_visible:
                 return []
         except Exception:
             return []
         
         events = []
         try:
-            # 2. 检索带有未读红点的节点
+            # 2. 检索带有未读红点的节点 (加入 popover 及通用选择器)
             unread_selectors = [
+                '[class*="unread-count"]',
+                '[class*="badge"]',
+                '[class*="red-dot"]',
+                '[class*="unread"]',
                 '#imSaasContainerId [class*="unread-count"]',
                 '#imSaasContainerId [class*="badge"]',
                 '#imSaasContainerId [class*="red-dot"]',
@@ -198,12 +287,12 @@ class DouyinDomPoller:
             is_active_session_sync = False
             
             if unread_node:
-                # 3. 物理处理最上方的一个未读条目（JS 祖先特征智能回溯）
+                # 3. 物理处理最上方的一个未读条目（JS 祖先特征智能回溯，兼容 popover）
                 try:
                     contact_container = await unread_node.evaluate_handle(
                         """(node) => {
                             let p = node.parentElement;
-                            while (p && p.id !== 'imSaasContainerId') {
+                            while (p && p.id !== 'imSaasContainerId' && !p.className?.includes('popover')) {
                                 let cl = p.className || '';
                                 if (typeof cl === 'string' && (
                                     cl.includes('ConversationItem') || 
@@ -227,14 +316,14 @@ class DouyinDomPoller:
                 try:
                     active_handle = await page.evaluate_handle(
                         """() => {
-                            let items = document.querySelectorAll('#imSaasContainerId [class*="Item"], #imSaasContainerId [class*="wrapper"]');
+                            let items = document.querySelectorAll('#imSaasContainerId [class*="Item"], #imSaasContainerId [class*="wrapper"], [class*="popover"] [class*="Item"], [class*="popover"] [class*="wrapper"], div[class*="popover"] div[class*="Item"]');
                             for (let item of items) {
                                 if (item.offsetHeight < 40 || item.offsetHeight > 120) continue;
                                 let avatar = item.querySelector('img, [class*="avatar"]');
                                 let text = item.querySelector('[class*="name"], [class*="nickname"], [class*="title"]');
                                 if (avatar || text) return item;
                             }
-                            return document.querySelector('#imSaasContainerId [class*="ConversationItem"], #imSaasContainerId [class*="Item"]');
+                            return document.querySelector('#imSaasContainerId [class*="ConversationItem"], #imSaasContainerId [class*="Item"]') || document.querySelector('[class*="popover"] [class*="Item"]') || document.querySelector('div[class*="popover"] div[class*="Item"]');
                         }"""
                     )
                     if active_handle and hasattr(active_handle, "as_element") and active_handle.as_element():
@@ -244,10 +333,10 @@ class DouyinDomPoller:
                             is_active_session_sync = True
                 except Exception as active_err:
                     logger.warning(f"Failed to find first active contact: {active_err}")
-
+ 
             if not contact_container:
                 return []
-
+ 
             # 4. 提取昵称
             sender_nickname = "抖音粉丝"
             try:
@@ -295,7 +384,7 @@ class DouyinDomPoller:
                 header_nickname = await page.evaluate(
                     """() => {
                         let header = document.querySelector(
-                            '#imSaasContainerId [class*="ChatHeader"], #imSaasContainerId [class*="chat-header"], #imSaasContainerId [class*="saasImHeader"], #imSaasContainerId [class*="header"]'
+                            '#imSaasContainerId [class*="ChatHeader"], #imSaasContainerId [class*="chat-header"], #imSaasContainerId [class*="saasImHeader"], #imSaasContainerId [class*="header"], [class*="popover"] [class*="Header"], [class*="popover"] [class*="header"]'
                         );
                         if (header && header.innerText.trim()) {
                             let name = header.innerText.trim().split('\\n')[0];
@@ -308,16 +397,22 @@ class DouyinDomPoller:
                     sender_nickname = header_nickname.strip()
             except Exception:
                 pass
-
-            # 6. 解析最新对方发言
-            message_nodes = await page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], #imSaasContainerId [class*="chat-item"]')
+ 
+            # 6. 解析最新对方发言 (支持大页面 #imSaasContainerId 与悬浮卡片 [class*="popover"])
+            message_nodes = await page.query_selector_all(
+                '#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], #imSaasContainerId [class*="chat-item"], '
+                '[class*="popover"] [class*="message"], [class*="popover"] [class*="bubble"], [class*="popover"] [class*="chat-item"]'
+            )
             if not message_nodes:
                 if is_active_session_sync and contact_container:
                     logger.info("Chat panel is blank initially. Activating via dual-track click...")
                     try:
                         await contact_container.click(force=True, timeout=3000)
                         await asyncio.sleep(random.uniform(3.0, 4.5))
-                        message_nodes = await page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], #imSaasContainerId [class*="chat-item"]')
+                        message_nodes = await page.query_selector_all(
+                            '#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], #imSaasContainerId [class*="chat-item"], '
+                            '[class*="popover"] [class*="message"], [class*="popover"] [class*="bubble"], [class*="popover"] [class*="chat-item"]'
+                        )
                     except Exception:
                         pass
                 if not message_nodes:
@@ -328,7 +423,7 @@ class DouyinDomPoller:
             try:
                 bubbles_data = await page.evaluate(
                     """() => {
-                        let container = document.querySelector('#imSaasContainerId');
+                        let container = document.querySelector('#imSaasContainerId') || document.querySelector('[class*="popover"]') || document.body;
                         if (!container) return [];
                         let rawNodes = Array.from(container.querySelectorAll('[class*="message"], [class*="bubble"], [class*="chat-item"]'));
                         let uniqueNodes = rawNodes.filter((node, index) => {
@@ -389,9 +484,10 @@ class DouyinDomPoller:
                 else:
                     logger.info(f"New session detected for user: {sender_nickname} after init. Proceeding.")
 
-            # 心跳去重过滤
-            if is_active_session_sync and last_processed_msg_map.get(sender_nickname) == latest_partner_msg:
+            # 严格去重过滤：无论是否活跃同步，只要消息与上一次完全相同，就去重退避，坚决防止重复回复
+            if last_processed_msg_map.get(sender_nickname) == latest_partner_msg:
                 self.idle_reload_turns += 1
+                logger.info(f"ℹ️ [严格去重拦截] 检测到粉丝 {sender_nickname} 消息无变化，自动退避，防止重复回复。")
                 return []
 
             chat_id = hashlib.md5(sender_nickname.encode("utf-8")).hexdigest()[:16]

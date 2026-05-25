@@ -109,6 +109,12 @@ class DouyinGateway:
         
         while True:
             try:
+                # ── ⚡ 物理发信智能退避与防干扰保护 ──
+                if self.sender.is_sending:
+                    logger.info("⏳ [轮询退避] 检测到正在执行物理发信动作，主轮询自动避让中...")
+                    await asyncio.sleep(2.0)
+                    continue
+
                 # 0. 检验 Page 存活性，若失效则触发重连
                 page_is_ok = False
                 if self.browser_mgr.page:
@@ -181,9 +187,15 @@ class DouyinGateway:
                 await asyncio.sleep(15)
 
     async def _start_web_server(self) -> None:
-        """开启 9001 端口极轻量 API 监听，接收大脑下达的下行发消息请求"""
+        """开启 9001 端口极轻量 API 监听，接收大脑下达的下行发消息请求及通用视觉操作指令"""
         app = web.Application()
         app.router.add_post('/send_private_msg', self._handle_send_msg)
+        
+        # 挂载 4 个通用视觉接管 API 路由契约
+        app.router.add_post('/vision/screenshot', self._handle_vision_screenshot)
+        app.router.add_post('/vision/click', self._handle_vision_click)
+        app.router.add_post('/vision/type', self._handle_vision_type)
+        app.router.add_post('/vision/scroll', self._handle_vision_scroll)
         
         self._web_runner = web.AppRunner(app)
         await self._web_runner.setup()
@@ -212,4 +224,58 @@ class DouyinGateway:
         except Exception as e:
             return web.json_response({"status": "failed", "reason": str(e)}, status=500)
 
+    # ── ⚡ 视觉接管 API 处理器 ──
+
+    async def _handle_vision_screenshot(self, request) -> web.Response:
+        """视觉接管：捕获当前视口 1280x800 Base64 截图"""
+        try:
+            b64 = await self.browser_mgr.screenshot_base64()
+            return web.json_response({"status": "success", "screenshot_b64": b64})
+        except Exception as e:
+            status_code = 400 if "UserInterrupted" in str(e) else 500
+            return web.json_response({"status": "failed", "reason": str(e)}, status=status_code)
+
+    async def _handle_vision_click(self, request) -> web.Response:
+        """视觉接管：在绝对坐标 (x, y) 处执行物理鼠标左键点击，同步返回最新截图"""
+        try:
+            data = await request.json()
+            x = data.get("x")
+            y = data.get("y")
+            if x is None or y is None:
+                return web.json_response({"status": "failed", "reason": "Missing coordinate x or y"}, status=400)
+            
+            b64 = await self.browser_mgr.visual_click(int(x), int(y))
+            return web.json_response({"status": "success", "screenshot_b64": b64})
+        except Exception as e:
+            status_code = 400 if "UserInterrupted" in str(e) else 500
+            return web.json_response({"status": "failed", "reason": str(e)}, status=status_code)
+
+    async def _handle_vision_type(self, request) -> web.Response:
+        """视觉接管：在当前焦点元素模拟键盘打字，同步返回最新截图"""
+        try:
+            data = await request.json()
+            text = data.get("text")
+            if text is None:
+                return web.json_response({"status": "failed", "reason": "Missing type text"}, status=400)
+            
+            b64 = await self.browser_mgr.visual_type(str(text))
+            return web.json_response({"status": "success", "screenshot_b64": b64})
+        except Exception as e:
+            status_code = 400 if "UserInterrupted" in str(e) else 500
+            return web.json_response({"status": "failed", "reason": str(e)}, status=status_code)
+
+    async def _handle_vision_scroll(self, request) -> web.Response:
+        """视觉接管：在视口上执行滚轮滚动，同步返回最新截图"""
+        try:
+            data = await request.json()
+            direction = data.get("direction", "down")
+            amount = data.get("amount", 400)
+            
+            b64 = await self.browser_mgr.visual_scroll(str(direction), int(amount))
+            return web.json_response({"status": "success", "screenshot_b64": b64})
+        except Exception as e:
+            status_code = 400 if "UserInterrupted" in str(e) else 500
+            return web.json_response({"status": "failed", "reason": str(e)}, status=status_code)
+
 douyin_gateway = DouyinGateway()
+

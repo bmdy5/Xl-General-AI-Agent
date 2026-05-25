@@ -52,6 +52,7 @@ def build_agent(session_id: str = "default"):
     
     from agent.tools.qq.status import GetQQStatusTool
     from agent.tools.qq.send_message import SendQQMessageTool
+    from agent.tools.visual_tools import BrowserScreenshotTool, BrowserClickTool, BrowserTypeTool, BrowserScrollTool
     
     from agent.tools.registry import registry
 
@@ -96,6 +97,10 @@ def build_agent(session_id: str = "default"):
         registry.register(NotebookLMTool())
         registry.register(GetQQStatusTool())
         registry.register(SendQQMessageTool())
+        registry.register(BrowserScreenshotTool())
+        registry.register(BrowserClickTool())
+        registry.register(BrowserTypeTool())
+        registry.register(BrowserScrollTool())
 
     memory = MemoryManager()
     session = SessionHandler(session_id)

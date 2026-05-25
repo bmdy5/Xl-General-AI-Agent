@@ -27,33 +27,59 @@ class DouyinDomSender:
             logger.info(f"Prepare physical reply to user: {chat_id}, text: {text[:50]}")
             
             try:
-                # 1. 确认私信侧边栏处于打开状态
+                # 1. 确认私信侧边栏或浮动卡片处于可见状态
                 is_sidebar_visible = await page.locator('#imSaasContainerId').is_visible()
-                if not is_sidebar_visible:
+                is_floating_visible = await page.locator('[class*="popover"]').is_visible()
+                
+                if not is_sidebar_visible and not is_floating_visible:
                     await ensure_logged_in_cb()
                     await asyncio.sleep(3.0)
                 
-                # 2. 检索联系人并点击切换
-                nickname = nickname_map.get(chat_id) or chat_id
+                # 2. 检索联系人并点击切换 (双向自适应 Key 兼容)
+                nickname = nickname_map.get(target_user_id) or nickname_map.get(chat_id) or chat_id
                 if nickname:
                     nickname = nickname.split('\n')[0].strip()
                     
                 logger.info(f"Looking for contact with nickname: {nickname}")
-                contact_selector = f'#imSaasContainerId .conversationConversationItemwrapper:has-text("{nickname}"), #imSaasContainerId [class*="ConversationItem"]:has-text("{nickname}")'
-                contact_item = await page.query_selector(contact_selector)
+                
+                # 弹性多候选选择器组，首创万能文本穿透，完美通杀“大私信页”与“主页悬浮私信卡片”
+                contact_selectors = [
+                    f'text="{nickname}"',
+                    f'*:has-text("{nickname}")',
+                    f'#imSaasContainerId .conversationConversationItemwrapper:has-text("{nickname}")',
+                    f'#imSaasContainerId [class*="ConversationItem"]:has-text("{nickname}")',
+                    f'[class*="popover"] [class*="ConversationItem"]:has-text("{nickname}")',
+                    f'[class*="popover"] [class*="Item"]:has-text("{nickname}")',
+                    f'div[class*="ConversationItem"]:has-text("{nickname}")',
+                    f'div[class*="Item"]:has-text("{nickname}")',
+                    f'//div[contains(@class, "Item") or contains(@class, "Itemwrapper")][descendant-or-self::*[text()="{nickname}"]]'
+                ]
+                
+                contact_item = None
+                for selector in contact_selectors:
+                    try:
+                        # 统一使用 Playwright locator.first 以秒级完美支持 :has-text() 伪类与 XPath 文本定位
+                        loc = page.locator(selector).first
+                        if await loc.is_visible():
+                            contact_item = loc
+                            break
+                    except Exception as loc_err:
+                        logger.warning(f"Contact locator mismatch for {selector}: {loc_err}")
+                        continue
                 
                 if contact_item:
                     await contact_item.click(force=True)
                     logger.info(f"Physically clicked nickname: {nickname}, waiting for chat loading...")
                     await asyncio.sleep(random.uniform(2.5, 3.5))
                 else:
-                    logger.warning(f"Could not locate contact element for {nickname}. Using current active conversation instead.")
+                    logger.warning(f"Could not locate contact element for {nickname} in any active lists. Using current active conversation instead.")
     
-                # 3. 定位私信输入框
+                # 3. 定位私信输入框 (自适应聚焦)
                 input_selectors = [
                     '#imSaasContainerId div[contenteditable="true"]',
-                    '#imSaasContainerId textarea',
+                    'div[class*="editor"] div[contenteditable="true"]',
                     'div[contenteditable="true"]',
+                    '#imSaasContainerId textarea',
                     'textarea'
                 ]
                 
@@ -67,7 +93,7 @@ class DouyinDomSender:
                         continue
     
                 if not input_element:
-                    raise ValueError("Could not locate Douyin chat input container in sidebar.")
+                    raise ValueError("Could not locate Douyin chat input container in active conversation panel.")
     
                 # 4. [物理聚焦与 100% 物理清空]
                 await input_element.focus()
@@ -87,11 +113,50 @@ class DouyinDomSender:
                 # 6. 点击回车发送
                 await page.keyboard.press("Enter")
                 logger.info("Sent enter signal, verifying sending result...")
+                await asyncio.sleep(1.0)
+                
+                # 🚀 [第三防线：Enter发送与物理发送按钮双保险]
+                current_val = ""
+                try:
+                    current_val = await input_element.text_content() or ""
+                except Exception:
+                    pass
+                    
+                if text.strip() in current_val.strip() or (len(text) >= 6 and text[:6] in current_val):
+                    logger.warning("Message still remains in input field after Enter. Triggering physical send button fallback...")
+                    send_btn_selectors = [
+                        '[class*="btn-send"]',
+                        '[class*="send-btn"]',
+                        'div[class*="send"]',
+                        'button[class*="send"]',
+                        '[class*="Send"]',
+                        '#imSaasContainerId div[class*="send"]:has-text("发送")',
+                        '#imSaasContainerId button:has-text("发送")',
+                        'div[class*="send"]:has-text("发送")',
+                        'button:has-text("发送")'
+                    ]
+                    send_btn = None
+                    for b_sel in send_btn_selectors:
+                        try:
+                            loc = page.locator(b_sel).first
+                            if await loc.is_visible():
+                                send_btn = loc
+                                break
+                        except Exception as btn_err:
+                            logger.warning(f"Error checking button selector {b_sel}: {btn_err}")
+                            continue
+                            
+                    if send_btn:
+                        await send_btn.click(force=True)
+                        logger.info("Physically clicked the send button successfully!")
+                        await asyncio.sleep(1.2)
+                    else:
+                        logger.error("Could not find the physical send button. Message might be stuck.")
     
                 # 7. [双重发送结果验证]
                 await asyncio.sleep(random.uniform(1.8, 2.3))
                 
-                message_nodes = await page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"]')
+                message_nodes = await page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], [class*="message"], [class*="bubble"]')
                 verification_passed = False
                 if message_nodes:
                     for last_msg in reversed(message_nodes[-3:]):
@@ -116,6 +181,12 @@ class DouyinDomSender:
     
             except Exception as send_err:
                 logger.error(f"Failed to send message physically: {send_err}", exc_info=True)
+                # 🚨 [自愈第一现场截图] 无论因何崩溃，强制捕获当下浏览器真实大图落盘
+                try:
+                    await page.screenshot(path="/Users/xiaofeng/.gemini/antigravity-ide/brain/33511473-84f8-451d-ade2-1ca70f4ec3dc/visual_send_stage1_focus.png")
+                    logger.info("💾 [崩溃现场自愈截图成功] 已强行保存至 visual_send_stage1_focus.png")
+                except Exception as snap_err:
+                    logger.error(f"Failed to capture crash snapshot: {snap_err}")
                 raise send_err
             finally:
                 self.is_sending = False

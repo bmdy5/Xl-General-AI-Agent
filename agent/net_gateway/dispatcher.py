@@ -132,6 +132,23 @@ class MessageDispatcher:
         msg_type = event.get("message_type", "private")
         raw = html.unescape(event.get("raw_message", "").strip())
         user_id = str(event.get("user_id", ""))
+        
+        # ── ⚡ 视觉审批卡片 QQ 消息全局劫持拦截器 ──
+        group_id = str(event.get("group_id")) if msg_type == "group" else ""
+        session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
+        agent = self.context._agents.get(session_key)
+        if agent and getattr(agent, "approval_future", None) and not agent.approval_future.done():
+            if str(user_id) == str(self.admin_id):
+                clean_raw = raw.strip().lower()
+                if clean_raw in ("y", "n", "yes", "no", "同意", "拒绝"):
+                    is_approved = clean_raw in ("y", "yes", "同意")
+                    try:
+                        agent.approval_future.set_result(is_approved)
+                        logger.info(f"🎉 [视觉审批劫持成功] 亮哥通过 QQ 决议了审批: {is_approved}，已无声拦截消息。")
+                    except Exception as e:
+                        logger.error(f"Failed to resolve approval future: {e}")
+                    return # 强行拦截该消息流入大模型，不予分发
+        
         self_id = str(event.get("self_id", ""))
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
         sender_info = event.get("sender", {})
