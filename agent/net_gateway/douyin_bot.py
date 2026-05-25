@@ -1,26 +1,29 @@
 # -*- coding: utf-8 -*-
-"""抖音私信防封隐身网关 (DouyinGateway)
+"""抖音私信防封隐身网关 - 独立微服务进程主控 (DouyinGateway)
 
-基于 CloakBrowser 隐形 Chromium 沙箱物理驱动网页版抖音私信。
-采用「智能随机退避轮询」防反爬，捕获私信并桥接小萤已有的 CSMA/CD、Fatigue 及 RAG 高可用处理管道。
-支持 Cookie 登录失效时自动截图上传 COS 并通过 QQ 提醒亮哥扫码自愈。
+基于 CloakBrowser 隐形指纹独立常驻进程驱动。
+剥离了浏览器驱动、DOM轮询及物理发送，单个子模块全部小于 300 行。
+通过 9001 端口 HTTP 接口接收大脑的下行指令，并将捕获消息通过 8000 端口 POST 上报给大脑。
 """
 
 import os
-import re
 import time
 import random
 import logging
 import asyncio
-from typing import Optional, Any
-from pathlib import Path
+import aiohttp
+from aiohttp import web
+from typing import Optional
 
-logger = logging.getLogger("net_gateway.douyin")
+from .douyin_browser import DouyinBrowserManager
+from .douyin_dom_poller import DouyinDomPoller
+from .douyin_dom_sender import DouyinDomSender
 
-# 绑定独立的抖音网关专属日志文件，方便亮哥实时纯净监控
+logger = logging.getLogger("net_gateway.douyin.main")
+
+# 抖音网关日志重定向绑定
 try:
     from pathlib import Path
-    import logging.handlers
     root_dir = Path(__file__).resolve().parents[2]
     douyin_log_path = root_dir / "logs" / "douyin_gateway.log"
     os.makedirs(douyin_log_path.parent, exist_ok=True)
@@ -28,922 +31,185 @@ try:
     douyin_handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - [%(filename)s:%(lineno)d] - %(message)s'))
     logger.addHandler(douyin_handler)
     logger.setLevel(logging.INFO)
-    logger.propagate = False # 彻底隔断，不让抖音日志流入喧闹的 gateway.log
-except Exception as log_init_err:
+    logger.propagate = False
+except Exception:
     pass
 
-# 抖音网页端消息中心 URL
-DOUYIN_MSG_URL = "https://www.douyin.com/message"
-DOUYIN_HOME_URL = "https://www.douyin.com"
-# 默认智能退避基准间隔（秒）
+BRAIN_EVENT_URL = os.getenv("BRAIN_EVENT_URL", "http://127.0.0.1:8000/event")
+BRAIN_QRCODE_URL = os.getenv("BRAIN_QRCODE_URL", "http://127.0.0.1:8000/report_qrcode")
+DOUYIN_PORT = int(os.getenv("DOUYIN_PORT", "9001"))
 POLLING_BASE_INTERVAL = 45.0
 
-
 class DouyinGateway:
-    """抖音私信通信网关，负责 CloakBrowser 常驻监控、DOM 拟真收发、扫码自愈。"""
+    """独立的抖音网关进程，负责自愈轮询主循环与 API 指令分发。"""
 
     def __init__(self):
-        self.dispatcher = None
-        self.context = None
-        self.playwright_context = None
-        self.browser_context = None
-        self.page = None
-        self._running_task = None
+        self.browser_mgr = DouyinBrowserManager()
+        self.poller = DouyinDomPoller()
+        self.sender = DouyinDomSender()
+
+        self.nickname_map = {}
+        self.last_processed_msg_map = {}
+        self.active_session_key = None
+        self.is_first_poll = True
         
-        # 智能随机退避间隔状态
         self.current_interval = POLLING_BASE_INTERVAL
         self.consecutive_idle_turns = 0
+        self.last_active_time = time.monotonic()
         
-        # 活跃的会话标志，用于收窄即时聊天回复的轮询间隔
-        self.active_session_key = None
-        self.last_active_time = 0.0
-        
-        # 内存昵称映射表，用于把 MD5 加密的 chat_id 和粉丝真实 nickname 做绑定
-        self.nickname_map = {}
-        
-        # 缓存每个粉丝最后一次已处理的对方消息文本，支持无红点高亮会话的主动心跳扫描
-        self.last_processed_msg_map = {}
-        
-        # 连续闲置（无消息变化）计数器，用于触发 WebSocket 重载除颤自愈
-        # 默认设为 2，以保障冷启动首轮在去重时瞬间触发强力 Reload 激活最新离线长连接
-        self.idle_reload_turns = 2
-        
-        # 状态标志，用于防打扰与下行优先
-        self.is_sending = False
-        self.send_lock = asyncio.Lock()
-        
-        # 冷启动首轮轮询标志，用于在心跳同步时防范历史陈旧消息复活，同时确保后续新消息不被漏回
-        self.is_first_poll = True
+        self._running_task = None
+        self._web_runner = None
 
-    def start(self, dispatcher) -> None:
-        """多协程拉起抖音私信网关."""
-        self.dispatcher = dispatcher
-        self.context = dispatcher.context
-        
-        logger.info("Initializing Douyin Gateway dynamic task...")
+    def start(self, dispatcher=None) -> None:
+        """多协程拉起抖音独立网关进程（兼容原 OneBot 启动器）。"""
+        logger.info("Initializing Standalone Douyin Gateway Process...")
         self._running_task = asyncio.create_task(self._run_loop())
+        # 独立拉起 aiohttp web server，接收大脑下发指令
+        asyncio.create_task(self._start_web_server())
 
     async def stop(self) -> None:
-        """优雅关闭网关，仅温和断开调试连接，保持浏览器桌面常驻."""
+        """优雅关闭网关及断开 CDP 调试。"""
         if self._running_task:
             self._running_task.cancel()
             self._running_task = None
-        
-        if self.playwright_context:
-            try:
-                logger.info("Gently disconnecting CDP debugger without closing the resident browser...")
-                await self.playwright_context.stop()
-            except Exception as e:
-                logger.error(f"Error stopping Playwright context: {e}")
-            self.playwright_context = None
-            self.browser_context = None
-            self.page = None
+            
+        if self._web_runner:
+            await self._web_runner.cleanup()
+            self._web_runner = None
+
+        await self.browser_mgr.close_context()
+
+    async def _report_qrcode(self, local_path: str, message: str) -> None:
+        """自愈上报：通过 HTTP 向主大脑投递二维码截图路径"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                payload = {"local_path": local_path, "message": message}
+                async with session.post(BRAIN_QRCODE_URL, json=payload, timeout=5) as resp:
+                    if resp.status == 200:
+                        logger.info("QR Code successfully reported to Brain event gateway.")
+        except Exception as report_err:
+            logger.error(f"Failed to report QR Code to Brain: {report_err}")
+
+    async def _post_event_to_brain(self, event: dict) -> None:
+        """消息上报：通过 HTTP 向主大脑投递捕获的消息 OneBot 事件"""
+        try:
+            async with aiohttp.ClientSession() as session:
+                async with session.post(BRAIN_EVENT_URL, json=event, timeout=5) as resp:
+                    if resp.status == 200:
+                        logger.info(f"Reported event from {event.get('sender', {}).get('nickname')} to Brain successfully.")
+        except Exception as post_err:
+            logger.error(f"Failed to report event to Brain: {post_err}")
 
     async def _run_loop(self) -> None:
-        """常驻智能随机退避轮询与登录自愈主循环."""
+        """自愈轮询主循环"""
         logger.info("Douyin Gateway backend daemon launched successfully!")
+        await asyncio.sleep(5) # 避开启动爆发点
         
-        # 延迟 5 秒拉起浏览器，防止和 OneBot 网关抢占系统端口或 CPU 爆发点
-        await asyncio.sleep(5)
-        
-        await self._init_browser()
+        await self.browser_mgr.init_browser()
         
         while True:
             try:
-                # 0. 检测当前 Page 存活性，若失效则自动触发重连
+                # 0. 检验 Page 存活性，若失效则触发重连
                 page_is_ok = False
-                if self.page:
+                if self.browser_mgr.page:
                     try:
-                        await self.page.evaluate("1")
+                        await self.browser_mgr.page.evaluate("1")
                         page_is_ok = True
                     except Exception:
-                        logger.warning("Active browser page is lost or closed. Re-triggering browser connection...")
-                        self.page = None
-                        self.browser_context = None
-                        if self.playwright_context:
+                        logger.warning("Active page has been closed or lost. Need to re-init...")
+                        self.browser_mgr.page = None
+                        self.browser_mgr.browser_context = None
+                        if self.browser_mgr.playwright_context:
                             try:
-                                await self.playwright_context.stop()
+                                await self.browser_mgr.playwright_context.stop()
                             except Exception:
                                 pass
-                            self.playwright_context = None
+                            self.browser_mgr.playwright_context = None
 
-                if not self.page:
-                    await self._init_browser()
+                if not self.browser_mgr.page:
+                    await self.browser_mgr.init_browser()
 
-                # 1. 登录状态性检测与扫码自愈
-                is_logged_in = await self._ensure_logged_in()
+                # 1. 登录校验与扫码自愈
+                is_logged_in = await self.poller.ensure_logged_in(self.browser_mgr.page, self._report_qrcode)
                 if not is_logged_in:
-                    # 登录失效，进入扫码自愈流
-                    await self._handle_login_self_healing()
+                    await asyncio.sleep(5)
                     continue
-                
-                # 2. 已登录状态下执行 DOM 私信扫描
-                has_new = await self._poll_messages()
+
+                # 2. 扫秒 DOM 私信
+                events = await self.poller.poll_messages(
+                    page=self.browser_mgr.page,
+                    is_sending=self.sender.is_sending,
+                    is_first_poll=self.is_first_poll,
+                    nickname_map=self.nickname_map,
+                    last_processed_msg_map=self.last_processed_msg_map,
+                    active_session_key=self.active_session_key
+                )
                 self.is_first_poll = False
-                
-                # 2.5 实时生成调试截图，以 Artifact 形式供亮哥审查
-                try:
-                    if self.page:
-                        import os
-                        os.makedirs("/Users/xiaofeng/.gemini/antigravity-ide/brain/e4d4d097-84cc-4c05-a164-25bdd4bb5985", exist_ok=True)
-                        await self.page.screenshot(path="/Users/xiaofeng/.gemini/antigravity-ide/brain/e4d4d097-84cc-4c05-a164-25bdd4bb5985/debug_reply_success.png")
-                        logger.info("Successfully updated real-time browser screenshot 'debug_reply_success.png'")
-                except Exception as snap_err:
-                    logger.warning(f"Failed to update real-time debug snapshot: {snap_err}")
-                
-                # 3. 智能退避时间调节（高斯抖动）
+
+                # 3. 将扫描到的消息上报给大脑
+                has_new = False
+                if events:
+                    has_new = True
+                    for ev in events:
+                        # 触发异步上报
+                        asyncio.create_task(self._post_event_to_brain(ev))
+                        self.active_session_key = ev.get("user_id")
+
+                # 3.5 智能退避时间调节（高斯抖动）
                 if has_new:
-                    # 对话活跃期：下一次轮询收窄到 5-10 秒，保证即时聊天的体验
                     self.consecutive_idle_turns = 0
                     self.current_interval = random.uniform(5.0, 10.0)
                     self.last_active_time = time.monotonic()
                 else:
                     self.consecutive_idle_turns += 1
-                    # 闲置期：采用高斯分布在 40s - 75s 之间波动以防反爬，且随着闲置轮数拉长退避时间
                     if time.monotonic() - self.last_active_time > 300.0:
-                        # 超过 5 分钟无对话，进入深度 IDLE 退避
                         self.current_interval = random.gauss(80.0, 15.0)
                         self.current_interval = max(60.0, min(120.0, self.current_interval))
                     else:
                         self.current_interval = random.gauss(POLLING_BASE_INTERVAL, 8.0)
                         self.current_interval = max(30.0, min(65.0, self.current_interval))
                 
-                logger.debug(f"Douyin Gateway sleeping for {self.current_interval:.1f}s...")
+                # 同步心跳假死除颤轮数
+                self.poller.idle_reload_turns = self.poller.idle_reload_turns if not has_new else 0
+                
                 await asyncio.sleep(self.current_interval)
                 
             except asyncio.CancelledError:
-                logger.info("Douyin Gateway loop cancelled.")
                 break
             except Exception as e:
                 logger.error(f"Error in Douyin Gateway daemon: {e}", exc_info=True)
-                await asyncio.sleep(15)  # 发生异常，静默 15s 后自愈重试
+                await asyncio.sleep(15)
 
-    async def _init_browser(self) -> None:
-        """初始化或热接管常驻 CloakBrowser."""
-        import aiohttp
-        import subprocess
-        from playwright.async_api import async_playwright
+    async def _start_web_server(self) -> None:
+        """开启 9001 端口极轻量 API 监听，接收大脑下达的下行发消息请求"""
+        app = web.Application()
+        app.router.add_post('/send_private_msg', self._handle_send_msg)
         
-        # 1. 优先探测本地 9222 调试端口是否通畅
-        cdp_active = False
+        self._web_runner = web.AppRunner(app)
+        await self._web_runner.setup()
+        site = web.TCPSite(self._web_runner, '127.0.0.1', DOUYIN_PORT)
+        await site.start()
+        logger.info(f"Douyin Standalone API Server listening on http://127.0.0.1:{DOUYIN_PORT}")
+
+    async def _handle_send_msg(self, request) -> web.Response:
+        """处理来自大脑下达的发送私信请求"""
         try:
-            async with aiohttp.ClientSession() as session:
-                async with session.get("http://127.0.0.1:9222/json/version", timeout=2) as resp:
-                    if resp.status == 200:
-                        cdp_active = True
-        except Exception:
-            pass
-
-        profile_dir = os.path.expanduser("~/.my-agent/memory/1705919142/cloak_douyin")
-        os.makedirs(profile_dir, exist_ok=True)
-        
-        # 释放独占锁，防止锁文件挂住
-        lock_file = os.path.join(profile_dir, "SingletonLock")
-        if os.path.exists(lock_file):
-            try:
-                os.remove(lock_file)
-            except Exception:
-                pass
-
-        if not cdp_active:
-            logger.info("CDP target not active on port 9222. Launching resident CloakBrowser via standalone subprocess...")
-            from cloakbrowser import ensure_binary, get_default_stealth_args
-            chrome_path = ensure_binary()
+            data = await request.json()
+            user_id = data.get("user_id")
+            message = data.get("message")
+            if not user_id or not message:
+                return web.json_response({"status": "failed", "reason": "Missing user_id or message"}, status=400)
             
-            pos = os.getenv('DOUYIN_BROWSER_POSITION', '1400,900')
-            cmd_args = [
-                chrome_path,
-                f"--user-data-dir={profile_dir}",
-                "--remote-debugging-port=9222",
-                f"--window-position={pos}",
-                "--window-size=1280,800",
-                "--hide-crash-restore-bubble",
-                "--disable-infobars",
-                "--no-first-run",
-                "--no-default-browser-check"
-            ]
-            # 加上默认 of stealth 选项
-            for arg in get_default_stealth_args():
-                # 过滤掉与 position/size 冲突的
-                if not any(arg.split('=', 1)[0] in a for a in cmd_args):
-                    cmd_args.append(arg)
-            
-            # 使用 Popen 抛到后台，使其脱离 Python 生命周期成为独立常驻系统进程
-            subprocess.Popen(cmd_args, start_new_session=True, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-            logger.info("Resident CloakBrowser subprocess launched. Waiting for CDP port to open...")
-            
-            # 等待调试端口就绪，最多等待 10 秒
-            for _ in range(20):
-                await asyncio.sleep(0.5)
-                try:
-                    async with aiohttp.ClientSession() as session:
-                        async with session.get("http://127.0.0.1:9222/json/version", timeout=1) as resp:
-                            if resp.status == 200:
-                                cdp_active = True
-                                logger.info("CDP port 9222 is active!")
-                                break
-                except Exception:
-                    pass
-            
-            if not cdp_active:
-                logger.error("Failed to start resident CloakBrowser subprocess.")
-                raise RuntimeError("Failed to start resident CloakBrowser.")
-        else:
-            logger.info("🎉 Found resident CloakBrowser active on port 9222. Reusing active instance via CDP...")
-
-        # 2. 接管调试端口
-        self.playwright_context = await async_playwright().start()
-        browser = await self.playwright_context.chromium.connect_over_cdp("http://127.0.0.1:9222")
-        
-        if browser.contexts:
-            self.browser_context = browser.contexts[0]
-        else:
-            self.browser_context = await browser.new_context()
-
-        # 3. 检索已有的抖音 page
-        self.page = None
-        for pg in self.browser_context.pages:
-            if "douyin.com" in pg.url:
-                self.page = pg
-                logger.info("🎉 Found active Douyin page in existing CloakBrowser context. Reusing it...")
-                break
-
-        if not self.page:
-            logger.info("No active Douyin page found. Creating new page...")
-            self.page = await self.browser_context.new_page()
-            await self.page.set_viewport_size({"width": 1280, "height": 800})
-            self.page.set_default_timeout(30000)
-            
-            # 首次冷启动，导航至主页 (不直达 message，从根源规避已失效 message 页 of 404 封锁)
-            try:
-                await self.page.goto(DOUYIN_HOME_URL, wait_until="domcontentloaded")
-                await asyncio.sleep(6)
-            except Exception as e:
-                logger.error(f"Failed to navigate to Douyin Homepage initially: {e}")
-
-    async def _ensure_logged_in(self) -> bool:
-        """判定当前是否已处于已登录并打开了私信面板的状态."""
-        if not self.page:
-            return False
-        
-        current_url = self.page.url
-        # 如果重定向到 sso.douyin.com 或含有 login，表明未登录
-        if "login" in current_url or "sso.douyin" in current_url:
-            return False
-        
-        # 1. 优先使用私信面板可见性作为登录并就绪的标准
-        is_visible = False
-        try:
-            is_visible = await self.page.locator('#imSaasContainerId').is_visible()
-            if is_visible:
-                return True
-        except Exception:
-            pass
-            
-        # 2. 如果面板不可见，但主页显示已经登录（例如能找到用户头像），则物理点击右上角私信按钮展开侧边栏
-        avatar_element = None
-        for avatar_sel in ['.dy-avatar', '[class*="avatar"]', '[class*="header"] [src*="avatar"]']:
-            try:
-                avatar_element = await self.page.query_selector(avatar_sel)
-                if avatar_element:
-                    break
-            except Exception:
-                continue
-                
-        if avatar_element:
-            logger.info("[登录状态验证] 页面检测到登录头像。尝试通过 JS 联合爆破与物理兜底拉起右侧私信面板...")
-            # 1. 优先使用神级 JS 原生穿透联合点击，直接触发 im-entry 元素、类名或文本节点的 click 事件，100% 免疫任何物理遮挡或 Playwright 可交互性限制
-            js_clicked = False
-            try:
-                js_clicked = await self.page.evaluate("""() => {
-                    let btn = document.querySelector('[data-e2e="im-entry"]') || document.querySelector('.igu2_FYl');
-                    if (btn) {
-                        btn.click();
-                        return true;
-                    }
-                    // 兜底：抓取页面中所有文字为“私信”的元素执行原生点击
-                    let all = document.querySelectorAll('*');
-                    for (let el of all) {
-                        if (el.innerText && el.innerText.trim() === '私信') {
-                            el.click();
-                            el.parentElement?.click();
-                            return true;
-                        }
-                    }
-                    return false;
-                }""")
-                logger.info(f"JS joint bypass click private message button result: {js_clicked}")
-            except Exception as js_err:
-                logger.warning(f"JS joint click failed: {js_err}")
-                
-            # 2. 如果 JS 强点击异常，退化回物理点击以作双路防线保障
-            if not js_clicked:
-                for btn_sel in ['[data-e2e="im-entry"]', '.igu2_FYl', 'text=私信', '[class*="message"]']:
-                    try:
-                        btn = await self.page.query_selector(btn_sel)
-                        if btn:
-                            await btn.click(force=True, timeout=2000)
-                            break
-                    except Exception:
-                        continue
-            
-            await asyncio.sleep(4.5)
-            
-            # 点击后再次检查面板可见性与联系人就绪
-            try:
-                # 强制等待侧边栏动画滑动出完毕，对联系人列表呈现 visible 状态进行弹性尝试
-                try:
-                    await self.page.locator('.conversationConversationItemwrapper, [class*="ConversationItem"]').first.wait_for(state="visible", timeout=4000)
-                except Exception:
-                    pass
-                
-                # 最终以侧边栏大容器可见性作为展开完毕的标准，注入 10 秒高容错弹性超时以规避网络大抖动
-                await self.page.locator('#imSaasContainerId').wait_for(state="visible", timeout=10000)
-                is_visible = await self.page.locator('#imSaasContainerId').is_visible()
-                if is_visible:
-                    return True
-            except Exception:
-                pass
-                
-        return False
-
-    async def _handle_login_self_healing(self) -> None:
-        """Cookie 登录失效时的扫码自愈逻辑 (截图 COS 推送亮哥 QQ)."""
-        logger.warning("[登录失效] 检测到抖音登录态过期，启动全自动扫码自愈流程...")
-        
-        # 1. 强制重新载入主页以自动调出登录弹窗或展示登录态
-        try:
-            await self.page.goto(DOUYIN_HOME_URL)
-            await asyncio.sleep(4)
+            # 委派给 DOM 发送器执行物理输入
+            asyncio.create_task(self.sender.send_message(
+                page=self.browser_mgr.page,
+                target_user_id=user_id,
+                text=message,
+                nickname_map=self.nickname_map,
+                ensure_logged_in_cb=lambda: self.poller.ensure_logged_in(self.browser_mgr.page, self._report_qrcode)
+            ))
+            return web.json_response({"status": "ok"})
         except Exception as e:
-            logger.error(f"Failed to load homepage: {e}")
-            await asyncio.sleep(5)
-            return
+            return web.json_response({"status": "failed", "reason": str(e)}, status=500)
 
-        # 2. 定位网页二维码元素并物理截图
-        local_path = os.path.expanduser("~/.my-agent/memory/1705919142/douyin_login_qrcode.png")
-        os.makedirs(os.path.dirname(local_path), exist_ok=True)
-        
-        # 抖音登录弹窗的二维码通常可以通过 CSS 定位器捕获
-        qrcode_selectors = [
-            'div[class*="login-guide-container"] iframe',
-            'div[class*="qrcode"]',
-            'canvas',
-            'img[src*="qrcode"]',
-            '[class*="qrcode-image"]',
-            'div[class*="qr-code"]'
-        ]
-        
-        qrcode_element = None
-        for sel in qrcode_selectors:
-            try:
-                qrcode_element = await self.page.query_selector(sel)
-                if qrcode_element:
-                    logger.info(f"Located login QR code element via selector: {sel}")
-                    break
-            except Exception:
-                continue
-
-        # 3. 截图并调用 send_image_to_qq 发送给亮哥
-        try:
-            if qrcode_element:
-                await qrcode_element.screenshot(path=local_path)
-            else:
-                # 找不到具体二维码，直接截取整个视口作为兜底
-                await self.page.screenshot(path=local_path)
-                logger.warning("QR code element not found, screenshot whole page as fallback.")
-
-            # 调用我们在上一步中抽象出的 send_image_to_qq 工具
-            from agent.tools.registry import registry
-            image_tool = registry.get("send_image_to_qq")
-            if image_tool:
-                async for res in image_tool.call({
-                    "local_path": local_path,
-                    "cos_key_suffix": "douyin_qrcode/login.png",
-                    "message_prefix": (
-                        "[抖音小萤扫码自愈提示]\n"
-                        "亮哥！我的抖音登录态失效啦，请在手机上扫码授权我重新恢复灵魂交互吧"
-                    )
-                }):
-                    if res.type == "result":
-                        logger.info(f"Login QR code sent to admin: {res.data}")
-            else:
-                logger.error("send_image_to_qq tool not registered in registry!")
-        except Exception as qrcode_err:
-            logger.error(f"Failed to capture or send login QR code: {qrcode_err}")
-
-        # 4. 后台阻塞，每隔 5 秒监听状态直至登录自愈成功
-        logger.info("QR code successfully pushed. Waiting for admin to scan on phone...")
-        for _ in range(60):  # 最多等待 5 分钟 (60 * 5s)
-            await asyncio.sleep(5)
-            if await self._ensure_logged_in():
-                logger.info("[自愈成功] 亮哥扫码成功！恢复智能退避轮询！")
-                # 成功跳转，自动清理临时二维码
-                if os.path.exists(local_path):
-                    try:
-                        os.remove(local_path)
-                    except Exception:
-                        pass
-                return
-                
-        logger.warning("Timeout waiting for admin to scan QR code. Refreshing page...")
-
-    async def _poll_messages(self) -> bool:
-        """扫描主页侧边栏私信列表 DOM，捕获最新对方消息并转化为等价 OneBot 事件派发."""
-        if not self.page:
-            return False
-        
-        # 1. 物理动作防冲突：若当前正处于物理打字发送期，为了防止物理点击切换联系人导致输入串台，
-        # 我们开启“安全被动听觉轮询”，仅允许在当前右侧活跃聊天窗口中监听新消息，坚决不进行左侧联系人切换！
-        only_passive_listen = False
-        if self.is_sending:
-            logger.info("Current in physical sending state. Engaging passive message monitoring without contact switching.")
-            only_passive_listen = True
-            
-        # === [ WebSocket 假死重载除颤自愈机制 ] ===
-        if self.idle_reload_turns >= 2:
-            logger.info("ℹ️ Detected 2 consecutive idle turns without message change. Triggering F5 page reload to heal WebSocket connection...")
-            try:
-                await self.page.reload(wait_until="domcontentloaded")
-                await asyncio.sleep(6.0)
-                # 重新展开侧边栏（如果重载后关闭了）
-                await self._ensure_logged_in()
-            except Exception as reload_err:
-                logger.error(f"Failed to reload page for WebSocket healing: {reload_err}")
-            self.idle_reload_turns = 0
-            
-        # 确认私信侧边栏是否可见，不可见则无法轮询
-        try:
-            is_sidebar_visible = await self.page.locator('#imSaasContainerId').is_visible()
-            if not is_sidebar_visible:
-                return False
-        except Exception as e:
-            logger.warning(f"Failed to check sidebar visibility in poll: {e}")
-            return False
-        
-        has_new_message = False
-        is_active_session_sync = False  # 标记是否为当前活跃会话的心跳同步
-        try:
-            # 2. 检索带有未读标记/红点的节点
-            unread_selectors = [
-                '#imSaasContainerId [class*="unread-count"]',
-                '#imSaasContainerId [class*="badge"]',
-                '#imSaasContainerId [class*="red-dot"]',
-                '#imSaasContainerId [class*="unread"]'
-            ]
-            
-            unread_node = None
-            if not only_passive_listen:
-                for sel in unread_selectors:
-                    try:
-                        unread_node = await self.page.query_selector(sel)
-                        if unread_node:
-                            break
-                    except Exception:
-                        continue
-            
-            contact_container = None
-            if unread_node:
-                # 3. 仅物理处理最上方的一个未读条目（使用 JS 祖先特征智能回溯算法，100% 精准锁定列表项容器）
-                try:
-                    contact_container = await unread_node.evaluate_handle(
-                        """(node) => {
-                            let p = node.parentElement;
-                            while (p && p.id !== 'imSaasContainerId') {
-                                let cl = p.className || '';
-                                if (typeof cl === 'string' && (
-                                    cl.includes('ConversationItem') || 
-                                    cl.includes('item') || 
-                                    cl.includes('Item') ||
-                                    cl.includes('wrapper') || 
-                                    cl.includes('session') ||
-                                    cl.includes('member')
-                                )) {
-                                    return p;
-                                }
-                                p = p.parentElement;
-                            }
-                            return node.parentElement?.parentElement?.parentElement || node.parentElement;
-                        }"""
-                    )
-                except Exception as eval_err:
-                    logger.error(f"Failed to find closest contact container via ancestor traceback: {eval_err}")
-            else:
-                # 兜底：尝试获取当前已经处于 active 状态的活跃聊天会话进行心跳同步（直接锁定私信列表中的第一项，IM 机制下最新活跃会话 100% 自动置顶于此）
-                try:
-                    # 优先过滤物理高度（40px-120px），且内部包含头像或文本，100% 排除顶部搜索框等非会话元素
-                    active_handle = await self.page.evaluate_handle(
-                        """() => {
-                            let items = document.querySelectorAll('#imSaasContainerId [class*="Item"], #imSaasContainerId [class*="wrapper"]');
-                            for (let item of items) {
-                                if (item.offsetHeight < 40 || item.offsetHeight > 120) continue;
-                                let avatar = item.querySelector('img, [class*="avatar"]');
-                                let text = item.querySelector('[class*="name"], [class*="nickname"], [class*="title"]');
-                                if (avatar || text) return item;
-                            }
-                            return document.querySelector('#imSaasContainerId [class*="ConversationItem"], #imSaasContainerId [class*="Item"]');
-                        }"""
-                    )
-                    if active_handle and hasattr(active_handle, "as_element") and active_handle.as_element():
-                        active_item = active_handle.as_element()
-                        if active_item:
-                            contact_container = active_item
-                            is_active_session_sync = True
-                except Exception as active_err:
-                    logger.warning(f"Failed to find first active contact item: {active_err}")
-
-            if not contact_container:
-                return False  # 既无红点也无当前高亮会话，保持常驻静默
-
-            # 4. 提取该未读联系人的昵称（nickname）以建立映射关系
-            sender_nickname = "抖音粉丝"
-            try:
-                # 优先在元素内部提取 name / nickname / title
-                name_element = await contact_container.query_selector('[class*="name"], [class*="nickname"], [class*="title"]')
-                if name_element:
-                    text_content = await name_element.inner_text()
-                    if text_content.strip():
-                        sender_nickname = text_content.strip().split('\n')[0].strip()
-                
-                # 如果匹配失败退化为了默认值，启用超强兜底：使用 innerText 智能拆分过滤法提取真实昵称
-                if sender_nickname in ["抖音粉丝", "未知", ""]:
-                    raw_text = await contact_container.inner_text()
-                    if raw_text:
-                        # 按行拆分，过滤掉纯数字的未读红点数字和时间后缀等干扰行
-                        lines = [line.strip() for line in raw_text.split('\n') if line.strip()]
-                        possible_names = []
-                        for line in lines:
-                            if line.isdigit():
-                                continue
-                            if any(t in line for t in ["分钟前", "小时前", "昨天", "前天", "星期", "秒前", "月"]):
-                                continue
-                            possible_names.append(line)
-                        if possible_names:
-                            sender_nickname = possible_names[0]
-            except Exception as name_err:
-                logger.warning(f"Failed to extract contact nickname: {name_err}")
-
-            # 5. 物理点击并安全缓冲（仅在非被动监听下允许物理切换，防止正在打字时切走聊天导致打字串台）
-            if not only_passive_listen:
-                logger.info(f"Physically clicking/refreshing conversation with: {sender_nickname}...")
-                try:
-                    try:
-                        # 优先物理鼠标模拟点击（100% 触发 React 合成事件与 mousedown/mouseup/click 链路）
-                        await contact_container.click(force=True, timeout=3000)
-                    except Exception as phys_err:
-                        logger.warning(f"Failed physical click during active sync: {phys_err}, trying JS fallback...")
-                        # 物理点击受限时，fallback 至 JS 全层级原生穿透点击
-                        await contact_container.evaluate(
-                            """(node) => {
-                                node.click();
-                                let target = node.querySelector('[class*="name"], [class*="nickname"], [class*="title"], img, [class*="avatar"]');
-                                if (target) target.click();
-                                for (let child of node.children) {
-                                    child.click();
-                                }
-                            }"""
-                        )
-                    # 强制加入 2.5 - 3.5 秒的安全切换冷却时间，以模拟人类正常视觉和缓冲，抗风控性极高
-                    await asyncio.sleep(random.uniform(2.5, 3.5))
-                except Exception as click_err:
-                    logger.error(f"Failed to physically click contact item: {click_err}")
-                    return False
-            else:
-                logger.info(f"Passive monitor: skipping physical click switch for active session of: {sender_nickname}")
-
-            # === [新共识：Header 真实昵称终极纠正黑科技] ===
-            try:
-                # 在右侧聊天视窗中直接抓取顶部的 Header 真实昵称，100% 纠正左侧的匹配偏差
-                header_nickname = await self.page.evaluate(
-                    """() => {
-                        let header = document.querySelector(
-                            '#imSaasContainerId [class*="ChatHeader"], #imSaasContainerId [class*="chat-header"], #imSaasContainerId [class*="saasImHeader"], #imSaasContainerId [class*="header"]'
-                        );
-                        if (header && header.innerText.trim()) {
-                            let name = header.innerText.trim().split('\\n')[0];
-                            if (name && name !== '私信' && name !== '消息') {
-                                return name;
-                            }
-                        }
-                        return null;
-                    }"""
-                )
-                if header_nickname and header_nickname.strip():
-                    sender_nickname = header_nickname.strip()
-                    logger.info(f"Successfully corrected sender nickname via ChatHeader: {sender_nickname}")
-            except Exception as header_err:
-                logger.warning(f"Failed to extract real nickname from ChatHeader: {header_err}")
-
-            # 6. 解析右侧聊天窗口中的最新对方发言
-            message_nodes = await self.page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], #imSaasContainerId [class*="chat-item"]')
-            if not message_nodes:
-                # 终极冷启动自愈：若右侧聊天视窗未打开（新重载无消息节点），主动物理点击锁定列表第一项，强制拉起会话窗口
-                if is_active_session_sync and contact_container:
-                    logger.info("Chat panel is blank initially. Activating conversation via dual-track click bypass...")
-                    try:
-                        try:
-                            # 优先使用真实系统级物理鼠标模拟点击（100% 触发 React 合成事件与 mousedown/mouseup/click 链路）
-                            await contact_container.click(force=True, timeout=3000)
-                            logger.info("Successfully executed Playwright physical click on contact container.")
-                        except Exception as phys_click_err:
-                            logger.warning(f"Physical click failed: {phys_click_err}, trying multi-level JS fallback...")
-                            # 物理点击受限时，fallback 至 JS 全层级原生穿透点击
-                            await contact_container.evaluate(
-                                """(node) => {
-                                    node.click();
-                                    let target = node.querySelector('[class*="name"], [class*="nickname"], [class*="title"], img, [class*="avatar"]');
-                                    if (target) target.click();
-                                    for (let child of node.children) {
-                                        child.click();
-                                    }
-                                }"""
-                            )
-                        await asyncio.sleep(random.uniform(3.0, 4.5))
-                        # 点击后重新获取消息节点
-                        message_nodes = await self.page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"], #imSaasContainerId [class*="chat-item"]')
-                    except Exception as click_err:
-                        logger.error(f"Failed to physically click contact to activate session: {click_err}")
-
-                # === [打破新用户/延迟加载空会话死循环] ===
-                has_active_header = False
-                try:
-                    header_nickname = await self.page.evaluate(
-                        """() => {
-                            let header = document.querySelector(
-                                '#imSaasContainerId [class*="ChatHeader"], #imSaasContainerId [class*="chat-header"], #imSaasContainerId [class*="saasImHeader"], #imSaasContainerId [class*="header"]'
-                            );
-                            if (header && header.innerText.trim()) {
-                                let name = header.innerText.trim().split('\\n')[0];
-                                if (name && name !== '私信' && name !== '消息') {
-                                    return name;
-                                }
-                            }
-                            return null;
-                        }"""
-                    )
-                    if header_nickname and header_nickname.strip():
-                        has_active_header = True
-                        sender_nickname = header_nickname.strip()
-                        logger.info(f"Chat panel message empty, but confirmed activated session with header: {sender_nickname}")
-                except Exception as header_chk_err:
-                    logger.debug(f"Failed to check ChatHeader for blank conversation: {header_chk_err}")
-
-                if not message_nodes and not has_active_header:
-                    return False
-
-            # === [新共识：高并发去重与浏览器一体化提取算法] ===
-            # 彻底屏蔽时间标签或通知横幅，并 100% 物理精准去重嵌套 DOM 节点
-            bubbles_data = []
-            try:
-                bubbles_data = await self.page.evaluate(
-                    """() => {
-                        let container = document.querySelector('#imSaasContainerId');
-                        if (!container) return [];
-                        
-                        // 1. 抓取所有可能的消息、气泡和列表项节点
-                        let rawNodes = Array.from(container.querySelectorAll('[class*="message"], [class*="bubble"], [class*="chat-item"]'));
-                        
-                        // 2. 教科书级物理去重嵌套元素：若 otherNode 包含 node，则 node 是子节点，应被剔除，只保留最外层的独立消息容器
-                        let uniqueNodes = rawNodes.filter((node, index) => {
-                            return !rawNodes.some((otherNode, otherIndex) => {
-                                return otherIndex !== index && otherNode.contains(node);
-                            });
-                        });
-                        
-                        // 3. 提取承载真正聊天文本且可见的消息气泡内容及属性
-                        let result = [];
-                        for (let node of uniqueNodes) {
-                            // 精准检索文本容器
-                            let textEl = node.querySelector('[class*="text"], [class*="content"], [class*="bubble-content"]');
-                            if (!textEl) continue;
-                            
-                            let text = textEl.innerText || textEl.textContent || '';
-                            text = text.trim();
-                            if (!text) continue;
-                            
-                            // 物理坐标敌我判定（防自环与自说自话自保防线）
-                            let rect = node.getBoundingClientRect();
-                            let parent = node.parentElement;
-                            let parentRect = parent ? parent.getBoundingClientRect() : { left: 0, width: 800 };
-                            let relativeLeft = rect.left - parentRect.left;
-                            let mid = parentRect.width / 2;
-                            let cl = typeof node.className === 'string' ? node.className : (node.className?.baseVal || '');
-                            
-                            let isSelf = relativeLeft > mid || cl.includes('right') || cl.includes('self') || cl.includes('own') || cl.includes('reverse');
-                            
-                            result.push({
-                                text: text,
-                                isSelf: isSelf
-                            });
-                        }
-                        return result;
-                    }"""
-                )
-            except Exception as eval_err:
-                logger.error(f"Failed to batch extract and deduplicate chat bubbles via JS: {eval_err}")
-                return False
-
-            # 4. 寻找最新的小萤回复索引（我方最后一条气泡）
-            last_self_idx = -1
-            for idx, bubble in enumerate(bubbles_data):
-                if bubble["isSelf"]:
-                    last_self_idx = idx
-
-            # 5. 提取自最后一个我方回复气泡之后，对方在此期间连续发出的所有新文本，并使用换行符进行物理智能拼接
-            partner_texts = []
-            start_scan_idx = last_self_idx + 1 if last_self_idx != -1 else 0
-            for idx in range(start_scan_idx, len(bubbles_data)):
-                if not bubbles_data[idx]["isSelf"]:
-                    partner_texts.append(bubbles_data[idx]["text"])
-
-            latest_partner_msg = "\n".join(partner_texts) if partner_texts else ""
-
-            if not latest_partner_msg:
-                return False
-
-            # 6. 主动心跳同步时的前置去重校验：最新一条消息必须由对方发出，且内容发生改变
-            if is_active_session_sync:
-                # 如果最后一个气泡是我方发出的，则直接返回 False，不再继续理会
-                if bubbles_data and bubbles_data[-1]["isSelf"]:
-                    return False
-
-            # 如果是心跳活跃同步，且当前内存缓存里还没有此用户的处理记录（如网关刚刚热重启）
-            # 直接同步当前最新消息到缓存中，坚决不回复陈旧历史老消息，彻底防范重启时的老消息复活自环
-            # 【优化】只有在冷启动的首轮轮询中，我们才将未读用户加入缓存并忽略；后续轮询中新出现的用户，说明是真正的新会话，必须予以回复！
-            if is_active_session_sync and sender_nickname not in self.last_processed_msg_map:
-                self.last_processed_msg_map[sender_nickname] = latest_partner_msg
-                if getattr(self, "is_first_poll", True):
-                    logger.info(f"Initialized active session message cache for legacy user: {sender_nickname}. Prevented legacy reply.")
-                    return False
-                else:
-                    logger.info(f"New session detected for user: {sender_nickname} after initialization. Proceeding with active reply.")
-
-            # 心跳同步时的内容去重比对：若拼接出来的最新文本跟上一次处理过的对方消息文本完全一致，则去重忽略，并累加除颤重载计数器
-            if is_active_session_sync and self.last_processed_msg_map.get(sender_nickname) == latest_partner_msg:
-                self.idle_reload_turns = getattr(self, "idle_reload_turns", 0) + 1
-                logger.debug(f"No new message during active sync. Idle reload turns: {self.idle_reload_turns}")
-                return False
-
-            # 7. 使用 MD5 构造稳定的虚拟 chat_id
-            import hashlib
-            chat_id = hashlib.md5(sender_nickname.encode("utf-8")).hexdigest()[:16]
-            self.nickname_map[chat_id] = sender_nickname
-            
-            # 更新已处理对方消息的全局缓存，防止下一次轮询重复触发
-            self.last_processed_msg_map[sender_nickname] = latest_partner_msg
-            
-            # 成功捕获并解析到对方的新消息，立刻将 WebSocket 除颤重载计数器清零
-            self.idle_reload_turns = 0
-            
-            logger.info(f"Received message from fan {sender_nickname} ({chat_id}): {latest_partner_msg}")
-            
-            # 8. 封装成 100% 兼容已有的 OneBot 规范字典
-            event = {
-                "post_type": "message",
-                "message_type": "private",
-                "user_id": f"douyin_{chat_id}",  # 携带前缀，实现多实例隔离
-                "self_id": "douyin_xiaoying",
-                "raw_message": latest_partner_msg,
-                "sender": {
-                    "nickname": sender_nickname,
-                    "card": ""
-                }
-            }
-            
-            # 记录当前活跃的 session 标记，用于加速后续的轮询
-            self.active_session_key = f"douyin_{chat_id}"
-            
-            # 9. 非阻塞派发给 Dispatcher 管道
-            asyncio.create_task(self.dispatcher.dispatch_event(event))
-            has_new_message = True
-
-        except Exception as poll_err:
-            logger.error(f"Failed to poll messages from DOM: {poll_err}", exc_info=True)
-            
-        return has_new_message
-
-    async def send_message(self, target_user_id: str, text: str) -> None:
-        """由 sender.py 调起，通过 CloakBrowser 物理向指定的抖音用户发送私信."""
-        if not self.page:
-            logger.error("Cannot send message: CloakBrowser is not initialized.")
-            return
-
-        async with self.send_lock:
-            # 提取真实 ID
-            chat_id = target_user_id.split("douyin_", 1)[1] if "douyin_" in target_user_id else target_user_id
-            
-            # 激活发送状态锁，防止轮询物理切换干扰
-            self.is_sending = True
-            logger.info(f"Prepare physical reply to user: {chat_id}, text: {text[:50]}")
-            
-            try:
-                # 1. 确认私信侧边栏处于打开状态
-                is_sidebar_visible = await self.page.locator('#imSaasContainerId').is_visible()
-                if not is_sidebar_visible:
-                    # 面板没开，尝试利用 _ensure_logged_in 打开
-                    await self._ensure_logged_in()
-                    await asyncio.sleep(3.0)
-                
-                # 2. [新共识：映射定位与点击]
-                nickname = self.nickname_map.get(chat_id)
-                if not nickname:
-                    # 如果没有映射，以 chat_id 作为备用昵称进行匹配
-                    nickname = chat_id
-                
-                # 净化昵称，截断可能存在的换行与时间标签（如“刚刚”、“2分钟前”），保证 selector 不抛 BADSTRING 异常
-                if nickname:
-                    nickname = nickname.split('\n')[0].strip()
-                    
-                logger.info(f"Looking for contact with nickname: {nickname}")
-                
-                # 在侧边栏查找该昵称的联系人并物理点击
-                contact_selector = f'#imSaasContainerId .conversationConversationItemwrapper:has-text("{nickname}"), #imSaasContainerId [class*="ConversationItem"]:has-text("{nickname}")'
-                contact_item = await self.page.query_selector(contact_selector)
-                
-                if contact_item:
-                    # 【强力自愈】传入 force=True 物理强行点击，穿透滑动动画不可见限制
-                    await contact_item.click(force=True)
-                    logger.info(f"Physically clicked nickname: {nickname}, waiting for chat loading...")
-                    await asyncio.sleep(random.uniform(2.5, 3.5))
-                else:
-                    logger.warning(f"Could not locate contact element for {nickname}. Using current active conversation instead.")
-    
-                # 3. 定位私信输入框
-                input_selectors = [
-                    '#imSaasContainerId div[contenteditable="true"]',
-                    '#imSaasContainerId textarea',
-                    'div[contenteditable="true"]',
-                    'textarea'
-                ]
-                
-                input_element = None
-                for sel in input_selectors:
-                    try:
-                        input_element = await self.page.query_selector(sel)
-                        if input_element:
-                            break
-                    except Exception:
-                        continue
-    
-                if not input_element:
-                    raise ValueError("Could not locate Douyin chat input container in sidebar.")
-    
-                # 4. [新共识：物理聚焦与 100% 物理清空]
-                await input_element.focus()
-                await asyncio.sleep(0.5)
-                
-                # 发送 Command+A 全选并 Backspace 彻底清空
-                await self.page.keyboard.press("Meta+A")
-                await asyncio.sleep(0.2)
-                await self.page.keyboard.press("Backspace")
-                await asyncio.sleep(0.3)
-    
-                # 5. [拟真物理打字] 配合 humanize 随机按键延时
-                logger.info(f"Typing reply: {text[:30]}")
-                await self.page.keyboard.type(text, delay=random.randint(40, 75))
-                await asyncio.sleep(0.5)
-    
-                # 6. 点击回车发送
-                await self.page.keyboard.press("Enter")
-                logger.info("Sent enter signal, verifying sending result...")
-    
-                # 7. [新共识：双重发送结果验证]
-                await asyncio.sleep(random.uniform(1.8, 2.3))
-                
-                # 提取右侧所有消息气泡
-                message_nodes = await self.page.query_selector_all('#imSaasContainerId [class*="message"], #imSaasContainerId [class*="bubble"]')
-                verification_passed = False
-                if message_nodes:
-                    # 倒序遍历最后 3 个气泡，寻找第一个能成功读取且匹配的有效 HTMLElement 气泡，完美击碎空节点或注释节点报错
-                    for last_msg in reversed(message_nodes[-3:]):
-                        try:
-                            # 使用 text_content() 避开非 HTMLElement 导致的异常，保证绝对安全
-                            sent_text = await last_msg.text_content()
-                            if sent_text and (text.strip() in sent_text.strip() or (len(text) >= 6 and text[:6] in sent_text)):
-                                # 进一步检测是否带有失败警告标志
-                                error_marker = await last_msg.query_selector('[class*="error"], [class*="fail"], [class*="warn"], svg[class*="error"]')
-                                if error_marker:
-                                    logger.warning("Message failed sending (error icon detected in DOM).")
-                                    break
-                                
-                                logger.info(f"Message physical send verification passed 100%: {text[:30]}")
-                                verification_passed = True
-                                return
-                        except Exception as read_err:
-                            logger.warning(f"Error reading bubble node: {read_err}. Trying previous bubble...")
-                            continue
-                                
-                if not verification_passed:
-                    # 乐观验证防爆安全阀：物理敲击 Enter 之后，即便 DOM 匹配校验因动态混淆等原因未完全匹配通过，也乐观放行，记录警告但不抛出异常中断整个发送通道
-                    logger.warning(f"Message validation mismatch or bubble not found for '{text[:30]}'. Using optimistic validation to prevent pipeline block.")
-    
-            except Exception as send_err:
-                logger.error(f"Failed to send message physically: {send_err}", exc_info=True)
-                raise send_err
-            finally:
-                # 释放状态锁
-                self.is_sending = False
-
-
-# 模块级物理单例，方便 sender.py 跨模块静态寻址
 douyin_gateway = DouyinGateway()

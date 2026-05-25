@@ -27,14 +27,22 @@ class MessageSender:
 
     async def send(self, msg_type: str, user_id: str, group_id: str, text: str, skip_delay: bool = False):
         """OneBot HTTP 协议消息发送，负责具体的网络包推送。"""
-        # 0.1 抖音消息专有通道拦截与路由分发
+        # 0.1 抖音消息专有通道拦截与路由分发 (以 HTTP POST 方式路由，实现物理无状态解耦)
         if str(user_id).startswith("douyin_"):
             try:
-                from .douyin_bot import douyin_gateway
-                # 抖音网页版私信通过 CloakBrowser 物理发送，不占用 QQ 令牌桶
-                asyncio.create_task(douyin_gateway.send_message(str(user_id), text))
+                async def _send_http_post():
+                    url = f"http://127.0.0.1:{os.getenv('DOUYIN_PORT', '9001')}/send_private_msg"
+                    payload = {"user_id": str(user_id), "message": text}
+                    try:
+                        async with aiohttp.ClientSession() as session:
+                            async with session.post(url, json=payload, timeout=5) as resp:
+                                if resp.status != 200:
+                                    logger.warning(f"Failed to send HTTP private message to Douyin gateway: {resp.status}")
+                    except Exception as post_err:
+                        logger.error(f"Failed to HTTP POST private message to Douyin gateway: {post_err}")
+                asyncio.create_task(_send_http_post())
             except Exception as router_err:
-                logger.error(f"Failed to route message to Douyin gateway: {router_err}")
+                logger.error(f"Failed to route message to Douyin HTTP gateway: {router_err}")
             return
 
         # 0. 全局物理发包滑窗令牌桶平滑流控整流
