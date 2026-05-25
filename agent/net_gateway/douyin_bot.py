@@ -437,17 +437,30 @@ class DouyinGateway:
             except Exception as name_err:
                 logger.warning(f"Failed to extract contact nickname: {name_err}")
 
-            # 5. 物理点击并安全缓冲（若是当前已打开的高亮会话，则无需重复点击）
-            if not is_active_session_sync:
-                logger.info(f"Unread fan detected: {sender_nickname}, physically clicking to switch session...")
+            # 5. 物理点击并安全缓冲（强制物理重新点击以激活并刷新右侧 React 视窗，根治离屏背景下 React 停止渲染新消息的顽疾）
+            logger.info(f"Physically clicking/refreshing conversation with: {sender_nickname}...")
+            try:
                 try:
-                    # 【强力自愈】传入 force=True 物理强行点击，穿透可能存在的滑动动画不可见异常
-                    await contact_container.click(force=True)
-                    # 强制加入 3-5 秒的安全切换冷却时间，以模拟人类正常视觉和缓冲，抗风控性极高
-                    await asyncio.sleep(random.uniform(3.0, 4.5))
-                except Exception as click_err:
-                    logger.error(f"Failed to physically click contact item: {click_err}")
-                    return False
+                    # 优先物理鼠标模拟点击（100% 触发 React 合成事件与 mousedown/mouseup/click 链路）
+                    await contact_container.click(force=True, timeout=3000)
+                except Exception as phys_err:
+                    logger.warning(f"Failed physical click during active sync: {phys_err}, trying JS fallback...")
+                    # 物理点击受限时，fallback 至 JS 全层级原生穿透点击
+                    await contact_container.evaluate(
+                        """(node) => {
+                            node.click();
+                            let target = node.querySelector('[class*="name"], [class*="nickname"], [class*="title"], img, [class*="avatar"]');
+                            if (target) target.click();
+                            for (let child of node.children) {
+                                child.click();
+                            }
+                        }"""
+                    )
+                # 强制加入 2.5 - 3.5 秒的安全切换冷却时间，以模拟人类正常视觉和缓冲，抗风控性极高
+                await asyncio.sleep(random.uniform(2.5, 3.5))
+            except Exception as click_err:
+                logger.error(f"Failed to physically click contact item: {click_err}")
+                return False
 
             # === [新共识：Header 真实昵称终极纠正黑科技] ===
             try:
