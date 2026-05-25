@@ -25,7 +25,10 @@ Xl-General-AI-Agent/ (项目根目录)
 │   │   └── default_persona.json <-- 物理迁移: 默认的人设设定数据 (修复了原本在 agent.py 同级找不到的 Bug)
 │   ├── net_gateway/            <-- QQBot & 抖音双网关并发中枢 (高可用自愈与多通道物理隔离)
 │   │   ├── logger.py           <-- 活动日志追踪器 (已更新 agent_activity.log 重定向至 logs/)
-│   │   └── douyin_bot.py       <-- NEW: 抖音私信防封隐身网关 (CloakBrowser 常驻驱动)
+│   │   ├── douyin_browser.py   <-- NEW: 抖音常驻浏览器与 CDP 调试管理模块 (<150行)
+│   │   ├── douyin_dom_poller.py <-- NEW: 抖音被动私信 DOM 扫描与提取模块 (<300行)
+│   │   ├── douyin_dom_sender.py <-- NEW: 抖音物理打字与拟真发送模块 (<150行)
+│   │   └── douyin_bot.py       <-- 抖音独立网关进程主控，内置 9001 端口 HTTP 服务端 (<200行)
 │   ├── tools/                  <-- 内置高内聚工具包
 │   │   ├── media/
 │   │   │   └── send_image_tool.py <-- NEW: 公共发图组件 (本地图片 ➔ COS ➔ QQ 管理员推送)
@@ -335,36 +338,25 @@ CREATE TABLE IF NOT EXISTS active_sessions (
 
 ---
 
-## 12. 📡 抖音主页侧边栏常驻物理拟真网关与公共发图组件 (NEW & UPDATED - 2026-05-25)
+## 12. 📡 抖音主页侧边栏常驻物理微服务网关 (Micro-Gateway Architecture - 2026-05-25)
 
-为了在小萤中支持抖音渠道的客服与公开互动，且达成 100% 的抗检测防封号标准，系统无缝集成了 `CloakBrowser`，并在 `net_gateway/` 和 `tools/` 中实现了精纯的**「主页侧边栏常驻物理收发」**闭环：
+为了达成最高的系统稳定性、防止循环代码导入以及 100% 抗风控标准，抖音网关已被彻底重构并解耦为**物理独立的微服务进程**。各子模块均严格控制在 300 行以内：
 
-### 12.1 公共解耦发图工具 (`SendImageToQqTool`)
-*   **物理文件**：[`agent/tools/media/send_image_tool.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/tools/media/send_image_tool.py)。
-*   **设计原则**：将“本地图片 ➔ 上传腾讯云 COS ➔ 组装 OneBot CQ 码 ➔ 推送管理员 QQ_ADMIN_ID”的流程封装为统一的内置 `BaseTool` 并在 `bootstrap.py` 中完成自动挂载。实现了发图流程与具体业务网关的彻底解耦。
+### 12.1 抖音独立微服务子包构成 (物理四拆分)
+*   **`douyin_browser.py`** (~100行)：**浏览器与 CDP 管理层**。负责检测 9222 调试端口存活、以 `subprocess.Popen` 拉起孤儿常驻 stealth Chromium 浏览器，以及 CDP 无缝接管。
+*   **`douyin_dom_poller.py`** (~300行)：**DOM 扫描与提取层**。负责已登录状态验证、JS 联合爆破拉起私信侧边栏、以及 JS 活体 DOM 嵌套去重提取粉丝消息。
+*   **`douyin_dom_sender.py`** (~120行)：**DOM 拟真发送层**。负责 Meta+A/Backspace 原清空输入框、`page.keyboard.type` 拟真打字、Enter 发送以及发送结果双重 DOM 校验。
+*   **`douyin_bot.py`** (~180行)：**进程主控与 API 服务层**。作为独立微进程入口，内置 9001 端口 HTTP 服务端，提供 `/send_private_msg` 用于接收大脑下发的下行发送指令并委派发送。
 
-### 12.2 主页侧边栏常驻收发核心 (`DouyinGateway`)
-*   **物理文件**：[`agent/net_gateway/douyin_bot.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/net_gateway/douyin_bot.py)。
-*   **物理有头虚空常驻**：以 `headless=False` 保证真实 GPU 与硬件高信誉，但通过 `--window-position=-2000,-2000` 将其物理扔到您 Mac 屏幕可视边界外。实现 **亮哥桌面 0 干扰**，而 **风控端 100% 放行**。
-*   **双轨互补拟真唤醒**：首次冷启动导航至 `douyin.com`（主页），优先以模拟鼠标物理点击 [私信] 图标，无按钮时才直达 `/message` 兜底，彻底封死直接直达失效独立私信页导致的 404 风控挂断。
-*   **二向桥接内存映射 (`self.nickname_map`)**：主页侧边栏内 URL 不再携带明文 `chatId`。轮询时实时捕获未读红点联系人的昵称（`sender_nickname`），通过 MD5 计算出稳定的虚拟 ID：`chat_id = md5(nickname)[:16]`。建立 `ID <-> Nickname` 双向内存绑定。
-*   **高斯退避轮询与步进控制**：闲置采用高斯分布随机退避，对话活跃时收窄至 5s-10s；单次仅处理最上方的一个未读条目，切换后强制加入 3-5 秒安全冷却时间，以模拟真实人眼缓冲。
-*   **扫码登录自愈**：检测到重定向登录页时，自动定位二维码元素截图，调用 `send_image_to_qq` 推送至亮哥 QQ，后台自动重试阻断监测直至扫码完成恢复轮询。
+### 12.2 大脑与独立网关微服务通信协议 (HTTP 无状态总线)
+大脑大进程与抖音网关进程完全脱离 Python 直接依赖，采用标准的 OneBot 格式进行 HTTP 上下行通信：
+*   **上行消息投递 (Events Upstream)**：抖音独立进程通过 HTTP POST 将捕获到的粉丝事件实时上报到大脑进程的 `http://127.0.0.1:8000/event` 接口，交由 `MessageDispatcher` 分发。
+*   **下行私信发送 (Messages Downstream)**：大脑的 `MessageSender` 直接以 HTTP POST 异步将要发送的私信内容投递至抖音独立进程的 `http://127.0.0.1:9001/send_private_msg` 端口。
+*   **扫码自愈上报 (QR Code Report)**：当独立抖音网关检测到登录态失效并截图时，通过 HTTP POST 把图片和提示投递到大脑的 `http://127.0.0.1:8000/report_qrcode`，由大脑调起 `send_image_to_qq` 公共发图组件推送给亮哥，实现极其优雅的零依赖自愈。
 
-### 12.3 极致防封物理拟真发送机制
-*   **100% 原生按键物理清空**：物理聚焦输入框后，通过 Playwright 发送 `Command+A`（Mac下全选）与 `Backspace`（退格）原生按键组合彻底清空。**坚决不用 JS 注入 innerText**，触发全套键盘原生 input/change 事件，消灭任何非键盘操作痕迹。
-*   **拟真随机延时打字**：使用 `page.keyboard.type(text, delay=random(40, 75))` 逐字物理键入，模仿人手打字呼吸感，然后回车发送。
-*   **双重发送结果验证**：敲击回车 2 秒后，自动回读聊天记录最后一条由 `is_self` 发送的文本气泡。对比文本内容是否与回复一致，并物理扫描周边是否含有 `error`, `fail`, `warn` 等代表发送失败的感叹号 SVG 图标，有则向上游抛出异常以实现故障自愈。
-
-### 12.4 并发整流与零侵入高可用桥接
-*   **事件分发桥接**：`douyin_bot.py` 捕获未读 DOM 后，仅用 10 行代码将其封装为带 `douyin_` 前缀 of OneBot 兼容私信 event，直接调用 `dispatcher.dispatch_event(event)`。完美复用小萤已有的 **CSMA/CD 消息退避合并、Fatigue 脑力计费、短期记忆 1.0s 防抖持久化和 Prompt 缓存优化**。
-*   **多渠道并发隔离与物理排它锁**：
-    *   **会话级内存隔离**：通过 `user_<QQ号>`、`group_<群号>` 与 `douyin_<MD5昵称>` 将会话内存与历史消息在 RAG 中物理隔绝，多端并行绝不串线。
-    *   **抖音发送物理排它锁**：由于抖音多路并发需要实操同一个物理浏览器页面，在发送时加持 `self.send_lock` 独占互斥锁。在发信期间，`self.is_sending = True` 状态会**强行挂起后台轮询检测**，保障物理键盘和点击焦点决不冲突混杂。
-    *   **物理通道隔离**：`sender.py` 开头加设拦截，凡 `user_id` 带 `douyin_` 前缀的消息，委派给 `douyin_gateway.send_message` 执行 DOM 拟真输入，不干扰也完全不占用 QQ 本身的消息队列和令牌桶限流。
-    *   `security.py` 对 `douyin_` 前缀用户提供安全白名单直接穿透，以支持抖音上对所有普通粉丝的对话扮演回复。
-
----
+### 12.3 极致防封与并发隔离
+*   **会话级内存隔离**：通过 `user_<QQ号>`、`group_<群号>` 与 `douyin_<MD5昵称>` 将会话内存与历史消息在 RAG 中物理隔绝，多端并行绝不串线。
+*   **物理通道隔离**：`sender.py` 内部通过 user_id 中的 `douyin_` 前缀识别，以 HTTP 发送，不占用 QQ 本身的消息队列和令牌桶限流。`security.py` 提供白名单穿透以支持对抖音普通粉丝的扮演回复。
 
 ## 13. 📊 AI 开发者 Token 消耗与缓存命中率监测与审计规范
 
