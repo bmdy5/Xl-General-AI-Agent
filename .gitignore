@@ -43,4 +43,4 @@ qrcode_page.html
 
 # 本地运行时临时生成的数据与日志
 logs/
-memory/
+/memory/
