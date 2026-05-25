@@ -184,3 +184,209 @@ async def apply_sliding_window_and_scratchpad(agent) -> None:
 
     if agent.session:
         await agent.session.replace_all(agent.messages)
+
+
+def repair_truncated_json(input_str: str) -> str:
+    """截断参数 JSON 自动补全闭合器 (Python 极其精纯版)"""
+    if not input_str or not input_str.strip():
+        return "{}"
+    
+    # 快速通道：本身就是合法的 JSON
+    import json
+    try:
+        json.loads(input_str)
+        return input_str
+    except ValueError:
+        pass
+
+    stack = []
+    escaped = False
+    in_string = False
+    last_significant = -1
+
+    for i, c in enumerate(input_str):
+        if not c.isspace():
+            last_significant = i
+        if escaped:
+            escaped = False
+            continue
+        if in_string:
+            if c == "\\":
+                escaped = True
+                continue
+            if c == '"':
+                in_string = False
+                stack.pop()
+            continue
+        if c == '"':
+            in_string = True
+            stack.append('"')
+            continue
+        if c in ("{", "["):
+            stack.append(c)
+        elif c in ("}", "]"):
+            if stack:
+                stack.pop()
+
+    s = input_str[:last_significant + 1]
+
+    # 1. 剔除截断处的末尾多余逗号 ,
+    if s.endswith(","):
+        s = s[:-1]
+
+    # 2. 如果截断在 key 后的冒号，自动补齐 null
+    import re
+    if re.search(r'"\s*:\s*$', s):
+        s += " null"
+
+    # 3. 如果在字符串内部截断，补齐双引号
+    if in_string:
+        s += '"'
+        if stack and stack[-1] == '"':
+            stack.pop()
+
+    # 4. 按照嵌套栈的逆序闭合括号
+    while stack:
+        top = stack.pop()
+        if top == "{":
+            s += "}"
+        elif top == "[":
+            s += "]"
+        elif top == '"':
+            s += '"'
+
+    try:
+        json.loads(s)
+        return s
+    except Exception:
+        # 极端损坏退路：安全返回 {} 以在工具校验中优雅报错引导大模型重试
+        return "{}"
+
+
+def scavenge_tool_calls(text: str, allowed_names: list) -> list:
+    """从大模型思维溢出的 reasoning 或正文中抢救性提取 JSON 工具调用 (限定处于 Markdown 代码块中)"""
+    if not text:
+        return []
+    
+    import re
+    import json
+    allowed = set(allowed_names)
+    out = []
+    
+    # 物理安全：只提取被 ```json ... ``` 或 ``` ... ``` 代码块包裹的文本段落
+    blocks = []
+    # 匹配 ```json ... ```
+    for m in re.finditer(r'```json\s*([\s\S]*?)\s*```', text):
+        blocks.append(m.group(1))
+    # 匹配 ``` ... ```
+    for m in re.finditer(r'```\s*(\{[\s\S]*?\})\s*```', text):
+        blocks.append(m.group(1))
+    
+    # 支持 XML 标签变体：<DSML|invoke name="...">...</DSML|invoke>
+    for m in re.finditer(r'<[｜|]DSML[｜|]invoke\s+name="([^"]+)">([\s\S]*?)<\/[｜|]DSML[｜|]invoke>', text):
+        name = m.group(1)
+        body = m.group(2)
+        if name in allowed:
+            # 提取 parameter 参数
+            args = {}
+            for pm in re.finditer(r'<[｜|]DSML[｜|]parameter\s+name="([^"]+)"(?:\s+string="(true|false)")?\s*>([\s\S]*?)<\/[｜|]DSML[｜|]parameter>', body):
+                key = pm.group(1)
+                val = pm.group(3).strip()
+                args[key] = val
+            out.append({
+                "id": f"call_scavenged_dsml_{name}_{m.start()}",
+                "type": "function",
+                "function": {
+                    "name": name,
+                    "arguments": json.dumps(args)
+                }
+            })
+
+    for block in blocks:
+        block_clean = block.strip()
+        if not block_clean:
+            continue
+        
+        # 提取 block 内最外层的 { ... } JSON 结构
+        n = len(block_clean)
+        for i in range(n):
+            if block_clean[i] != "{":
+                continue
+            depth = 0
+            in_string = False
+            escaped = False
+            for j in range(i, n):
+                c = block_clean[j]
+                if escaped:
+                    escaped = False
+                    continue
+                if in_string:
+                    if c == "\\":
+                        escaped = True
+                        continue
+                    if c == '"':
+                        in_string = False
+                    continue
+                if c == '"':
+                    in_string = True
+                elif c == "{":
+                    depth += 1
+                elif c == "}":
+                    depth -= 1
+                    if depth == 0:
+                        candidate = block_clean[i:j + 1]
+                        try:
+                            # 尝试对候选 block 内 JSON 进行闭合自愈
+                            repaired = repair_truncated_json(candidate)
+                            parsed = json.loads(repaired)
+                            
+                            # 校验 3 种变体
+                            # 变体 1: { "name": "...", "arguments": "..." }
+                            if isinstance(parsed, dict) and isinstance(parsed.get("name"), str) and parsed["name"] in allowed:
+                                arguments = parsed.get("arguments", "{}")
+                                out.append({
+                                    "id": f"call_scavenged_name_{parsed['name']}_{i}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": parsed["name"],
+                                        "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments)
+                                    }
+                                })
+                            # 变体 2: { "type": "function", "function": { "name": "...", "arguments": "..." } }
+                            elif isinstance(parsed, dict) and parsed.get("type") == "function" and isinstance(parsed.get("function"), dict):
+                                fn = parsed["function"]
+                                if isinstance(fn.get("name"), str) and fn["name"] in allowed:
+                                    arguments = fn.get("arguments", "{}")
+                                    out.append({
+                                        "id": f"call_scavenged_fn_{fn['name']}_{i}",
+                                        "type": "function",
+                                        "function": {
+                                            "name": fn["name"],
+                                            "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments)
+                                        }
+                                    })
+                            # 变体 3: { "tool_name": "...", "tool_args": "..." }
+                            elif isinstance(parsed, dict) and isinstance(parsed.get("tool_name"), str) and parsed["tool_name"] in allowed:
+                                arguments = parsed.get("tool_args", "{}")
+                                out.append({
+                                    "id": f"call_scavenged_tool_{parsed['tool_name']}_{i}",
+                                    "type": "function",
+                                    "function": {
+                                        "name": parsed["tool_name"],
+                                        "arguments": arguments if isinstance(arguments, str) else json.dumps(arguments)
+                                    }
+                                })
+                        except Exception:
+                            pass
+                        i = j
+                        break
+            if len(out) >= 8:  # 限制单次提取上限
+                break
+                
+    # ── [极具洞察力的尾部最新优先排重] ──
+    unique_calls = {}
+    for tc in out:
+        name = tc["function"]["name"]
+        unique_calls[name] = tc
+        
+    return list(unique_calls.values())

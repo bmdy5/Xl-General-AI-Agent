@@ -256,3 +256,138 @@ async def test_llm_stream_data_chunk_usage_capture():
         assert usage_events[0]["data"]["cached_tokens"] == 500
         assert usage_events[0]["data"]["completion_tokens"] == 100
         assert usage_events[0]["data"]["total_tokens"] == 1100
+
+
+# ── 用例 6: 校验思考流/正文中 Markdown 代码块包裹的 tool_calls 抢救性提取与【尾部最新优先】排重 ──
+def test_scavenge_thinking_leakage_tool_calls():
+    from agent.core.history_repair import scavenge_tool_calls
+    
+    # 模拟大模型输出的文本流（其中含有思维溢出的 markdown 代码块，且对 write_file 进行了两次调用演示，第二轮是修正值）
+    leak_text = (
+        "我刚才想了一下，我需要对 core/llm.py 写入内容。\n"
+        "第一轮草稿是：\n"
+        "```json\n"
+        "{\n"
+        "  \"name\": \"write_file\",\n"
+        "  \"arguments\": {\"file_path\": \"wrong_path.py\", \"content\": \"print(1)\"}\n"
+        "}\n"
+        "```\n"
+        "不对，我需要修正为：\n"
+        "```json\n"
+        "{\n"
+        "  \"name\": \"write_file\",\n"
+        "  \"arguments\": {\"file_path\": \"agent/core/llm.py\", \"content\": \"print(2)\"}\n"
+        "}\n"
+        "```\n"
+        "这句不是代码块 `{'name': 'edit_file'}` 不需要扫描。"
+    )
+    
+    allowed = ["write_file", "read_file", "edit_file"]
+    scavenged = scavenge_tool_calls(leak_text, allowed)
+    
+    # 验证同名工具只提取到了最后一个 (尾部最新优先)
+    assert len(scavenged) == 1
+    call = scavenged[0]
+    assert call["function"]["name"] == "write_file"
+    
+    # 验证提取出的 arguments 是第二个（最新的）修正值
+    import json
+    args = json.loads(call["function"]["arguments"])
+    assert args["file_path"] == "agent/core/llm.py"
+    assert args["content"] == "print(2)"
+
+
+# ── 用例 7: 校验 JSON 截断修复的【安全分流与高危修改熔断】 ──
+@pytest.mark.asyncio
+async def test_json_repair_safety_sandboxing_分流():
+    from agent.core.history_repair import repair_truncated_json
+    from agent.core.agent import AgentMode, PermissionCategory
+    
+    # 1. 验证 repair_truncated_json 的闭合修护算法本身
+    broken_args = '{"file_path": "agent/core/llm.py", "lines_count": 800'
+    repaired = repair_truncated_json(broken_args)
+    assert repaired == '{"file_path": "agent/core/llm.py", "lines_count": 800}'
+    
+    # 2. 模拟在 ReAct 思考循环中，调用只读与写入工具遇到截断时的安全分流
+    class DummyAgent:
+        def __init__(self):
+            self.registry = MagicMock()
+            self.registry.list_names = MagicMock(return_value=["read_file", "write_file"])
+            self.registry.get = MagicMock(return_value=None)
+            self.registry.dispatch = AsyncMock(return_value="{}")
+            self.messages = []
+            self._mode = AgentMode.NORMAL
+            self.max_turns = 1
+            self._abort = asyncio.Event()
+            self._task_start_time = asyncio.get_event_loop().time()
+            self._turn_count = 0
+            self.llm = MagicMock()
+            self.session = None
+            self.compressor = MagicMock()
+            self.compressor.estimate_tokens = MagicMock(return_value=0)
+            self.compressor.should_compress = MagicMock(return_value=False)
+            
+        def _classify_permission(self, name, args):
+            return PermissionCategory.SAFE
+            
+        async def _build_system_prompt(self):
+            return "system"
+        async def _build_memory_block(self, input, turn):
+            return "memory"
+        def _quick_transition(self, input):
+            return None
+        async def _repair_history(self):
+            pass
+        async def _apply_sliding_window_and_scratchpad(self):
+            pass
+        def _create_tracked_task(self, coro):
+            pass
+            
+    # 用例 2a: 只读工具 read_file 发生 arguments 截断 ➔ 应当自愈成功
+    read_tc = [{
+        "id": "call_1",
+        "type": "function",
+        "function": {
+            "name": "read_file",
+            "arguments": '{"file_path": "agent/core/llm.py", "lines": 800' # 截断
+        }
+    }]
+    
+    agent = DummyAgent()
+    agent.llm.chat_stream = MagicMock()
+    # 模拟 llm.chat_stream yield tool_call 事件，其 data 就是 read_tc[0]
+    async def mock_chat_stream(*args, **kwargs):
+        yield {"type": "tool_call", "data": read_tc[0]}
+    agent.llm.chat_stream.side_effect = mock_chat_stream
+    
+    # 执行 run_loop 并核验只读工具自愈正常
+    events = []
+    async for ev in run_loop(agent, "test", turn=0, stream=True):
+        events.append(ev)
+        
+    # 成功捕获到了 tool_call 事件，且参数已被自愈修复
+    tc_events = [e for e in events if e.get("type") == "tool_call" and "args" in e]
+    assert len(tc_events) == 1
+    assert tc_events[0]["args"]["file_path"] == "agent/core/llm.py"
+    assert tc_events[0]["args"]["lines"] == 800
+    
+    # 用例 2b: 写入工具 write_file 发生 arguments 截断 ➔ 应当熔断报错
+    write_tc = [{
+        "id": "call_2",
+        "type": "function",
+        "function": {
+            "name": "write_file",
+            "arguments": '{"file_path": "agent/core/llm.py", "content": "class" ' # 截断
+        }
+    }]
+    
+    agent_write = DummyAgent()
+    agent_write.llm.chat_stream = MagicMock()
+    async def mock_chat_stream_write(*args, **kwargs):
+        yield {"type": "tool_call", "data": write_tc[0]}
+    agent_write.llm.chat_stream.side_effect = mock_chat_stream_write
+    
+    # 应当触发 raise json.JSONDecodeError 并捕获为崩溃退出，绝不执行写入
+    with pytest.raises(Exception):
+        async for _ in run_loop(agent_write, "test", turn=0, stream=True):
+            pass

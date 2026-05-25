@@ -448,3 +448,30 @@ CREATE TABLE IF NOT EXISTS active_sessions (
     PYTHONPATH=. venv/bin/pytest tests/
     ```
     只有在 `73 passed` 完美绿屏的测试环境下，重构才被判定为真正成功。
+
+---
+
+## 15. 🛡️ 异常防灾自愈与工具抢救自适应修护规范 (Self-Healing & Scavenger Spec - 2026-05-25)
+
+为了终结推理大模型流式截断或思维泄漏引发的 API 参数语法崩溃、工具调用失连等高频疑难故障，系统全面融入并升级了基于 Reasonix 理念的“防灾异常修护双引擎”。
+
+### 15.1 🛠️ 截断参数 JSON 自动补齐闭合 (JSON Repair)
+*   **物理位置**：[`agent/core/history_repair.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/core/history_repair.py) 中的 `repair_truncated_json(input_str)`。
+*   **工作原理**：单字符嵌套栈自愈状态机。在 1 轮扫描内自动判定双引号及大括号的嵌套深度，剔除尾部多余逗号，对空键补 `null`，对未闭合字符串补双引号，并逆序补全括号，使截断的 arguments 瞬间恢复为合法 JSON。
+*   **安全分流红线**：
+    *   **安全只读工具**（如 `read_file`, `web_search`）：允许自愈，提速增效；
+    *   **高危写入修改工具**（如 `write_file`, `edit_file`, `bash`）：一旦发生 JSON 截断，**强行熔断拦截，禁止自动修复写入**！直接 raise 语法异常给大模型，利用 ReAct 机制诱发其重试重写，以 100% 绝对保护系统源码不被畸变代码覆盖破坏。
+
+### 15.2 🔍 思考流/正文工具调用抢救性回收 (Tool-call Scavenger)
+*   **物理位置**：[`agent/core/history_repair.py`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/agent/core/history_repair.py) 中的 `scavenge_tool_calls(text, allowed_names)`。
+*   **工作原理**：白盒扫描大模型推理思考流（`reasoning_content`）或正文中泄露的 JSON 调用，支持 `name/arguments`、OpenAI standard、`tool_name/tool_args` 等 3 大主流 JSON 变体以及 `<DSML|invoke>` 标签。
+*   **防爆安全与排重红线**：
+    *   **代码块限制**：Scavenger **只提取被 Markdown 代码块或显式标签包裹的 JSON 对象**，彻底隔离普通闲聊陈述句中的“举例”噪声，防止越权；
+    *   **尾部最新优先 (Last-Write-Wins)**：当在一轮响应中提取到多个相同的工具代码块（如大模型进行自我纠偏），系统通过字典覆盖，**仅提取并执行最后一个（最尾端的）代码块**，杜绝反面教材或旧演示的误执行。
+
+### 15.3 🧪 TDD 测试驱动红线
+后续所有被唤醒的 AI 助手，在对大模型底层接口进行任何改动时，**必须强制运行回归测试验证**：
+```bash
+PYTHONPATH=. venv/bin/pytest tests/test_token_metrics.py
+```
+本轮新增的 `test_scavenge_thinking_leakage_tool_calls` 与 `test_json_repair_safety_sandboxing_分流` 必须保持 100% 物理绿通！
