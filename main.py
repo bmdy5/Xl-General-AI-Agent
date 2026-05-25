@@ -25,6 +25,9 @@ def _run_safe(coro):
         pass
 
 if __name__ == "__main__":
+    import sys
+    sys.stdout.reconfigure(line_buffering=True)
+    sys.stderr.reconfigure(line_buffering=True)
     setup_system()
     if len(sys.argv) > 1:
         arg = sys.argv[1]
