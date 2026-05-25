@@ -64,7 +64,7 @@ class QQGateway:
         self.scheduler = GatewayScheduler(self)
         self.csma_backoff_seconds = float(os.getenv("QQ_CSMA_BACKOFF_SECONDS", "2.0"))
 
-    async def run(self):
+    async def run(self, only_douyin: bool = False):
         """网关启动主协程，启动 WebSocket 长连接并挂载守护协程。"""
         # 为 context 动态绑定语音合成发送回调，使用 try...except 彻底消除 hasattr 反射探测
         from .tts import send_voice
@@ -76,19 +76,44 @@ class QQGateway:
                 return await send_voice(self.context, msg_type, user_id, group_id, text, style, is_test)
         self.context.send_voice_handler = custom_send_voice
         
+        # ── 独立抖音进程分支 ──
+        if only_douyin:
+            logger.info("Initializing Standalone Douyin Gateway Process...")
+            try:
+                from .douyin_bot import douyin_gateway
+                douyin_gateway.start(self.dispatcher)
+                logger.info("Douyin Gateway standalone process daemon started successfully.")
+                
+                # 保持主协程常驻挂起
+                while True:
+                    await asyncio.sleep(3600)
+            except asyncio.CancelledError:
+                logger.info("Standalone Douyin Gateway cancelled.")
+            finally:
+                try:
+                    from .douyin_bot import douyin_gateway
+                    await douyin_gateway.stop()
+                    logger.info("Douyin Gateway standalone stopped and resources cleared.")
+                except Exception as douyin_stop_err:
+                    logger.error(f"Error when stopping Standalone Douyin Gateway: {douyin_stop_err}")
+            return
+
         logger.info(f"MyAgent — QQ Gateway 模式 (100% 模块化)")
         logger.info(f"WebSocket: {NC_WS_URL}")
         logger.info(f"HTTP API:  {NC_HTTP_URL}")
         
         self._http = aiohttp.ClientSession()
         try:
-            # 1. 异步并行挂载并启动抖音私信防封网关
-            try:
-                from .douyin_bot import douyin_gateway
-                douyin_gateway.start(self.dispatcher)
-                logger.info("Douyin Gateway started concurrently in background task.")
-            except Exception as douyin_err:
-                logger.error(f"Failed to launch Douyin Gateway: {douyin_err}")
+            # 1. 仅在明确启用时，在 QQ 进程中并行挂载并启动抖音私信网关
+            if os.getenv("ENABLE_DOUYIN_IN_QQ", "false").lower() == "true":
+                try:
+                    from .douyin_bot import douyin_gateway
+                    douyin_gateway.start(self.dispatcher)
+                    logger.info("Douyin Gateway started concurrently in QQ background task.")
+                except Exception as douyin_err:
+                    logger.error(f"Failed to launch Douyin Gateway inside QQ Gateway: {douyin_err}")
+            else:
+                logger.info("Douyin Gateway is disabled inside QQ Gateway process (isolated).")
 
             await self.scheduler.start()
             
@@ -101,12 +126,13 @@ class QQGateway:
                     await asyncio.sleep(3)
         finally:
             # 2. 优雅停机并释放 CloakBrowser 浏览器沙箱资源
-            try:
-                from .douyin_bot import douyin_gateway
-                await douyin_gateway.stop()
-                logger.info("Douyin Gateway stopped and resources cleared.")
-            except Exception as douyin_stop_err:
-                logger.error(f"Error when stopping Douyin Gateway: {douyin_stop_err}")
+            if os.getenv("ENABLE_DOUYIN_IN_QQ", "false").lower() == "true":
+                try:
+                    from .douyin_bot import douyin_gateway
+                    await douyin_gateway.stop()
+                    logger.info("Douyin Gateway stopped and resources cleared.")
+                except Exception as douyin_stop_err:
+                    logger.error(f"Error when stopping Douyin Gateway: {douyin_stop_err}")
 
             await self.scheduler.stop()
             if self._http and not self._http.closed:
