@@ -273,6 +273,7 @@ class LLMClient:
         stream_timeout = float(os.getenv("LLM_STREAM_TIMEOUT", "15.0"))
         try:
             tool_calls_acc: dict[int, dict] = {}
+            usage_yielded = False
             # 通过 asyncio.wait_for 为 chunk 的迭代读取提供配置化强心跳超时拦截，杜绝网络无响应死锁
             response_iter = response.__aiter__()
             while True:
@@ -288,14 +289,22 @@ class LLMClient:
                     yield {"type": "error", "content": f"LLM stream connection lost: chunk read timeout after {stream_timeout}s"}
                     return
 
-                # 安全拦截：包含 stream_options include_usage 的流末尾包含 choices 为空的 usage chunk，进行白盒截获
-                if not hasattr(chunk, "choices") or not chunk.choices:
-                    if hasattr(chunk, "usage") and chunk.usage:
-                        usage_obj = chunk.usage
-                        prompt_tokens = getattr(usage_obj, "prompt_tokens", 0) or 0
-                        completion_tokens = getattr(usage_obj, "completion_tokens", 0) or 0
-                        total_tokens = getattr(usage_obj, "total_tokens", 0) or 0
+                # 1. 物理安全提取：支持在任何 chunk 携带 usage 的情况，且通过 usage_yielded 确保只 yield 一次
+                if not usage_yielded and hasattr(chunk, "usage") and chunk.usage:
+                    usage_obj = chunk.usage
+                    prompt_tokens = getattr(usage_obj, "prompt_tokens", 0) or 0
+                    completion_tokens = getattr(usage_obj, "completion_tokens", 0) or 0
+                    total_tokens = getattr(usage_obj, "total_tokens", 0) or 0
+                    
+                    # 💡 物理防灾：防范单元测试中的万能 MagicMock 触发与 int 的 '>' 大小比较异常
+                    is_valid_tokens = False
+                    try:
+                        if isinstance(total_tokens, (int, float)):
+                            is_valid_tokens = total_tokens > 0
+                    except Exception:
+                        is_valid_tokens = False
                         
+                    if is_valid_tokens:
                         cached_tokens = 0
                         prompt_tokens_details = getattr(usage_obj, "prompt_tokens_details", None)
                         if prompt_tokens_details:
@@ -312,6 +321,10 @@ class LLMClient:
                                 "cached_tokens": cached_tokens,
                             }
                         }
+                        usage_yielded = True
+
+                # 2. 如果 choices 为空或不存在，说明这是最终的元数据帧，不再进行 choices 解析
+                if not hasattr(chunk, "choices") or not chunk.choices:
                     continue
 
                 delta = chunk.choices[0].delta

@@ -192,3 +192,67 @@ async def test_react_prefix_purification():
     
     # 黄金断言 3: agent.messages 在被 llm_chat 处理后，其 User 消息依然保持纯净，没有被物理重写
     assert agent.messages[0]["content"] == "开始执行净化测试"
+
+
+# ── 用例 5: 校验 llm.py 在非标准流式下对非空 choices 数据帧所携带 usage 的精准提取与去重 ──
+@pytest.mark.asyncio
+async def test_llm_stream_data_chunk_usage_capture():
+    client = LLMClient(model="openai/gpt-4o")
+
+    # chunk1 模拟携带数据且携带 usage 属性的非标数据帧
+    mock_prompt_details1 = MagicMock()
+    mock_prompt_details1.cached_tokens = 500
+
+    mock_usage1 = MagicMock()
+    mock_usage1.prompt_tokens = 1000
+    mock_usage1.completion_tokens = 100
+    mock_usage1.total_tokens = 1100
+    mock_usage1.prompt_tokens_details = mock_prompt_details1
+
+    chunk1 = MagicMock()
+    chunk1.choices = [MagicMock()]
+    chunk1.choices[0].delta.content = "第一句话"
+    chunk1.choices[0].delta.tool_calls = None
+    chunk1.choices[0].delta.reasoning_content = None
+    chunk1.usage = mock_usage1
+
+    # chunk2 模拟下一个普通数据帧，虽然也可能带有 usage（例如某些每一帧都带 usage 的渠道），但应该被我们的 usage_yielded 过滤掉
+    chunk2 = MagicMock()
+    chunk2.choices = [MagicMock()]
+    chunk2.choices[0].delta.content = "第二句话"
+    chunk2.choices[0].delta.tool_calls = None
+    chunk2.choices[0].delta.reasoning_content = None
+    chunk2.usage = mock_usage1
+
+    # 模拟 async generator
+    class AsyncIter:
+        def __init__(self, items):
+            self.items = items
+            self.idx = 0
+        def __aiter__(self):
+            return self
+        async def __anext__(self):
+            if self.idx >= len(self.items):
+                raise StopAsyncIteration
+            item = self.items[self.idx]
+            self.idx += 1
+            return item
+
+    mock_stream_response = AsyncIter([chunk1, chunk2])
+
+    with patch("agent.core.llm.acompletion", AsyncMock(return_value=mock_stream_response)):
+        events = []
+        async for ev in client.chat_stream(messages=[{"role": "user", "content": "你好"}], model_override="openai/gpt-4o"):
+            events.append(ev)
+        
+        # 验证文本正常 yield
+        assert any(e["type"] == "text_delta" and e["content"] == "第一句话" for e in events)
+        assert any(e["type"] == "text_delta" and e["content"] == "第二句话" for e in events)
+        
+        # 验证虽然两个 chunk 都携带了 usage 属性，但是由于 usage_yielded 去重机制，只 yield 了一次 usage 事件
+        usage_events = [e for e in events if e["type"] == "usage"]
+        assert len(usage_events) == 1
+        assert usage_events[0]["data"]["prompt_tokens"] == 1000
+        assert usage_events[0]["data"]["cached_tokens"] == 500
+        assert usage_events[0]["data"]["completion_tokens"] == 100
+        assert usage_events[0]["data"]["total_tokens"] == 1100
