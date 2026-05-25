@@ -568,6 +568,18 @@ class DouyinGateway:
                 if not message_nodes and not has_active_header:
                     return False
 
+            # 过滤只保留承载真正聊天文本的消息气泡，彻底屏蔽时间标签或通知横幅的坐标误判
+            valid_message_nodes = []
+            if message_nodes:
+                for node in message_nodes:
+                    try:
+                        has_text = await node.query_selector('[class*="text"], [class*="content"], [class*="bubble-content"]')
+                        if has_text:
+                            valid_message_nodes.append(node)
+                    except Exception:
+                        continue
+            message_nodes = valid_message_nodes
+
             # 主动心跳同步时的前置去重校验：检查最新一条消息是否由我们自己（小萤）发出
             # 如果最后一条是我们自己发的，说明我们已经物理回复完成，无需处理
             if is_active_session_sync:
