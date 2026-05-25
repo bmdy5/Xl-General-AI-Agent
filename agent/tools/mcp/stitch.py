@@ -68,6 +68,10 @@ class StitchTool(BaseTool):
                             "type": "string",
                             "description": "自定义视觉风格，自由描述。例如：'赛博朋克霓虹风'、'苹果极简风'、'像素复古游戏风'、'玻璃拟态风'、'暗黑科技风'、'清新自然风'、'中式国潮风'等，不限于此。",
                         },
+                        "projectId": {
+                            "type": "string",
+                            "description": "可选的 Stitch 项目 ID，如果不传，默认使用预设项目。",
+                        },
                     },
                     "required": ["prompt"],
                 },
@@ -84,23 +88,38 @@ class StitchTool(BaseTool):
     ) -> AsyncGenerator[ToolResult, None]:
         prompt = input_args["prompt"]
         style = input_args.get("style", "")
+        project_id = input_args.get("projectId", "9177609784991880809")
+        dest_path = input_args.get("dest_path", None)
 
         try:
             风格提示 = f"{style}风格" if style else "默认风格"
             yield ToolResult(type="progress", data=f"Stitch: 正在生成 {风格提示} 的UI...")
 
+            # 确定写盘的目标路径
+            target_dest = dest_path or "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/stitch_latest.html"
+
             # 1. 尝试通过 MCP 协议生成 UI
-            html_css = await self._generate_via_mcp(prompt, style)
+            html_css = await self._generate_via_mcp(prompt, style, project_id=project_id)
             
             # 2. 若 MCP 失败或返回空，触发 API 主动下拉自愈，从项目拉取最新 screen 并自动写盘
             if not html_css:
                 logger.info("Stitch: MCP returned empty. Triggering self-healing to pull latest project screens...")
-                html_css = await self._pull_latest_screen_code("9177609784991880809")
+                html_css = await self._pull_latest_screen_code(project_id, dest_path=target_dest)
 
             # 3. 仍为空则回退到基础 fallback 模板，绝对防范超时熔断
             if not html_css or html_css.startswith("[Stitch"):
                 logger.warning("Stitch: Pull latest screen empty. Falling back to default template.")
                 html_css = await self._generate_fallback(prompt, style)
+
+            # 4. 统一最终强制写盘（针对 MCP 成功和 Fallback 成功的情况进行安全持久化）
+            if html_css and not html_css.startswith("Error:"):
+                try:
+                    os.makedirs(os.path.dirname(target_dest), exist_ok=True)
+                    with open(target_dest, "w", encoding="utf-8") as f:
+                        f.write(html_css)
+                    logger.info(f"🎉 Stitch: Successfully saved code to {target_dest}")
+                except Exception as save_err:
+                    logger.warning(f"Save html to {target_dest} failed: {save_err}")
 
             if html_css:
                 yield ToolResult(
@@ -122,7 +141,7 @@ class StitchTool(BaseTool):
                 result_for_assistant=f"Stitch 调用失败: {e}",
             )
 
-    async def _pull_latest_screen_code(self, project_id: str) -> Optional[str]:
+    async def _pull_latest_screen_code(self, project_id: str, dest_path: Optional[str] = None) -> Optional[str]:
         """主动从 Google Stitch REST API 拉取指定项目下最新生成的 Screen UI 代码并自动落盘."""
         import subprocess
         try:
@@ -154,8 +173,8 @@ class StitchTool(BaseTool):
                        "Content-Type": "application/json"}
             base_url = "https://stitch.googleapis.com/v1"
 
-            # 1. 列出项目下的 screens
-            screens_url = f"{base_url}/projects/{project_id}/screens"
+            # 1. 列出项目下的 screens，强制挂载 pageSize=100 避免默认分页被截断导致召回遗漏 Bug！
+            screens_url = f"{base_url}/projects/{project_id}/screens?pageSize=100"
             logger.info(f"Stitch: Pulling screens from {screens_url}")
             screens_resp = await loop.run_in_executor(None,
                 lambda: __import__("urllib.request").request.urlopen(
@@ -188,11 +207,12 @@ class StitchTool(BaseTool):
             if html:
                 full_html = f"<style>{css}</style>\n{html}"
                 # 自动保存落盘到指定项目根目录下，解决小萤异步丢失问题
-                dest_path = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/stitch_latest.html"
+                target_dest = dest_path or "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/stitch_latest.html"
                 try:
-                    with open(dest_path, "w", encoding="utf-8") as f:
+                    os.makedirs(os.path.dirname(target_dest), exist_ok=True)
+                    with open(target_dest, "w", encoding="utf-8") as f:
                         f.write(full_html)
-                    logger.info(f"🎉 Stitch: Successfully saved code to {dest_path}")
+                    logger.info(f"🎉 Stitch: Successfully saved code to {target_dest}")
                 except Exception as save_err:
                     logger.warning(f"Save html failed: {save_err}")
                 return full_html
@@ -278,7 +298,7 @@ class StitchTool(BaseTool):
             logger.warning(f"Stitch REST API error: {e}")
             return None
 
-    async def _generate_via_mcp(self, prompt: str, style: str) -> Optional[str]:
+    async def _generate_via_mcp(self, prompt: str, style: str, project_id: str = "9177609784991880809") -> Optional[str]:
         """通过 MCP 协议调用 Stitch Server."""
         try:
             loop = asyncio.get_running_loop()
@@ -291,7 +311,7 @@ export CLOUDSDK_PYTHON=/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-G
 cat <<'MCP_INPUT' | /Users/xiaofeng/.npm/_npx/d7bcf1e9427e7044/node_modules/.bin/stitch-mcp 2>/dev/null
 {json.dumps({"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"xl-agent","version":"2.0"}}})}
 {json.dumps({"jsonrpc":"2.0","method":"notifications/initialized"})}
-{json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"generate_screen_from_text","arguments":{"projectId":"9177609784991880809","prompt":prompt,"deviceType":"DESKTOP","modelId":"GEMINI_3_1_PRO"}}})}
+{json.dumps({"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"generate_screen_from_text","arguments":{"projectId":project_id,"prompt":prompt,"deviceType":"DESKTOP","modelId":"GEMINI_3_1_PRO"}}})}
 MCP_INPUT"""
             result = await loop.run_in_executor(None, lambda: _sp.run(
                 ["bash", "-c", script],
