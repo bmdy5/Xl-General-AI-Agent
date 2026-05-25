@@ -98,7 +98,7 @@ class AgentExecutor:
             ):
                 # ── 冲突检测 (Collision Detection) 第一阶段 ──
                 if self.bus.is_collision(session_key, task_start_time):
-                    if presenter.total_sent_tokens > 0:
+                    if presenter.total_sent_tokens > 0 and "douyin" not in str(session_key):
                         await self.context.send_msg(msg_type, user_id, group_id, "🔄 [系统调度] 检测到主人发送了新指令，正在合并并重新思考，请稍等...", skip_delay=True)
                     presenter.buf = ""
                     return
@@ -229,7 +229,7 @@ class AgentExecutor:
 
             # ── 冲突检测 (Collision Detection) 第二阶段 ──
             if self.bus.is_collision(session_key, task_start_time):
-                if presenter.total_sent_tokens > 0:
+                if presenter.total_sent_tokens > 0 and "douyin" not in str(session_key):
                     await self.context.send_msg(msg_type, user_id, group_id, "🔄 [系统调度] 检测到主人发送了新指令，正在合并并重新思考，请稍等...", skip_delay=True)
                 presenter.buf = ""
                 return
