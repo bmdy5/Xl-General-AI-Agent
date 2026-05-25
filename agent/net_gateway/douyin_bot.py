@@ -581,7 +581,7 @@ class DouyinGateway:
                             """(node) => {
                                 if (!node) return false;
                                 let rect = node.getBoundingClientRect();
-                                let container = document.querySelector('[class*="chat-container"], [class*="message-list"], #imSaasContainerId') || node.parentElement;
+                                let container = node.parentElement;
                                 let containerRect = container ? container.getBoundingClientRect() : { left: 0, width: 800 };
                                 let relativeLeft = rect.left - containerRect.left;
                                 let mid = containerRect.width / 2;
@@ -607,7 +607,7 @@ class DouyinGateway:
                         """(node) => {
                             if (!node) return false;
                             let rect = node.getBoundingClientRect();
-                            let container = document.querySelector('[class*="chat-container"], [class*="message-list"], #imSaasContainerId') || node.parentElement;
+                            let container = node.parentElement;
                             let containerRect = container ? container.getBoundingClientRect() : { left: 0, width: 800 };
                             let relativeLeft = rect.left - containerRect.left;
                             let mid = containerRect.width / 2;
