@@ -37,12 +37,14 @@ Xl-General-AI-Agent/ (项目根目录)
 ├── config/
 │   ├── settings.yaml           <-- 中央配置总枢纽 (包含大模型 key、NapCat ws/http、Stitch 等)
 │   └── .stitch_env             <-- 物理迁移: Stitch MCP 的局部 Shell 环境配置
-├── logs/                       <-- 统一的运行时日志与错误流存放所 (NEW - 让根目录干净 50%+)
-│   ├── agent_activity.log      <-- 运行时白名单高纯净交互日志
-│   ├── coworker_activity.log   <-- 运行时三方普通旁路日志
-│   ├── gateway.log             <-- 网关输出日志 (重定向)
-│   ├── gateway.err             <-- 网关标准错误输出日志 (重定向)
-│   └── startup.log             <-- 启动中枢日志 (重定向)
+├── experience/                 <-- 🧠 三级架构中的【第二级：动态经验唤醒区】(所有经验已扁平化至此)
+│   └── *.md                    <-- 碎片化的实战经验文档 (支持 2500字符上限、自动打卡统计)
+├── logs/                       <-- 统一的运行时日志与错误流存放所
+│   ├── agent_core.log          <-- 🧠 核心推理通道: AI内心OS、Tool调用入参出参追踪
+│   ├── metrics.log             <-- 📊 引擎指标通道: Token审计、RAG缓存命中监控
+│   ├── dreaming.log            <-- 🌙 后台进化通道: 睡前图谱合并、记忆双写打点
+│   ├── gateway.log             <-- 🌐 底层网络通道: QQ WS断线重连、API超时报错
+│   └── startup.log             <-- 🚀 启动中枢日志 (通过脚本重定向)
 ├── scripts/                    <-- 统一的开发调试小工具包
 │   ├── debug_run.py            <-- 物理迁移: 移出 tests 目录的临时开发调试测试脚本
 │   ├── debug_stitch.py
@@ -489,6 +491,18 @@ make gateway-restart  # 独立启动/重启 QQ 大脑
    * **实装**：系统结合当前上下文的 RAG 预估 `ctx_tokens` 以及本轮助理实际说出的中英文混合字数估算值，做最高规格的计费上限评估。在日志中清晰打印 `约 XXX Tokens (智能估算)`，既绝不低估外部 API 的计费成本保护账单安全，又彻底终结了 `0 Tokens` 日志的产生。
    * **测试保护**：在 `tests/test_token_metrics.py` 中新增 `test_llm_stream_data_chunk_usage_capture` 用例白盒模拟非标准数据帧附带 usage 的解析与去重，74 项 pytest 单元测试已全部通过。
 
+### 13.4 📉 多通道立体分流日志架构 (NEW - 2026-05-26)
+
+由于早期的 `gateway.log` 是一个混杂了 Token 审计、RAG 检索 Dump、后台梦境合并与底层网络心跳的“大杂烩”，导致调试串台严重，目前系统已演进为**四通道独立物理日志引擎**：
+
+1. **核心推理通道 (`agent_core.log`)**：专注于呈现 AI 的“内心OS”，包括大模型调用某个 Tool 的前置意图与入参。
+2. **引擎指标通道 (`metrics.log`)**：存放 Token 消耗统计、RAG 命中率等系统调优指标。超长 Query 在此被强制截断。
+3. **后台进化通道 (`dreaming.log`)**：隔离深夜异步图谱合并（KI Merge）和记忆双写过程，防止后台任务污染前台日志。
+4. **底层网络通道 (`gateway.log`)**：回归纯粹，仅保留 QQ WebSocket 重连、API 熔断报错等心跳与网络抛错。
+
+**【上下文染色追踪 (ContextVars)】**
+系统通过 `contextvars` 在请求到达的最顶层强制打上 `[session_id]` 或 `[System:Dream]` 前缀。并发请求时，通过正则或 `grep "User_1705919142"` 即可 100% 提取无串台的单用户纯净对话链路。
+**严禁退回单一的 `basicConfig` 暴力输出时代！**
 ### 13.2 🚨 AI 开发者自检与优化红线
 
 后续所有被唤醒的 AI 编码助手，在开始调试、修复 Bug 或新增任何重大功能之前，**必须前置执行 Token 与缓存审计自检**：
