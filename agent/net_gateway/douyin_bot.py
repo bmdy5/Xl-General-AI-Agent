@@ -94,7 +94,18 @@ class DouyinGateway:
     def start(self) -> None:
         """拉起抖音网关协程。"""
         logger.info("Douyin Gateway starting...")
-        self._running_task = asyncio.create_task(self._run_loop())
+        if os.getenv("DOUYIN_POLL_ENABLED", "").lower() in ("true", "1", "yes"):
+            self._running_task = asyncio.create_task(self._run_loop())
+        else:
+            self._running_task = None
+            async def _init_only():
+                try:
+                    await asyncio.sleep(2)
+                    await self.browser_mgr.init_browser()
+                    logger.info("✅ [浏览器接管] 独立 CloakBrowser 浏览器接管初始化完成 (API 服务随时可用)")
+                except Exception as e:
+                    logger.error(f"Failed to initialize browser only: {e}")
+            asyncio.create_task(_init_only())
         # 独立拉起 aiohttp web server，接收大脑下发指令
         asyncio.create_task(self._start_web_server())
 
@@ -239,6 +250,7 @@ class DouyinGateway:
         """启动 HTTP API 服务，接收大脑下发指令及视觉操作请求"""
         app = web.Application()
         app.router.add_post('/send_private_msg', self._handle_send_msg)
+        app.router.add_get('/get_nickname', self._handle_get_nickname)
         
         # 挂载 4 个通用视觉接管 API 路由契约
         app.router.add_post('/vision/screenshot', self._handle_vision_screenshot)
@@ -252,6 +264,18 @@ class DouyinGateway:
         await site.start()
         logger.info(f"Douyin Standalone API Server listening on http://127.0.0.1:{DOUYIN_PORT}")
 
+    async def _handle_get_nickname(self, request) -> web.Response:
+        """根据 user_id 获取对应的粉丝昵称"""
+        try:
+            user_id = request.query.get("user_id")
+            if not user_id:
+                return web.json_response({"status": "failed", "reason": "Missing user_id"}, status=400)
+            chat_id = user_id.split("douyin_", 1)[-1]
+            nickname = self.nickname_map.get(user_id) or self.nickname_map.get(chat_id) or ""
+            return web.json_response({"status": "success", "nickname": nickname})
+        except Exception as e:
+            return web.json_response({"status": "failed", "reason": str(e)}, status=500)
+
     async def _handle_send_msg(self, request) -> web.Response:
         """处理来自大脑下达的发送私信请求"""
         try:
@@ -261,16 +285,27 @@ class DouyinGateway:
             if not user_id or not message:
                 return web.json_response({"status": "failed", "reason": "Missing user_id or message"}, status=400)
 
-            # 委派给 DOM 发送器执行
-            asyncio.create_task(self.sender.send_message(
-                page=self.browser_mgr.page,
-                target_user_id=user_id,
-                text=message,
-                nickname_map=self.nickname_map,
-                ensure_logged_in_cb=lambda: self.poller.ensure_logged_in(self.browser_mgr.page, self._report_qrcode)
-            ))
-            return web.json_response({"status": "ok"})
+            # A方案：同步阻塞发信，硬超时限制 10s
+            try:
+                success = await asyncio.wait_for(
+                    self.sender.send_message(
+                        page=self.browser_mgr.page,
+                        target_user_id=user_id,
+                        text=message,
+                        nickname_map=self.nickname_map,
+                        ensure_logged_in_cb=lambda: self.poller.ensure_logged_in(self.browser_mgr.page, self._report_qrcode)
+                    ),
+                    timeout=10.0
+                )
+                if success:
+                    return web.json_response({"status": "success"})
+                else:
+                    return web.json_response({"status": "failed", "reason": "DOM operation failed in browser"})
+            except asyncio.TimeoutError:
+                logger.error("Timeout (10s) reached while sending DOM message.")
+                return web.json_response({"status": "failed", "reason": "DOM operation timed out (10s)"})
         except Exception as e:
+            logger.error(f"Error handling send private message request: {e}", exc_info=True)
             return web.json_response({"status": "failed", "reason": str(e)}, status=500)
 
     # ── ⚡ 视觉接管 API 处理器 ──

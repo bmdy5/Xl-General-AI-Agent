@@ -383,7 +383,10 @@ class BrowserAgentTool(BaseTool):
             }, ensure_ascii=False)
             yield ToolResult(type="result", data=summary)
         except Exception as e:
-            yield ToolResult(type="result", data=f"视觉任务失败: {e}")
+            err_msg = str(e)
+            if "Param Incorrect" in err_msg or "400" in err_msg:
+                err_msg += " (提示：通常是多模态截图载荷过大或接口限制引发，建议检查图片尺寸压缩与模型配置。)"
+            yield ToolResult(type="result", data=f"视觉任务失败: {err_msg}")
 
 
 class BrowserScrollTool(BaseTool):

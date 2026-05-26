@@ -21,45 +21,123 @@ class MessageSender:
         self.bot = bot
         self.douyin_fail_count = 0
         
-        # 初始化全局发包平滑流控令牌桶限流器（默认最大并发爆发5包，每1.5秒填充1包）
         capacity = float(os.getenv("QQ_LIMITER_CAPACITY", "5.0"))
         refill_rate = float(os.getenv("QQ_LIMITER_REFILL_RATE", "0.67"))
         self.limiter = TokenBucketLimiter(capacity=capacity, refill_rate=refill_rate)
 
+    async def _get_douyin_nickname(self, user_id: str) -> str:
+        """从网关获取当前用户的昵称"""
+        try:
+            url = f"http://127.0.0.1:{os.getenv('DOUYIN_PORT', '9000')}/get_nickname?user_id={user_id}"
+            if self.bot._http and not self.bot._http.closed:
+                timeout = aiohttp.ClientTimeout(total=3.0)
+                async with self.bot._http.get(url, timeout=timeout) as resp:
+                    if resp.status == 200:
+                        data = await resp.json()
+                        if data.get("status") == "success":
+                            return data.get("nickname") or ""
+            else:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(url, timeout=3.0) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data.get("status") == "success":
+                                return data.get("nickname") or ""
+        except Exception as e:
+            logger.error(f"Failed to get nickname from gateway: {e}")
+        return ""
+
     async def _handle_douyin_fail(self, user_id: str, text: str):
         self.douyin_fail_count += 1
-        logger.warning(f"Douyin sending failed count: {self.douyin_fail_count}")
-        if self.douyin_fail_count >= 3:
-            self.douyin_fail_count = 0 # 熔断触发，清零防重复
-            from agent.tools.visual_tools import send_qq_notification
-            alarm_msg = (
-                f"⚠️ **[自愈熔断报警]**\n"
-                f"亮哥，物理 DOM 私信连续 3 次发送验证失败（可能抖音界面改版或遭遇风控）。\n"
-                f"小萤正在强制激活通用视觉自愈接管引擎！准备通过标准 1280x800 内存视觉卡片对当前消息执行物理点击发送自愈！\n\n"
-                f"待发送内容: {text[:100]}..."
-            )
-            await send_qq_notification(alarm_msg)
+        logger.warning(f"Douyin sending failed. Consecutive count: {self.douyin_fail_count}")
+        
+        chat_id = user_id.split("douyin_", 1)[-1]
+        nickname = await self._get_douyin_nickname(user_id) or chat_id
+
+        # 启动后台异步任务执行 Mimo 视觉自愈补发
+        async def _run_visual_healing():
+            try:
+                from agent.core.visual_agent import VisualAgent
+                from agent.tools.visual_tools import send_qq_notification
+                
+                start_msg = (
+                    f"🌸 **[小萤自愈启动]**\n"
+                    f"亮哥，检测到常规 DOM 方式回复粉丝【{nickname}】失败。\n"
+                    f"小萤正在激活 Mimo 视觉引擎，直连 CDP 操作浏览器进行物理自愈补发..."
+                )
+                await send_qq_notification(start_msg)
+                
+                visual = VisualAgent(
+                    llm_client=self.bot.llm,
+                    memory_manager=self.bot.memory,
+                    cdp_url=os.getenv("VISUAL_CDP_URL", "http://127.0.0.1:9222")
+                )
+                async with visual:
+                    res = await visual.execute(
+                        task=f"在左侧私信联系人列表中寻找并点击名字为 '{nickname}' 的联系人，然后点击输入框，输入并发送私信消息：'{text}'"
+                    )
+                
+                if res.get("success"):
+                    success_msg = (
+                        f"🌸 **[小萤专属自愈播报]**\n"
+                        f"亮哥！刚才常规 DOM 发送私信失败了，小萤已自动启动 Mimo 视觉引擎，直连 CDP 操作浏览器，成功帮亮哥把消息补发出去啦！✨\n\n"
+                        f"收信粉丝: {nickname}\n"
+                        f"补发内容: {text}"
+                    )
+                    await send_qq_notification(success_msg)
+                    logger.info(f"Visual self-healing succeeded for {nickname}")
+                else:
+                    err = res.get("error", "未知原因")
+                    fail_msg = (
+                        f"⚠️ **[小萤自愈失败]**\n"
+                        f"抱歉亮哥，小萤尝试了 Mimo 视觉自愈补发给【{nickname}】但也失败了。\n"
+                        f"失败原因: {err}\n"
+                        f"待发送内容: {text}"
+                    )
+                    await send_qq_notification(fail_msg)
+                    logger.error(f"Visual self-healing failed for {nickname}: {err}")
+            except Exception as ex:
+                logger.error(f"Error executing visual healing: {ex}", exc_info=True)
+                try:
+                    from agent.tools.visual_tools import send_qq_notification
+                    await send_qq_notification(f"⚠️ **[小萤自愈异常]**\n自愈引擎执行时抛出异常: {ex}")
+                except Exception:
+                    pass
+                    
+        asyncio.create_task(_run_visual_healing())
 
     async def send(self, msg_type: str, user_id: str, group_id: str, text: str, skip_delay: bool = False):
         """OneBot HTTP 协议消息发送，负责具体的网络包推送。"""
         # 0.1 抖音消息专有通道拦截与路由分发 (以 HTTP POST 方式路由，实现物理无状态解耦)
         if str(user_id).startswith("douyin_"):
             try:
-                async def _send_http_post():
-                    url = f"http://127.0.0.1:{os.getenv('DOUYIN_PORT', '9000')}/send_private_msg"
-                    payload = {"user_id": str(user_id), "message": text}
-                    try:
+                url = f"http://127.0.0.1:{os.getenv('DOUYIN_PORT', '9000')}/send_private_msg"
+                payload = {"user_id": str(user_id), "message": text}
+                
+                async def _do_post(sess, is_shared: bool):
+                    timeout_val = aiohttp.ClientTimeout(total=15.0) if is_shared else 15.0
+                    async with sess.post(url, json=payload, timeout=timeout_val) as resp:
+                        if resp.status == 200:
+                            data = await resp.json()
+                            if data.get("status") == "success" or data.get("status") == "ok":
+                                self.douyin_fail_count = 0
+                                logger.info(f"Douyin message sent successfully via DOM to {user_id}")
+                            else:
+                                logger.warning(f"Douyin gateway returned failed status: {data.get('reason')}")
+                                await self._handle_douyin_fail(user_id, text)
+                        else:
+                            logger.warning(f"Douyin gateway returned status code {resp.status}")
+                            await self._handle_douyin_fail(user_id, text)
+
+                try:
+                    if self.bot._http and not self.bot._http.closed:
+                        await _do_post(self.bot._http, is_shared=True)
+                    else:
                         async with aiohttp.ClientSession() as session:
-                            async with session.post(url, json=payload, timeout=5) as resp:
-                                if resp.status != 200:
-                                    logger.warning(f"Failed to send HTTP private message to Douyin gateway: {resp.status}")
-                                    await self._handle_douyin_fail(user_id, text)
-                                else:
-                                    self.douyin_fail_count = 0
-                    except Exception as post_err:
-                        logger.error(f"Failed to HTTP POST private message to Douyin gateway: {post_err}")
-                        await self._handle_douyin_fail(user_id, text)
-                asyncio.create_task(_send_http_post())
+                            await _do_post(session, is_shared=False)
+                except Exception as post_err:
+                    logger.error(f"Failed to HTTP POST private message to Douyin gateway: {post_err}")
+                    await self._handle_douyin_fail(user_id, text)
             except Exception as router_err:
                 logger.error(f"Failed to route message to Douyin HTTP gateway: {router_err}")
             return
