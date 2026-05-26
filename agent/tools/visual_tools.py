@@ -314,6 +314,81 @@ class BrowserTypeTool(BaseTool):
             yield ToolResult(type="result", data=f"Error typing text: {e}")
 
 
+class BrowserAgentTool(BaseTool):
+    """通用视觉Agent工具 — 让小萤用视觉方式操作任意浏览器页面"""
+
+    @property
+    def name(self) -> str:
+        return "browser_agent"
+
+    async def description(self) -> str:
+        return "通用视觉操作引擎。截图→思考→点击/打字/滚动→验证，在网页上完成任意任务。自动从记忆系统学习。"
+
+    def is_read_only(self) -> bool:
+        return False
+
+    def is_concurrency_safe(self) -> bool:
+        return False
+
+    def needs_permissions(self, input_args: Optional[dict] = None) -> bool:
+        return True  # 高危写操作，需要审批
+
+    def get_tool_definition(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": "通用视觉浏览器操作引擎。通过截图→分析→操作→验证的闭环，在网页上完成任意任务。自动从记忆中学习经验。适用于DOM链路失败时的兜底自愈，或操作不熟悉的网页。",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "port": {
+                            "type": "integer",
+                            "description": "微服务网关端口，如抖音=9000"
+                        },
+                        "task": {
+                            "type": "string",
+                            "description": "要执行的任务描述，如'在抖音私信里回复最新消息：你好'"
+                        }
+                    },
+                    "required": ["port", "task"]
+                }
+            }
+        }
+
+    async def validate_input(self, input_args: dict, context: Any = None) -> dict:
+        if not input_args.get("port") or not input_args.get("task"):
+            return {"result": False, "message": "Missing port or task"}
+        return {"result": True, "message": ""}
+
+    async def call(self, input_args: dict, context: Any = None) -> AsyncGenerator[ToolResult, None]:
+        port = int(input_args.get("port"))
+        task = str(input_args.get("task"))
+        agent = context
+
+        if not agent or not getattr(agent, "llm", None):
+            yield ToolResult(type="result", data="视觉任务失败: 未绑定LLM客户端")
+            return
+
+        try:
+            from agent.core.visual_agent import VisualAgent
+            visual = VisualAgent(
+                gateway_port=port,
+                llm_client=agent.llm,
+                memory_manager=agent.memory,
+            )
+            result = await visual.execute(task=task)
+            summary = json.dumps({
+                "success": result["success"],
+                "steps": result["steps"],
+                "error": result.get("error", ""),
+                "history": [h.get("result", "") for h in result.get("history", [])[-3:]],
+            }, ensure_ascii=False)
+            yield ToolResult(type="result", data=summary)
+        except Exception as e:
+            yield ToolResult(type="result", data=f"视觉任务失败: {e}")
+
+
 class BrowserScrollTool(BaseTool):
     """通用网页视口物理滚动工具"""
     @property
