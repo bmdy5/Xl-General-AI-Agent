@@ -382,49 +382,60 @@ make gateway-restart  # 独立启动/重启 QQ 大脑
 
 ---
 
-## 12bis. 🤖 通用视觉 Agent 骨架 (VisualAgent - 2026-05-26)
+## 12bis. 🤖 通用视觉 Agent (VisualAgent - 2026-05-26 重构)
 
-208 行纯骨架代码。零平台特定逻辑，不硬编码 CSS、坐标、URL。通过现有 `/vision/*` 网关操作任意浏览器页面。
+254 行纯骨架。零平台代码。自己通过 CDP 直接操控 Chrome，**不依赖任何网关进程**。
 
-### 设计哲学
+### 能做什么
 
-- **代码只做骨架**：截图 → 查记忆 → LLM 决策 → 执行 → 验证变化 → 写入记忆
-- **所有知识在记忆系统**：坐标、操作经验、失败教训全部存在记忆里，代码永不修改
-- **纯文本决策**：不传截图给 LLM（零图片 token），只传任务+历史+记忆文本
-- **自验证闭环**：执行前后 MD5 哈希比对截图判断操作是否生效
-- **防死循环**：连续 2 次同操作无变化 → 自动终止
+小萤可以自主完成任意浏览器任务：
 
-### 配置
+- "打开 www.baidu.com 搜索 Python 教程"
+- "在抖音私信里回复最新消息：你好呀"
+- "打开 clawhub.ai 截图给我看"
+- 任何需要在网页上点击、打字、滚动的操作
+
+### 工作流程
+
+```
+Step 0: 连CDP → 截图 → 智谱GLM-4V看图 → 直接输出JSON动作（点击/打字/滚动）
+Step 1-4: 纯文本决策（便宜），基于历史上下文
+每步执行后MD5比对截图 → 确认操作生效 → 写入记忆系统
+```
+
+### 配置（.env）
 
 ```bash
-export VISUAL_AGENT_MODEL="deepseek/deepseek-v4-flash"  # 决策模型
-export VISUAL_AGENT_MAX_STEPS="5"                        # 最大步数
+VISUAL_AGENT_MODEL=openai/glm-4-flash         # 文本决策模型
+VISUAL_AGENT_VISION_MODEL=openai/glm-4v-flash  # 看图决策模型（仅step0用）
+VISUAL_AGENT_MAX_STEPS=5                       # 每任务最大步数
+VISUAL_CDP_URL=http://127.0.0.1:9222           # Chrome CDP地址
 ```
 
 ### 接入方式
 
-作为工具 `browser_agent` 注册在工具系统中，小萤可以通过 ReAct 直接调用：
+工具名 `browser_agent`，小萤直接调用，**只需传 task，无其他参数**：
 
 ```
-用户: "帮我在抖音私信里回复粉丝"
-  → 小萤调用 browser_agent(port=9000, task="回复抖音私信最新消息：你好")
-    → 截图 → 决策 → 点击 → 打字 → 发送 → 验证 → 返回结果
+用户: "去抖音私信里回复最新消息"
+  → 小萤调用 browser_agent(task="打开douyin.com，进入私信，回复最新消息：你好")
+    → 连CDP → 截图 → 看图决策 → 点击 → 打字 → 发送 → 完成
 ```
 
-也可直接编程调用：
+编程调用：
 ```python
 from agent.core.visual_agent import VisualAgent
-agent = VisualAgent(gateway_port=9000, llm_client=llm, memory_manager=mem)
-result = await agent.execute(task="在抖音回复私信")
+async with VisualAgent(llm_client=llm, memory_manager=mem) as agent:
+    result = await agent.execute(task="打开百度搜索Python")
 ```
 
 ### 与 DOM 方案的关系
 
 ```
-DOM poller/sender (常态) → 连续失败3次 → VisualAgent 接管 (兜底)
-                                            ↓
-                                     成功后切回 DOM
+DOM poller/sender (抖音常态) → VisualAgent (其他网站、或DOM失败兜底)
 ```
+
+DOM 处理抖音常规收发（零token、零延迟），VisualAgent 处理所有其他场景。
 
 ---
 
