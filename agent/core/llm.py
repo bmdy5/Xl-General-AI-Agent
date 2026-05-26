@@ -128,12 +128,15 @@ class LLMClient:
                 return {"content": "", "tool_calls": None, "reasoning_content": None, "tokens_used": 0}
             try:
                 if attempt == 2 and kwargs["model"] == self.model:
-                    logging.warning(
-                        f"LLM call failed 2 times, upgrading attempt 3 to Pro: "
-                        f"from {kwargs['model']} to {self.model_pro}"
-                    )
-                    kwargs["model"] = self.model_pro
-                    if "deepseek" in kwargs["model"].lower():
+                    if self.model_pro:
+                        logging.warning(
+                            f"LLM call failed 2 times, upgrading attempt 3 to Pro: "
+                            f"from {kwargs['model']} to {self.model_pro}"
+                        )
+                        kwargs["model"] = self.model_pro
+                    else:
+                        logging.warning("LLM call failed 2 times, model_pro is not set, sticking to current model.")
+                    if "deepseek" in str(kwargs.get("model", "")).lower():
                         kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
                         kwargs["api_base"] = "https://api.deepseek.com/v1"
                 

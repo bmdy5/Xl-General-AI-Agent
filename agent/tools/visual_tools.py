@@ -449,3 +449,6 @@ class BrowserScrollTool(BaseTool):
             yield ToolResult(type="result", data=b64)
         except Exception as e:
             yield ToolResult(type="result", data=f"Error performing scroll: {e}")
+
+
+
