@@ -380,6 +380,54 @@ make douyin-restart   # 独立启动/重启抖音网关
 make gateway-restart  # 独立启动/重启 QQ 大脑
 ```
 
+---
+
+## 12bis. 🤖 通用视觉 Agent 骨架 (VisualAgent - 2026-05-26)
+
+208 行纯骨架代码。零平台特定逻辑，不硬编码 CSS、坐标、URL。通过现有 `/vision/*` 网关操作任意浏览器页面。
+
+### 设计哲学
+
+- **代码只做骨架**：截图 → 查记忆 → LLM 决策 → 执行 → 验证变化 → 写入记忆
+- **所有知识在记忆系统**：坐标、操作经验、失败教训全部存在记忆里，代码永不修改
+- **纯文本决策**：不传截图给 LLM（零图片 token），只传任务+历史+记忆文本
+- **自验证闭环**：执行前后 MD5 哈希比对截图判断操作是否生效
+- **防死循环**：连续 2 次同操作无变化 → 自动终止
+
+### 配置
+
+```bash
+export VISUAL_AGENT_MODEL="deepseek/deepseek-v4-flash"  # 决策模型
+export VISUAL_AGENT_MAX_STEPS="5"                        # 最大步数
+```
+
+### 接入方式
+
+作为工具 `browser_agent` 注册在工具系统中，小萤可以通过 ReAct 直接调用：
+
+```
+用户: "帮我在抖音私信里回复粉丝"
+  → 小萤调用 browser_agent(port=9000, task="回复抖音私信最新消息：你好")
+    → 截图 → 决策 → 点击 → 打字 → 发送 → 验证 → 返回结果
+```
+
+也可直接编程调用：
+```python
+from agent.core.visual_agent import VisualAgent
+agent = VisualAgent(gateway_port=9000, llm_client=llm, memory_manager=mem)
+result = await agent.execute(task="在抖音回复私信")
+```
+
+### 与 DOM 方案的关系
+
+```
+DOM poller/sender (常态) → 连续失败3次 → VisualAgent 接管 (兜底)
+                                            ↓
+                                     成功后切回 DOM
+```
+
+---
+
 ## 13. 📊 AI 开发者 Token 消耗与缓存命中率监测与审计规范
 
 为了彻底抑制小萤在大模型交互、记忆调优、以及多端并发网关下的算力浪费与巨额 Token 费用开销，系统建立了极其严格的 Token 与缓存命中率审计红线。
