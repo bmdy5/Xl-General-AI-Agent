@@ -236,6 +236,24 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                 yield {"type": "text_delta", "content": content}
 
         if not tool_calls_list:
+            # 🐶 遗忘拦截看门狗 (Amnesia Watchdog)
+            has_experience = memory_block and "[DYNAMIC EXPERIENCE BLOCK]" in memory_block
+            has_recorded = any(tc.get("name") == "record_skill_usage" for tc in tool_call_history)
+            if has_experience and not has_recorded and len(tool_call_history) > 0:
+                logger.warning("🚨 [遗忘拦截看门狗] 探测到触发了动态经验但未打卡！")
+                nudge_msg = {
+                    "role": "system",
+                    "content": "⚠️ [遗忘拦截看门狗] 警告：本次会话触发了动态经验（[DYNAMIC EXPERIENCE BLOCK]），且你执行了工具操作，但你忘记调用 `record_skill_usage` 进行实战打卡了！请立即调用该工具，传入本次使用的经验文件名 (skill_name) 和 success 状态。这是硬性规范要求！"
+                }
+                agent.messages.append(nudge_msg)
+                if agent.session:
+                    await agent.session.append_message(nudge_msg)
+                
+                # 强行继续下一轮（不 yield completed，不 return）
+                turn += 1
+                agent._turn_count += 1
+                continue
+
             yield {"type": "completed"}
             agent._create_tracked_task(on_session_end(agent))
             if getattr(agent, "session_key", None) and hasattr(agent.memory, "save_active_session_async"):

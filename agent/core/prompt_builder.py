@@ -7,6 +7,85 @@ from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("agent.prompt_builder")
 
+def _strip_yaml_frontmatter(content: str) -> str:
+    """物理脱水：正则去除 YAML 表头"""
+    return re.sub(r'^---\s*\n(.*?)\n---\s*\n', '', content, flags=re.DOTALL)
+
+def _load_core_skills() -> str:
+    """加载顶级技能到 System Prompt (Muscle Memory)"""
+    skills_dir = Path(__file__).resolve().parents[2] / "skills"
+    if not skills_dir.exists():
+        return ""
+    
+    blocks = []
+    # 按照目录排序确保稳定
+    for item in sorted(skills_dir.iterdir()):
+        if item.is_file() and item.name.endswith(".md"):
+            try:
+                content = item.read_text(encoding="utf-8")
+                clean_content = _strip_yaml_frontmatter(content).strip()
+                if clean_content:
+                    blocks.append(f"### [Skill: {item.name}]\n{clean_content}")
+            except Exception:
+                pass
+    
+    if not blocks:
+        return ""
+        
+    combined = "\n\n".join(blocks)
+    # 2500字符截断熔断保护 Tokens (严酷报错启动)
+    if len(combined) > 2500:
+        logger.error("Core skills length exceeded 2500 chars. To protect token limits and system safety, startup is blocked.")
+        raise RuntimeError("顶级技能(skills)总长度超标(>2500字符)！严禁静默截断核心安全红线，请开发者必须精简 skills 目录内的文件内容！")
+        
+    return f"\n## 🔴 Core Embedded Skills (Muscle Memory)\n{combined}\n"
+
+def _search_experiences(query: str) -> str:
+    """动态经验检索 (Experience RAG)"""
+    # 阈值阻断: >= 2 字符即触发，适配高密度中文环境
+    if len(query.strip()) < 2:
+        return ""
+        
+    exp_dir = Path(__file__).resolve().parents[2] / "experience"
+    if not exp_dir.exists():
+        return ""
+        
+    words = _KEYWORD_RE.findall(query.lower())
+    if not words:
+        return ""
+        
+    results = []
+    for item in exp_dir.iterdir():
+        if item.is_file() and item.name.endswith(".md"):
+            try:
+                content = item.read_text(encoding="utf-8")
+                lower_content = content.lower()
+                score = sum(lower_content.count(w) for w in words)
+                # 命中阈值: 至少出现相关词汇
+                if score > 0:
+                    results.append((score, item.name, content))
+            except Exception:
+                pass
+                    
+    if not results:
+        return ""
+        
+    # 取 Top 2
+    results.sort(key=lambda x: x[0], reverse=True)
+    top_results = results[:2]
+    
+    blocks = []
+    for score, name, content in top_results:
+        clean_content = _strip_yaml_frontmatter(content).strip()
+        blocks.append(f"### [Experience: {name} (Hit Score: {score})]\n{clean_content}")
+        
+    combined = "\n\n".join(blocks)
+    # 截断保护
+    if len(combined) > 2000:
+        combined = combined[:2000] + "\n... (Truncated)"
+        
+    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n以下是系统为你动态匹配的场景避坑指南与经验（Top-2），请在操作前仔细参考：\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
+
 _KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')
 
 STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call him '{user_address}' with respect, loyalty, and geeky enthusiasm. You have been working together long enough to have real rapport — act like it.
@@ -159,6 +238,15 @@ async def build_system_prompt(agent) -> str:
         rules = rules_file.read_text(encoding="utf-8").strip()
         if rules:
             dynamic += f"\n## Dynamic Evolved Preferences (learned from past corrections)\n{rules}\n"
+
+    # 【新增】挂载顶级静态技能 (Muscle Memory)
+    try:
+        core_skills = _load_core_skills()
+        dynamic += core_skills
+    except RuntimeError as e:
+        raise e
+    except Exception as e:
+        logger.error(f"Failed to load core skills: {e}")
 
     return static_p + dynamic
 
@@ -348,6 +436,14 @@ async def build_memory_block(agent, user_input: str, turn: int) -> str:
     if agent._turn_count > 0 and agent._turn_count % 10 == 0:
         lines.append("")
         lines.append("⚠️ Periodic Nudge: 已对话多轮。请检查是否有值得长期记住的内容。")
+
+    # 【新增】动态检索经验手册 (Experience)
+    try:
+        experience_block = _search_experiences(user_input)
+        if experience_block:
+            lines.append(experience_block)
+    except Exception as e:
+        logger.error(f"Failed to search experiences: {e}")
 
     lines.append("[/MEMORY BLOCK]")
     block = "\n".join(lines)

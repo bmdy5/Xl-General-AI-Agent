@@ -62,6 +62,7 @@ def build_agent(session_id: str = "default"):
     from agent.tools.qq.status import GetQQStatusTool
     from agent.tools.qq.send_message import SendQQMessageTool
     from agent.tools.visual_tools import BrowserScreenshotTool, BrowserClickTool, BrowserTypeTool, BrowserScrollTool, BrowserAgentTool
+    from agent.tools.skill_usage_tool import RecordSkillUsageTool
     
     from agent.tools.registry import registry
 
@@ -98,6 +99,7 @@ def build_agent(session_id: str = "default"):
         registry.register(SendImageToQqTool())
         registry.register(SpawnAgentTool())
         registry.register(StitchTool())
+        registry.register(RecordSkillUsageTool())
         registry.register(MCPClientTool())
         registry.register(MemoryTool())
         registry.register(OrganizeNotesTool())
