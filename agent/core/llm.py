@@ -107,6 +107,9 @@ class LLMClient:
         if "deepseek" in model_name.lower():
             kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
             kwargs["api_base"] = "https://api.deepseek.com/v1"
+        elif "zhipu" in model_name.lower() or "glm" in model_name.lower():
+            kwargs["api_key"] = os.getenv("ZHIPU_API_KEY") or ""
+            kwargs["api_base"] = os.getenv("ZHIPU_API_BASE", "https://open.bigmodel.cn/api/paas/v4")
         else:
             # 容灾鉴权自适应兜底继承：若全局 api_key 为空，则自适应继承借用可用的 deepseek_api_key
             kwargs["api_key"] = self.api_key or self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
@@ -228,6 +231,9 @@ class LLMClient:
         if "deepseek" in model_name.lower():
             kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
             kwargs["api_base"] = "https://api.deepseek.com/v1"
+        elif "zhipu" in model_name.lower() or "glm" in model_name.lower():
+            kwargs["api_key"] = os.getenv("ZHIPU_API_KEY") or ""
+            kwargs["api_base"] = os.getenv("ZHIPU_API_BASE", "https://open.bigmodel.cn/api/paas/v4")
         else:
             # 容灾鉴权自适应兜底继承：若全局 api_key 为空，则自适应继承借用可用的 deepseek_api_key
             kwargs["api_key"] = self.api_key or self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""

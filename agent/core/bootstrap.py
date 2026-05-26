@@ -6,8 +6,17 @@ from .config import settings
 
 logger = logging.getLogger("agent.bootstrap")
 
+def _load_dotenv():
+    """从项目根目录 .env 文件加载环境变量（若存在）。"""
+    from pathlib import Path
+    env_file = Path(__file__).resolve().parents[2] / ".env"
+    if env_file.exists():
+        from dotenv import load_dotenv
+        load_dotenv(env_file, override=False)
+
 def setup_system():
-    """初始化系统环境：警告过滤与统一日志格式"""
+    """初始化系统环境：加载 .env、警告过滤与统一日志格式"""
+    _load_dotenv()
     logging.basicConfig(
         level=logging.INFO,
         format='%(asctime)s - %(levelname)s - %(message)s',

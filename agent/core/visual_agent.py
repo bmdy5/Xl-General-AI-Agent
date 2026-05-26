@@ -22,11 +22,12 @@ logger = logging.getLogger("agent.visual")
 
 from agent.tools.visual_tools import call_vision_gateway
 
-# ── 配置 (换模型只改这里) ──
-DEFAULT_MODEL = os.getenv("VISUAL_AGENT_MODEL", "deepseek/deepseek-v4-flash")
+# ── 配置 (换模型只改环境变量) ──
+DEFAULT_MODEL = os.getenv("VISUAL_AGENT_MODEL", "zhipu/glm-4-flash")
+DEFAULT_VISION_MODEL = os.getenv("VISUAL_AGENT_VISION_MODEL", "zhipu/glm-4v-flash")
 DEFAULT_MAX_STEPS = int(os.getenv("VISUAL_AGENT_MAX_STEPS", "5"))
 
-DECIDE_PROMPT = """你是小萤的视觉操作引擎。你只能通过执行给定的操作来完成任务。
+DECIDE_PROMPT = """你是小萤的视觉操作引擎。根据任务、历史、记忆决定下一步。
 
 任务: {task}
 已执行步骤: {history_text}
@@ -40,10 +41,9 @@ DECIDE_PROMPT = """你是小萤的视觉操作引擎。你只能通过执行给�
 - done: 任务完成
 
 规则:
-1. 输出严格JSON，包含thought字段
-2. 坐标必须来自记忆或经验，不能编造
+1. 严格输出JSON，包含thought字段
+2. 坐标基于截图或记忆中看到的实际位置，不能编造
 3. 连续两次操作无效果 → 输出done
-4. 不确定时选保守操作
 
 输出示例:
 {{"thought": "搜索框在页面顶部，点击激活", "action": "click", "x": 500, "y": 100}}"""
@@ -63,11 +63,12 @@ class VisualAgent:
     """
 
     def __init__(self, gateway_port: int, llm_client, memory_manager,
-                 model: str = "", max_steps: int = 0):
+                 model: str = "", vision_model: str = "", max_steps: int = 0):
         self.port = gateway_port
         self.llm = llm_client
         self.memory = memory_manager
         self.model = model or DEFAULT_MODEL
+        self.vision_model = vision_model or DEFAULT_VISION_MODEL
         self.max_steps = max_steps or DEFAULT_MAX_STEPS
         self.running = True
 
@@ -76,7 +77,7 @@ class VisualAgent:
         self.running = False
 
     async def execute(self, task: str, context: str = "") -> dict:
-        """执行视觉任务。返回 {success, steps, history, error}。"""
+        """执行视觉任务。Step 0 用视觉模型直接看图决策，后续步骤纯文本。"""
         self.running = True
         history: list[dict] = []
         last_action = None
@@ -86,10 +87,10 @@ class VisualAgent:
             if not self.running:
                 return {"success": False, "error": "手动停止", "steps": step, "history": history}
 
-            # 1. 查记忆 (成功经验优先)
+            # 1. 查记忆
             memories = await self._recall(task, history)
 
-            # 2. LLM 决策 (纯文本，零图片 token)
+            # 2. 决策
             history_text = "\n".join(
                 [f"Step{i}: {h['action']} → {h.get('result','')}" for i, h in enumerate(history)]
             ) or "无"
@@ -99,10 +100,22 @@ class VisualAgent:
                 memories=memories or "无相关记忆",
             )
 
-            resp = await self.llm.chat(
-                messages=[{"role": "user", "content": prompt}],
-                model_override=self.model,
-            )
+            if step == 0:
+                # 第一步: 传截图给视觉模型，直接输出 JSON 动作
+                b64 = await self._screenshot()
+                resp = await self.llm.chat(
+                    messages=[{"role": "user", "content": [
+                        {"type": "text", "text": prompt},
+                        {"type": "image_url", "image_url": {"url": b64}},
+                    ]}],
+                    model_override=self.vision_model,
+                )
+            else:
+                # 后续步骤: 纯文本 (已有 step 0 的上下文)
+                resp = await self.llm.chat(
+                    messages=[{"role": "user", "content": prompt}],
+                    model_override=self.model,
+                )
             try:
                 action = json.loads(resp.get("content", "{}"))
             except json.JSONDecodeError:
