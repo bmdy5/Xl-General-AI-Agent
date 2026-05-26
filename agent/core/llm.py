@@ -107,7 +107,7 @@ class LLMClient:
         if "deepseek" in model_name.lower():
             kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
             kwargs["api_base"] = "https://api.deepseek.com/v1"
-        elif "zhipu" in model_name.lower() or "glm" in model_name.lower():
+        elif "glm" in model_name.lower():
             kwargs["api_key"] = os.getenv("ZHIPU_API_KEY") or ""
             kwargs["api_base"] = os.getenv("ZHIPU_API_BASE", "https://open.bigmodel.cn/api/paas/v4")
         else:
@@ -231,7 +231,7 @@ class LLMClient:
         if "deepseek" in model_name.lower():
             kwargs["api_key"] = self.deepseek_api_key or os.getenv("DEEPSEEK_API_KEY") or ""
             kwargs["api_base"] = "https://api.deepseek.com/v1"
-        elif "zhipu" in model_name.lower() or "glm" in model_name.lower():
+        elif "glm" in model_name.lower():
             kwargs["api_key"] = os.getenv("ZHIPU_API_KEY") or ""
             kwargs["api_base"] = os.getenv("ZHIPU_API_BASE", "https://open.bigmodel.cn/api/paas/v4")
         else:
