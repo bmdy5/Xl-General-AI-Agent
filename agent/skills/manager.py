@@ -219,8 +219,9 @@ def create_skill(name: str, trigger: str, steps: list, agent=None) -> Path:
                 
         # 3. 智能演进合并
         if similar_folder:
-            skill_dir = skills_root / similar_folder
-            skill_path = skill_dir / "SKILL.md"
+            # similar_folder 这里实际上应该是文件名(去掉.md)，为了兼容先处理
+            safe_sim = similar_folder.replace(".md", "")
+            skill_path = skills_root / f"{safe_sim}.md"
             if skill_path.exists():
                 try:
                     old_content = skill_path.read_text(encoding="utf-8")
@@ -233,10 +234,8 @@ def create_skill(name: str, trigger: str, steps: list, agent=None) -> Path:
 
         # 4. 全新落盘
         safe_name = re.sub(r'[^\w一-鿿-]', '_', name)[:40]
-        skill_dir = skills_root / safe_name.lower()
-        skill_dir.mkdir(parents=True, exist_ok=True)
+        skill_path = skills_root / f"{safe_name.lower()}.md"
         
-        skill_path = skill_dir / "SKILL.md"
         if not skill_path.exists():
             now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
             content = (
