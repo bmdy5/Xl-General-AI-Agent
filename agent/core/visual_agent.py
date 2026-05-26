@@ -50,26 +50,17 @@ DECIDE_PROMPT = """你是小萤的视觉操作引擎。根据任务、历史、�
 {{"thought": "搜索框在页面顶部，点击激活", "action": "click", "x": 500, "y": 100}}"""
 
 
-class VisualAgent:
-    """通用视觉操作骨架。自己连 CDP，不依赖网关。
-
-    async with VisualAgent(llm_client=llm, memory_manager=mem) as agent:
-        result = await agent.execute(task="打开百度搜索Python")
-    """
+class BaseVisualAgent:
+    """视觉认知骨架基类 (模板方法模式)"""
 
     def __init__(self, llm_client, memory_manager,
-                 model: str = "", vision_model: str = "", max_steps: int = 0,
-                 cdp_url: str = ""):
+                 model: str = "", vision_model: str = "", max_steps: int = 0):
         self.llm = llm_client
         self.memory = memory_manager
         self.model = model or DEFAULT_MODEL
         self.vision_model = vision_model or DEFAULT_VISION_MODEL
         self.max_steps = max_steps or DEFAULT_MAX_STEPS
-        self.cdp_url = cdp_url or DEFAULT_CDP_URL
         self.running = True
-        self._playwright = None
-        self._browser = None
-        self._page = None
 
     async def __aenter__(self):
         await self._connect()
@@ -78,127 +69,17 @@ class VisualAgent:
     async def __aexit__(self, *args):
         await self._disconnect()
 
-    async def _connect(self):
-        """连接 CDP 浏览器。"""
-        self._playwright = await async_playwright().start()
-        self._browser = await self._playwright.chromium.connect_over_cdp(self.cdp_url)
-        ctx = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
-        for p in ctx.pages:
-            if p.url and p.url != "about:blank":
-                self._page = p
-                logger.info(f"复用页面: {p.url}")
-                break
-        if not self._page:
-            self._page = await ctx.new_page()
-            await self._page.set_viewport_size({"width": 1280, "height": 800})
-            logger.info("创建新页面")
-
-    async def _disconnect(self):
-        if self._playwright:
-            try:
-                await self._playwright.stop()
-            except Exception:
-                pass
-        self._page = None
-        self._browser = None
+    async def _connect(self): pass
+    async def _disconnect(self): pass
+    async def _screenshot(self) -> str: raise NotImplementedError
+    async def _click(self, x: int, y: int): raise NotImplementedError
+    async def _type(self, text: str): raise NotImplementedError
+    async def _scroll(self, direction: str, amount: int): raise NotImplementedError
 
     def stop(self):
         self.running = False
 
-    # ── 浏览器操作 (直连，不走 HTTP) ──
 
-    async def _screenshot(self) -> str:
-        import base64
-        import io
-        from PIL import Image
-        try:
-            img_bytes = await self._page.screenshot(type="png")
-            img = Image.open(io.BytesIO(img_bytes))
-            scale = min(800 / max(img.width, img.height), 1.0)
-            if scale < 1.0:
-                img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
-                buf = io.BytesIO()
-                img.save(buf, format='PNG', optimize=True)
-                img_bytes = buf.getvalue()
-            return f"data:image/png;base64,{base64.b64encode(img_bytes).decode()}"
-        except Exception:
-            return ""
-
-    async def _click(self, x: int, y: int):
-        try:
-            # 注入更明显的粉色爱心光标和波纹动画
-            await self._page.evaluate("""([tx, ty]) => {
-                let cursor = document.getElementById('myagent-pink-cursor');
-                if (!cursor) {
-                    cursor = document.createElement('div');
-                    cursor.id = 'myagent-pink-cursor';
-                    cursor.style.position = 'fixed';
-                    cursor.style.width = '36px';
-                    cursor.style.height = '36px';
-                    cursor.style.zIndex = '999999';
-                    cursor.style.pointerEvents = 'none';
-                    cursor.style.transition = 'all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1)';
-                    cursor.style.transform = 'translate(-50%, -50%)';
-                    cursor.innerHTML = `
-                        <svg viewBox="0 0 24 24" width="36" height="36" fill="#FF1493" style="filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3));">
-                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
-                        </svg>
-                    `;
-                    document.body.appendChild(cursor);
-                    cursor.style.left = '0px';
-                    cursor.style.top = '0px';
-                }
-                
-                cursor.style.left = tx + 'px';
-                cursor.style.top = ty + 'px';
-                
-                setTimeout(() => {
-                    const ripple = document.createElement('div');
-                    ripple.style.position = 'fixed';
-                    ripple.style.left = tx + 'px';
-                    ripple.style.top = ty + 'px';
-                    ripple.style.width = '20px';
-                    ripple.style.height = '20px';
-                    ripple.style.borderRadius = '50%';
-                    ripple.style.border = '4px solid #FF1493';
-                    ripple.style.backgroundColor = 'rgba(255, 20, 147, 0.4)';
-                    ripple.style.transform = 'translate(-50%, -50%) scale(1)';
-                    ripple.style.transition = 'all 0.4s ease-out';
-                    ripple.style.pointerEvents = 'none';
-                    ripple.style.zIndex = '999998';
-                    document.body.appendChild(ripple);
-                    
-                    requestAnimationFrame(() => {
-                        ripple.style.transform = 'translate(-50%, -50%) scale(5)';
-                        ripple.style.opacity = '0';
-                    });
-                    
-                    setTimeout(() => ripple.remove(), 400);
-                }, 500);
-            }""", [x, y])
-            # 等待滑移和波纹动画
-            await asyncio.sleep(0.6)
-        except Exception as e:
-            pass
-            
-        await self._page.mouse.click(x, y)
-        await asyncio.sleep(0.3)
-        
-        try:
-            # 点击后清理光标，以免阻挡视线或截图
-            await self._page.evaluate("""() => {
-                const cursor = document.getElementById('myagent-pink-cursor');
-                if (cursor) cursor.remove();
-            }""")
-        except Exception:
-            pass
-
-    async def _type(self, text: str):
-        await self._page.keyboard.type(text, delay=20)
-
-    async def _scroll(self, direction: str, amount: int):
-        delta = amount if direction == "down" else -amount
-        await self._page.mouse.wheel(0, delta)
 
     # ── 主循环 ──
 
@@ -224,13 +105,38 @@ class VisualAgent:
 
             if step == 0:
                 b64 = await self._screenshot()
-                resp = await self.llm.chat(
-                    messages=[{"role": "user", "content": [
-                        {"type": "text", "text": prompt},
-                        {"type": "image_url", "image_url": {"url": b64}},
-                    ]}],
-                    model_override=self.vision_model,
-                )
+                if "mimo" in self.vision_model.lower():
+                    # 彻底绕过 LiteLLM 的私有格式化（LiteLLM 会破坏 Mimo 的 image_url 结构）
+                    import urllib.request
+                    import json
+                    api_base = os.getenv("MYAGENT_API_BASE", "https://api.xiaomimimo.com/v1")
+                    api_key = os.getenv("MYAGENT_API_KEY", "")
+                    body = json.dumps({
+                        "model": self.vision_model.replace("openai/", ""),
+                        "messages": [{"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": b64}},
+                        ]}],
+                        "max_tokens": 1024,
+                    }).encode("utf-8")
+                    req = urllib.request.Request(
+                        f"{api_base}/chat/completions", data=body,
+                        headers={"Content-Type": "application/json", "Authorization": f"Bearer {api_key}"}
+                    )
+                    try:
+                        with urllib.request.urlopen(req, timeout=60) as r:
+                            data = json.loads(r.read().decode("utf-8"))
+                            resp = {"content": data["choices"][0]["message"]["content"]}
+                    except Exception as e:
+                        resp = {"content": f'{{"action": "done", "thought": "Mimo API 报错: {e}"}}'}
+                else:
+                    resp = await self.llm.chat(
+                        messages=[{"role": "user", "content": [
+                            {"type": "text", "text": prompt},
+                            {"type": "image_url", "image_url": {"url": b64}},
+                        ]}],
+                        model_override=self.vision_model,
+                    )
             else:
                 resp = await self.llm.chat(
                     messages=[{"role": "user", "content": prompt}],
@@ -327,3 +233,134 @@ class VisualAgent:
             )
         except Exception as e:
             logger.debug(f"记忆写入失败: {e}")
+
+
+class VisualAgent(BaseVisualAgent):
+    """通用视觉操作骨架。专门负责浏览器 (向下兼容旧接口)"""
+
+    def __init__(self, llm_client, memory_manager,
+                 model: str = "", vision_model: str = "", max_steps: int = 0,
+                 cdp_url: str = ""):
+        super().__init__(llm_client, memory_manager, model, vision_model, max_steps)
+        self.cdp_url = cdp_url or DEFAULT_CDP_URL
+        self._playwright = None
+        self._browser = None
+        self._page = None
+
+    async def _connect(self):
+        """连接 CDP 浏览器。"""
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.connect_over_cdp(self.cdp_url)
+        ctx = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
+        for p in ctx.pages:
+            if p.url and p.url != "about:blank":
+                self._page = p
+                logger.info(f"复用页面: {p.url}")
+                break
+        if not self._page:
+            self._page = await ctx.new_page()
+            await self._page.set_viewport_size({"width": 1280, "height": 800})
+            logger.info("创建新页面")
+
+    async def _disconnect(self):
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+        self._page = None
+        self._browser = None
+
+    # ── 浏览器操作 (直连，不走 HTTP) ──
+
+    async def _screenshot(self) -> str:
+        import base64
+        import io
+        from PIL import Image
+        try:
+            img_bytes = await self._page.screenshot(type="png")
+            img = Image.open(io.BytesIO(img_bytes))
+            scale = min(800 / max(img.width, img.height), 1.0)
+            if scale < 1.0:
+                img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format='PNG', optimize=True)
+                img_bytes = buf.getvalue()
+            return f"data:image/png;base64,{base64.b64encode(img_bytes).decode()}"
+        except Exception:
+            return ""
+
+    async def _click(self, x: int, y: int):
+        try:
+            # 注入更明显的粉色鼠标箭头和波纹动画
+            await self._page.evaluate("""([tx, ty]) => {
+                let cursor = document.getElementById('myagent-pink-cursor');
+                if (!cursor) {
+                    cursor = document.createElement('div');
+                    cursor.id = 'myagent-pink-cursor';
+                    cursor.style.position = 'fixed';
+                    cursor.style.width = '32px';
+                    cursor.style.height = '32px';
+                    cursor.style.zIndex = '999999';
+                    cursor.style.pointerEvents = 'none';
+                    cursor.style.transition = 'all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1)';
+                    cursor.innerHTML = `
+                        <svg viewBox="0 0 24 24" width="32" height="32" fill="#FF1493" style="filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3));">
+                            <polygon points="3,3 3,21 9,15 15,24 18,22 12,14 21,14" stroke="white" stroke-width="1.5" stroke-linejoin="round"/>
+                        </svg>
+                    `;
+                    document.body.appendChild(cursor);
+                    cursor.style.left = '0px';
+                    cursor.style.top = '0px';
+                }
+                
+                cursor.style.left = tx + 'px';
+                cursor.style.top = ty + 'px';
+                
+                setTimeout(() => {
+                    const ripple = document.createElement('div');
+                    ripple.style.position = 'fixed';
+                    ripple.style.left = tx + 'px';
+                    ripple.style.top = ty + 'px';
+                    ripple.style.width = '20px';
+                    ripple.style.height = '20px';
+                    ripple.style.borderRadius = '50%';
+                    ripple.style.border = '4px solid #FF1493';
+                    ripple.style.backgroundColor = 'rgba(255, 20, 147, 0.4)';
+                    ripple.style.transform = 'translate(-50%, -50%) scale(1)';
+                    ripple.style.transition = 'all 0.4s ease-out';
+                    ripple.style.pointerEvents = 'none';
+                    ripple.style.zIndex = '999998';
+                    document.body.appendChild(ripple);
+                    
+                    requestAnimationFrame(() => {
+                        ripple.style.transform = 'translate(-50%, -50%) scale(5)';
+                        ripple.style.opacity = '0';
+                    });
+                    
+                    setTimeout(() => ripple.remove(), 400);
+                }, 500);
+            }""", [x, y])
+            # 等待滑移和波纹动画
+            await asyncio.sleep(0.6)
+        except Exception as e:
+            pass
+            
+        await self._page.mouse.click(x, y)
+        await asyncio.sleep(0.3)
+        
+        try:
+            # 点击后清理光标，以免阻挡视线或截图
+            await self._page.evaluate("""() => {
+                const cursor = document.getElementById('myagent-pink-cursor');
+                if (cursor) cursor.remove();
+            }""")
+        except Exception:
+            pass
+
+    async def _type(self, text: str):
+        await self._page.keyboard.type(text, delay=20)
+
+    async def _scroll(self, direction: str, amount: int):
+        delta = amount if direction == "down" else -amount
+        await self._page.mouse.wheel(0, delta)
