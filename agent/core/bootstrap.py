@@ -12,7 +12,7 @@ def _load_dotenv():
     env_file = Path(__file__).resolve().parents[2] / ".env"
     if env_file.exists():
         from dotenv import load_dotenv
-        load_dotenv(env_file, override=False)
+        load_dotenv(env_file, override=True)
 
 def setup_system():
     """初始化系统环境：加载 .env、警告过滤与统一日志格式"""
