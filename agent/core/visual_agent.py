@@ -24,7 +24,7 @@ logger = logging.getLogger("agent.visual")
 
 # ── 配置 ──
 DEFAULT_MODEL = os.getenv("VISUAL_AGENT_MODEL", "openai/glm-4-flash")
-DEFAULT_VISION_MODEL = os.getenv("VISUAL_AGENT_VISION_MODEL", "openai/glm-4v-flash")
+DEFAULT_VISION_MODEL = os.getenv("VISUAL_AGENT_VISION_MODEL", "openai/mimo-v2.5")
 DEFAULT_MAX_STEPS = int(os.getenv("VISUAL_AGENT_MAX_STEPS", "5"))
 DEFAULT_CDP_URL = os.getenv("VISUAL_CDP_URL", "http://127.0.0.1:9222")
 
@@ -109,14 +109,89 @@ class VisualAgent:
 
     async def _screenshot(self) -> str:
         import base64
+        import io
+        from PIL import Image
         try:
-            img = await self._page.screenshot(type="png")
-            return f"data:image/png;base64,{base64.b64encode(img).decode()}"
+            img_bytes = await self._page.screenshot(type="png")
+            img = Image.open(io.BytesIO(img_bytes))
+            scale = min(800 / max(img.width, img.height), 1.0)
+            if scale < 1.0:
+                img = img.resize((int(img.width * scale), int(img.height * scale)), Image.Resampling.LANCZOS)
+                buf = io.BytesIO()
+                img.save(buf, format='PNG', optimize=True)
+                img_bytes = buf.getvalue()
+            return f"data:image/png;base64,{base64.b64encode(img_bytes).decode()}"
         except Exception:
             return ""
 
     async def _click(self, x: int, y: int):
+        try:
+            # 注入更明显的粉色爱心光标和波纹动画
+            await self._page.evaluate("""([tx, ty]) => {
+                let cursor = document.getElementById('myagent-pink-cursor');
+                if (!cursor) {
+                    cursor = document.createElement('div');
+                    cursor.id = 'myagent-pink-cursor';
+                    cursor.style.position = 'fixed';
+                    cursor.style.width = '36px';
+                    cursor.style.height = '36px';
+                    cursor.style.zIndex = '999999';
+                    cursor.style.pointerEvents = 'none';
+                    cursor.style.transition = 'all 0.5s cubic-bezier(0.25, 0.8, 0.25, 1)';
+                    cursor.style.transform = 'translate(-50%, -50%)';
+                    cursor.innerHTML = `
+                        <svg viewBox="0 0 24 24" width="36" height="36" fill="#FF1493" style="filter: drop-shadow(0px 4px 6px rgba(0,0,0,0.3));">
+                            <path d="M12 21.35l-1.45-1.32C5.4 15.36 2 12.28 2 8.5 2 5.42 4.42 3 7.5 3c1.74 0 3.41.81 4.5 2.09C13.09 3.81 14.76 3 16.5 3 19.58 3 22 5.42 22 8.5c0 3.78-3.4 6.86-8.55 11.54L12 21.35z"/>
+                        </svg>
+                    `;
+                    document.body.appendChild(cursor);
+                    cursor.style.left = '0px';
+                    cursor.style.top = '0px';
+                }
+                
+                cursor.style.left = tx + 'px';
+                cursor.style.top = ty + 'px';
+                
+                setTimeout(() => {
+                    const ripple = document.createElement('div');
+                    ripple.style.position = 'fixed';
+                    ripple.style.left = tx + 'px';
+                    ripple.style.top = ty + 'px';
+                    ripple.style.width = '20px';
+                    ripple.style.height = '20px';
+                    ripple.style.borderRadius = '50%';
+                    ripple.style.border = '4px solid #FF1493';
+                    ripple.style.backgroundColor = 'rgba(255, 20, 147, 0.4)';
+                    ripple.style.transform = 'translate(-50%, -50%) scale(1)';
+                    ripple.style.transition = 'all 0.4s ease-out';
+                    ripple.style.pointerEvents = 'none';
+                    ripple.style.zIndex = '999998';
+                    document.body.appendChild(ripple);
+                    
+                    requestAnimationFrame(() => {
+                        ripple.style.transform = 'translate(-50%, -50%) scale(5)';
+                        ripple.style.opacity = '0';
+                    });
+                    
+                    setTimeout(() => ripple.remove(), 400);
+                }, 500);
+            }""", [x, y])
+            # 等待滑移和波纹动画
+            await asyncio.sleep(0.6)
+        except Exception as e:
+            pass
+            
         await self._page.mouse.click(x, y)
+        await asyncio.sleep(0.3)
+        
+        try:
+            # 点击后清理光标，以免阻挡视线或截图
+            await self._page.evaluate("""() => {
+                const cursor = document.getElementById('myagent-pink-cursor');
+                if (cursor) cursor.remove();
+            }""")
+        except Exception:
+            pass
 
     async def _type(self, text: str):
         await self._page.keyboard.type(text, delay=20)
