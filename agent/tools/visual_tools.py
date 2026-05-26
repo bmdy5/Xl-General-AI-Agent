@@ -338,7 +338,7 @@ class BrowserAgentTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "通用视觉浏览器操作引擎。通过截图→分析→操作→验证的闭环，在网页上完成任意任务。自动从记忆中学习经验。适用于DOM链路失败时的兜底自愈，或操作不熟悉的网页。",
+                "description": "【推荐优先使用】通用视觉浏览器操作引擎。自动截图→看图→点击/打字/滚动→验证，在网页上完成任意任务。当你需要在网页上做任何操作时，直接调用此工具，把任务描述清楚即可。典型用法：'在抖音私信里回复最新消息：你好呀'、'打开百度搜索Python'。port参数：抖音=9000。",
                 "parameters": {
                     "type": "object",
                     "properties": {
