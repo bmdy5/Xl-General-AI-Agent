@@ -345,6 +345,10 @@ class BrowserAgentTool(BaseTool):
                         "task": {
                             "type": "string",
                             "description": "要执行的任务，如'打开www.baidu.com搜索Python'、'在抖音私信里回复：你好'"
+                        },
+                        "cdp_url": {
+                            "type": "string",
+                            "description": "可选，浏览器CDP调试地址。不填则用默认(http://127.0.0.1:9222)。如果你知道有其他浏览器在运行，可以指定它的CDP端口"
                         }
                     },
                     "required": ["task"]
@@ -359,6 +363,7 @@ class BrowserAgentTool(BaseTool):
 
     async def call(self, input_args: dict, context: Any = None) -> AsyncGenerator[ToolResult, None]:
         task = str(input_args.get("task"))
+        cdp_url = input_args.get("cdp_url", "")
         agent = context
 
         if not agent or not getattr(agent, "llm", None):
@@ -367,7 +372,8 @@ class BrowserAgentTool(BaseTool):
 
         try:
             from agent.core.visual_agent import VisualAgent
-            async with VisualAgent(llm_client=agent.llm, memory_manager=agent.memory) as visual:
+            async with VisualAgent(llm_client=agent.llm, memory_manager=agent.memory,
+                                   cdp_url=cdp_url) as visual:
                 result = await visual.execute(task=task)
             summary = json.dumps({
                 "success": result["success"],
