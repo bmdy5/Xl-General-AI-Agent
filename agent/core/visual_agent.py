@@ -1,14 +1,14 @@
 # -*- coding: utf-8 -*-
 """通用视觉 Agent 骨架。
 
-零平台特定代码。不硬编码任何 CSS、坐标、用户名。
-所有操作知识来自记忆系统，每次执行自动积累经验。
+零平台特定代码。不依赖任何网关进程。
+自己连 CDP 操作浏览器：截图 → 看图决策 → 点击/打字/滚动 → 验证。
 
-依赖: 视觉网关 (/vision/*) + 记忆系统 + LLM
-
-配置 (环境变量，有默认值):
-  VISUAL_AGENT_MODEL      — 决策模型 (默认 deepseek/deepseek-v4-flash)
-  VISUAL_AGENT_MAX_STEPS  — 最大步数 (默认 5)
+配置 (.env):
+  VISUAL_AGENT_MODEL       — 决策模型 (默认 openai/glm-4-flash)
+  VISUAL_AGENT_VISION_MODEL — 视觉模型 (默认 openai/glm-4v-flash)
+  VISUAL_AGENT_MAX_STEPS   — 最大步数 (默认 5)
+  VISUAL_CDP_URL           — CDP 调试地址 (默认 http://127.0.0.1:9222)
 """
 
 import json
@@ -18,14 +18,15 @@ import os
 import random
 import asyncio
 
+from playwright.async_api import async_playwright
+
 logger = logging.getLogger("agent.visual")
 
-from agent.tools.visual_tools import call_vision_gateway
-
-# ── 配置 (换模型只改环境变量) ──
-DEFAULT_MODEL = os.getenv("VISUAL_AGENT_MODEL", "zhipu/glm-4-flash")
-DEFAULT_VISION_MODEL = os.getenv("VISUAL_AGENT_VISION_MODEL", "zhipu/glm-4v-flash")
+# ── 配置 ──
+DEFAULT_MODEL = os.getenv("VISUAL_AGENT_MODEL", "openai/glm-4-flash")
+DEFAULT_VISION_MODEL = os.getenv("VISUAL_AGENT_VISION_MODEL", "openai/glm-4v-flash")
 DEFAULT_MAX_STEPS = int(os.getenv("VISUAL_AGENT_MAX_STEPS", "5"))
+DEFAULT_CDP_URL = os.getenv("VISUAL_CDP_URL", "http://127.0.0.1:9222")
 
 DECIDE_PROMPT = """你是小萤的视觉操作引擎。根据任务、历史、记忆决定下一步。
 
@@ -42,7 +43,7 @@ DECIDE_PROMPT = """你是小萤的视觉操作引擎。根据任务、历史、�
 
 规则:
 1. 严格输出JSON，包含thought字段
-2. 坐标基于截图或记忆中看到的实际位置，不能编造
+2. 坐标基于截图中看到的实际位置
 3. 连续两次操作无效果 → 输出done
 
 输出示例:
@@ -50,34 +51,83 @@ DECIDE_PROMPT = """你是小萤的视觉操作引擎。根据任务、历史、�
 
 
 class VisualAgent:
-    """通用视觉操作骨架。
+    """通用视觉操作骨架。自己连 CDP，不依赖网关。
 
-    agent = VisualAgent(
-        gateway_port=9000,
-        llm_client=llm,
-        memory_manager=memory,
-        model="deepseek/deepseek-v4-flash",   # 可选，换决策模型
-        max_steps=5,                            # 可选，最大步数
-    )
-    result = await agent.execute(task="回复抖音私信")
+    async with VisualAgent(llm_client=llm, memory_manager=mem) as agent:
+        result = await agent.execute(task="打开百度搜索Python")
     """
 
-    def __init__(self, gateway_port: int, llm_client, memory_manager,
-                 model: str = "", vision_model: str = "", max_steps: int = 0):
-        self.port = gateway_port
+    def __init__(self, llm_client, memory_manager,
+                 model: str = "", vision_model: str = "", max_steps: int = 0,
+                 cdp_url: str = ""):
         self.llm = llm_client
         self.memory = memory_manager
         self.model = model or DEFAULT_MODEL
         self.vision_model = vision_model or DEFAULT_VISION_MODEL
         self.max_steps = max_steps or DEFAULT_MAX_STEPS
+        self.cdp_url = cdp_url or DEFAULT_CDP_URL
         self.running = True
+        self._playwright = None
+        self._browser = None
+        self._page = None
+
+    async def __aenter__(self):
+        await self._connect()
+        return self
+
+    async def __aexit__(self, *args):
+        await self._disconnect()
+
+    async def _connect(self):
+        """连接 CDP 浏览器。"""
+        self._playwright = await async_playwright().start()
+        self._browser = await self._playwright.chromium.connect_over_cdp(self.cdp_url)
+        ctx = self._browser.contexts[0] if self._browser.contexts else await self._browser.new_context()
+        for p in ctx.pages:
+            if p.url and p.url != "about:blank":
+                self._page = p
+                logger.info(f"复用页面: {p.url}")
+                break
+        if not self._page:
+            self._page = await ctx.new_page()
+            await self._page.set_viewport_size({"width": 1280, "height": 800})
+            logger.info("创建新页面")
+
+    async def _disconnect(self):
+        if self._playwright:
+            try:
+                await self._playwright.stop()
+            except Exception:
+                pass
+        self._page = None
+        self._browser = None
 
     def stop(self):
-        """紧急停止。"""
         self.running = False
 
-    async def execute(self, task: str, context: str = "") -> dict:
-        """执行视觉任务。Step 0 用视觉模型直接看图决策，后续步骤纯文本。"""
+    # ── 浏览器操作 (直连，不走 HTTP) ──
+
+    async def _screenshot(self) -> str:
+        import base64
+        try:
+            img = await self._page.screenshot(type="png")
+            return f"data:image/png;base64,{base64.b64encode(img).decode()}"
+        except Exception:
+            return ""
+
+    async def _click(self, x: int, y: int):
+        await self._page.mouse.click(x, y)
+
+    async def _type(self, text: str):
+        await self._page.keyboard.type(text, delay=20)
+
+    async def _scroll(self, direction: str, amount: int):
+        delta = amount if direction == "down" else -amount
+        await self._page.mouse.wheel(0, delta)
+
+    # ── 主循环 ──
+
+    async def execute(self, task: str) -> dict:
         self.running = True
         history: list[dict] = []
         last_action = None
@@ -87,21 +137,17 @@ class VisualAgent:
             if not self.running:
                 return {"success": False, "error": "手动停止", "steps": step, "history": history}
 
-            # 1. 查记忆
             memories = await self._recall(task, history)
 
-            # 2. 决策
             history_text = "\n".join(
                 [f"Step{i}: {h['action']} → {h.get('result','')}" for i, h in enumerate(history)]
             ) or "无"
             prompt = DECIDE_PROMPT.format(
-                task=task,
-                history_text=history_text,
+                task=task, history_text=history_text,
                 memories=memories or "无相关记忆",
             )
 
             if step == 0:
-                # 第一步: 传截图给视觉模型，直接输出 JSON 动作
                 b64 = await self._screenshot()
                 resp = await self.llm.chat(
                     messages=[{"role": "user", "content": [
@@ -111,11 +157,11 @@ class VisualAgent:
                     model_override=self.vision_model,
                 )
             else:
-                # 后续步骤: 纯文本 (已有 step 0 的上下文)
                 resp = await self.llm.chat(
                     messages=[{"role": "user", "content": prompt}],
                     model_override=self.model,
                 )
+
             try:
                 action = json.loads(resp.get("content", "{}"))
             except json.JSONDecodeError:
@@ -127,19 +173,14 @@ class VisualAgent:
                 await self._remember(task, action, "任务完成", step, True)
                 return {"success": True, "steps": step + 1, "history": history}
 
-            # 3. 执行前截图哈希
             before_hash = await self._screenshot_hash()
-
-            # 4. 执行
             result = await self._act(action)
             history.append({"step": step, "action": action.get("action"), "result": result})
 
-            # 5. 比对变化
             await asyncio.sleep(1.0)
             after_hash = await self._screenshot_hash()
             changed = before_hash != after_hash
 
-            # 6. 失败检测: 同操作+无变化=失败累积
             if action.get("action") == last_action and not changed:
                 fail_count += 1
             else:
@@ -152,17 +193,9 @@ class VisualAgent:
 
         return {"success": False, "error": "超过最大步数", "steps": self.max_steps, "history": history}
 
-    # ── 内部 ──
-
     async def _screenshot_hash(self) -> str:
         b64 = await self._screenshot()
         return hashlib.md5(b64.encode()).hexdigest() if b64 else ""
-
-    async def _screenshot(self) -> str:
-        try:
-            return await call_vision_gateway(self.port, "screenshot", {})
-        except Exception:
-            return ""
 
     async def _recall(self, task: str, history: list) -> str | None:
         try:
@@ -172,11 +205,11 @@ class VisualAgent:
                 return None
             success, failure = [], []
             for r in results:
-                content = r.get("content", "")[:250]
+                c = r.get("content", "")[:250]
                 if "visual_success" in r.get("filename", ""):
-                    success.append(content)
+                    success.append(c)
                 else:
-                    failure.append(f"⚠️失败: {content[:150]}")
+                    failure.append(f"⚠️失败: {c[:150]}")
             return "\n".join(success + failure)
         except Exception:
             return None
@@ -187,16 +220,16 @@ class VisualAgent:
         try:
             if a == "click":
                 x, y = int(action["x"]), int(action["y"])
-                await call_vision_gateway(self.port, "click", {"x": x, "y": y})
+                await self._click(x, y)
                 return f"click({x},{y})"
             elif a == "type":
                 text = str(action.get("text", ""))
-                await call_vision_gateway(self.port, "type", {"text": text})
+                await self._type(text)
                 return f"type({text[:30]})"
             elif a == "scroll":
                 d = action.get("direction", "down")
                 amt = int(action.get("amount", 400))
-                await call_vision_gateway(self.port, "scroll", {"direction": d, "amount": amt})
+                await self._scroll(d, amt)
                 return f"scroll({d},{amt})"
             elif a == "wait":
                 s = float(action.get("seconds", 2))

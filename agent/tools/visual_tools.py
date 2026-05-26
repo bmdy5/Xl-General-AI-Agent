@@ -338,31 +338,26 @@ class BrowserAgentTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "【推荐优先使用】通用视觉浏览器操作引擎。自动截图→看图→点击/打字/滚动→验证，在网页上完成任意任务。当你需要在网页上做任何操作时，直接调用此工具，把任务描述清楚即可。典型用法：'在抖音私信里回复最新消息：你好呀'、'打开百度搜索Python'。port参数：抖音=9000。",
+                "description": "【推荐优先使用】通用视觉浏览器操作引擎。自动连接浏览器→截图→看图→点击/打字/滚动→验证，在网页上完成任意任务。不需要任何网关进程，自己会连CDP操控浏览器。当你需要在网页上做任何操作时直接调用它，把任务描述清楚即可。例如：'打开百度搜索Python'、'在抖音私信里回复最新消息：你好呀'",
                 "parameters": {
                     "type": "object",
                     "properties": {
-                        "port": {
-                            "type": "integer",
-                            "description": "微服务网关端口，如抖音=9000"
-                        },
                         "task": {
                             "type": "string",
-                            "description": "要执行的任务描述，如'在抖音私信里回复最新消息：你好'"
+                            "description": "要执行的任务，如'打开www.baidu.com搜索Python'、'在抖音私信里回复：你好'"
                         }
                     },
-                    "required": ["port", "task"]
+                    "required": ["task"]
                 }
             }
         }
 
     async def validate_input(self, input_args: dict, context: Any = None) -> dict:
-        if not input_args.get("port") or not input_args.get("task"):
-            return {"result": False, "message": "Missing port or task"}
+        if not input_args.get("task"):
+            return {"result": False, "message": "Missing task"}
         return {"result": True, "message": ""}
 
     async def call(self, input_args: dict, context: Any = None) -> AsyncGenerator[ToolResult, None]:
-        port = int(input_args.get("port"))
         task = str(input_args.get("task"))
         agent = context
 
@@ -372,12 +367,8 @@ class BrowserAgentTool(BaseTool):
 
         try:
             from agent.core.visual_agent import VisualAgent
-            visual = VisualAgent(
-                gateway_port=port,
-                llm_client=agent.llm,
-                memory_manager=agent.memory,
-            )
-            result = await visual.execute(task=task)
+            async with VisualAgent(llm_client=agent.llm, memory_manager=agent.memory) as visual:
+                result = await visual.execute(task=task)
             summary = json.dumps({
                 "success": result["success"],
                 "steps": result["steps"],
