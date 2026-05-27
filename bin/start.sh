@@ -11,7 +11,6 @@ QQ_NUMBER="3870213248"
 NAPCAT_DATA_DIR="$HOME/.xlagent/napcat_data"
 mkdir -p "$NAPCAT_DATA_DIR"
 
-GATEWAY_LOG="$PROJECT_DIR/logs/gateway.log"
 STARTUP_LOG="$PROJECT_DIR/logs/startup.log"
 
 echo "=========================================="
@@ -208,13 +207,13 @@ if launchctl list 2>/dev/null | grep -q com.myagent.qqgateway; then
         echo "   - Gateway 启动异常，请检查 launchd 配置" | tee -a "$STARTUP_LOG"
     fi
 else
-    nohup venv/bin/python main.py --gateway >> "$GATEWAY_LOG" 2>&1 &
+    nohup venv/bin/python main.py --gateway >> "$STARTUP_LOG" 2>&1 &
     sleep 2
     if ps aux | grep -q "main.py --gateway"; then
         echo "   - Gateway (Nohup 模式) 启动并运行中" | tee -a "$STARTUP_LOG"
     else
         echo "   - Gateway 启动失败" | tee -a "$STARTUP_LOG"
-        tail -n 5 "$GATEWAY_LOG" | tee -a "$STARTUP_LOG"
+        tail -n 5 "$STARTUP_LOG" | tee -a "$STARTUP_LOG"
         exit 1
     fi
 fi
