@@ -80,28 +80,12 @@ async def on_session_end(agent):
     # 瞬间创建异步背景协程，确保入口瞬间返回 0ms 并不阻塞主对话流
     async def _async_evolution_flow():
         try:
-            # 1. 深度睡眠与做梦机制
+            # 1. 深度睡眠与做梦机制（压缩已禁用，由 dreaming 直接蒸馏记忆）
             if getattr(agent, "role", "admin") == "admin":
                 estimated_tokens = agent.compressor.estimate_tokens(agent.messages)
                 if estimated_tokens > 64000:
-                    logger.info(f"💤 当前会话 Token 数为 {estimated_tokens}（已超 64K）。大脑进入休眠与异步深度整理状态...")
-                    snapshot_len = len(agent.messages)
-                    snapshot_messages = list(agent.messages)
-                    
-                    new_messages, was_compressed = await agent.compressor.compress(snapshot_messages, memory=agent.memory)
-                    if was_compressed:
-                        current_messages = list(agent.messages)
-                        if len(current_messages) >= snapshot_len:
-                            merged = new_messages + current_messages[snapshot_len:]
-                            agent.messages = merged
-                        else:
-                            agent.messages = new_messages
-                        
-                        if getattr(agent, "session", None):
-                            await agent.session.replace_all(agent.messages)
-                        logger.info("✨ 历史对话已异步压缩摘要并持久化沉淀到 Core Memory，会话包袱已减轻。")
-                        
-                        asyncio.create_task(trigger_deep_dream_evolution(agent))
+                    logger.info(f"Token {estimated_tokens} > 64K，触发异步深度做梦")
+                    asyncio.create_task(trigger_deep_dream_evolution(agent))
 
             # 2. 隔离记忆提取
             if (is_group and current_user_id and current_user_id != admin_id) or getattr(agent, "role", "admin") == "coworker":

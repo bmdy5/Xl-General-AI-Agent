@@ -102,16 +102,6 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
             yield {"type": "ctx_warning", "pct": 90}
 
         # 压缩已禁用：破坏 DeepSeek 前缀缓存，由疲劳+dreaming 兜底
-        if False and agent.compressor.should_compress(agent.messages):
-            new_messages, was_compressed = await agent.compressor.compress(
-                agent.messages, memory=agent.memory
-            )
-            if was_compressed:
-                agent.messages = new_messages
-                if agent.session:
-                    await agent.session.replace_all(agent.messages)
-                yield {"type": "compacted", "message_count": len(agent.messages)}
-                cached_prompt = await agent._build_system_prompt()
 
         system_prompt = cached_prompt
         if agent._turn_count > 0 and agent._turn_count % 10 == 0:
