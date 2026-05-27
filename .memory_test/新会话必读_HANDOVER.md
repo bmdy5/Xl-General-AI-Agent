@@ -1,0 +1,1 @@
+亮哥明确要求：每次新会话开始时，必须第一时间读取 /Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/docs/AI_HANDOVER.md 文档，了解当前项目和会话上下文，然后才能进行其他操作。这是强制规程，必须遵守。

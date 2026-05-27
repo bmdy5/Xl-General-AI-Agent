@@ -1,0 +1,1 @@
+【命令防坑】git show 命令绝对不支持 --no-stat 参数！如果你需要查看某次提交的内容，请直接使用 `git show <commit_id>`，或者使用 `git show <commit_id> -s`，绝对不要使用 --no-stat 参数，否则会导致 exit code 128 致命报错。
