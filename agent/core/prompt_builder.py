@@ -83,7 +83,7 @@ def _calculate_skill_score(query: str, trigger_str: str, file_name: str) -> floa
 
 def _load_core_skills(query_text: str = "") -> str:
     """按需动态召回顶级技能到 System Prompt (Muscle Memory & Score-based Heuristic Recall)"""
-    skills_dir = Path(__file__).resolve().parents[2] / "skills"
+    skills_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "skills"
     if not skills_dir.exists():
         return ""
     
