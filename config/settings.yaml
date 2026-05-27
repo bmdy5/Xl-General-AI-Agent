@@ -62,9 +62,8 @@ memory:
 
 knowledge_base:
   notes_paths:                                  # 增量学习笔记路径列表，支持 ~ 动态解析
-    - "~/Desktop/学习笔记/Agent开发"
-    - "~/Desktop/学习笔记/后端开发"
-  kb_dir: "~/Documents/个人博客/学习笔记/agent自主学习的东西"
+    - "~/Documents/学习笔记"
+  kb_dir: "~/Documents/学习笔记"
 
 # 10. 敏感操作会话级全局绿灯超时时间 (Session Permission Timeout)
 SESSION_PERMISSION_TIMEOUT: 1800               # 默认为 30 分钟（1800 秒），亮哥授权一次后在此时间段内全部自动放行并动态顺延
