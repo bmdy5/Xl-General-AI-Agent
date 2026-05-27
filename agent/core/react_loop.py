@@ -62,7 +62,7 @@ def setup_prompt_caching(messages: list[dict], model_name: str) -> list[dict]:
 async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> AsyncGenerator[dict, None]:
     """统一 ReAct 核心循环。stream=False -> chat(), stream=True -> chat_stream()."""
     # 直接在每轮 run_loop 初始化时提取静态时间戳，在整轮 ReAct 中静止不变，极致不冗余
-    now = datetime.now().strftime("%Y-%m-%d %H:%M")
+    now = datetime.now().strftime("%Y-%m-%d")  # 日期粒度，当日缓存全部命中
     cwd = os.getcwd()
     tool_call_history: list[dict] = []
 
@@ -101,7 +101,8 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         if agent.compressor.estimate_tokens(agent.messages) > 35000:
             yield {"type": "ctx_warning", "pct": 90}
 
-        if agent.compressor.should_compress(agent.messages):
+        # 压缩已禁用：破坏 DeepSeek 前缀缓存，由疲劳+dreaming 兜底
+        if False and agent.compressor.should_compress(agent.messages):
             new_messages, was_compressed = await agent.compressor.compress(
                 agent.messages, memory=agent.memory
             )
