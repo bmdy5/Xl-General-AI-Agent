@@ -10,6 +10,22 @@ class RecordSkillUsageTool(BaseTool):
     name = "record_skill_usage"
     description = "主动申报并记录某项技能/经验的使用情况。用于增加目标经验文件的 usage_count 和 success_count。这会帮助系统筛选出最优秀的实战经验并淘汰无用经验。"
 
+    @property
+    def is_read_only(self) -> bool:
+        return False
+
+    @property
+    def is_concurrency_safe(self) -> bool:
+        return True
+
+    def needs_permissions(self, input_args: dict = None) -> bool:
+        return False
+
+    async def validate_input(self, input_args: dict, context=None) -> dict:
+        if "skill_name" not in input_args:
+            return {"result": False, "message": "skill_name is required"}
+        return {"result": True, "message": "ok"}
+
     def get_tool_definition(self) -> dict:
         return {
             "type": "function",
