@@ -105,61 +105,56 @@ class SecurityInterceptionMiddleware(EventMiddleware):
             return True
         return False
 
-class AdminCommandMiddleware(EventMiddleware):
+class SessionControlMiddleware(EventMiddleware):
+    """合并 AdminCommand + SleepFreeze：admin 唤醒 + 命令处理 + 休眠拦截。"""
+
     async def process(self, dispatcher, event: dict, context: dict) -> bool:
         user_id = context.get("user_id")
         msg_type = context.get("msg_type")
-        raw = context.get("raw")
         session_key = context.get("session_key")
-        
+        raw = context.get("raw")
+
+        # Admin: 唤醒所有休眠 + 处理管理命令
         if user_id == dispatcher.admin_id:
             if any(dispatcher._sleep_modes.values()):
                 for key, task in list(dispatcher._active_sleep_tasks.items()):
                     if task and not task.done():
                         task.cancel()
-                        logger.info(f"Admin message received. Cancelled background sleep task for {key}.")
                 dispatcher._sleep_modes.clear()
                 dispatcher._active_sleep_tasks.clear()
                 dispatcher._fatigue_levels.clear()
-                logger.info("Admin private message received. Waking up all sessions globally from sleep/nap.")
-            
+                logger.info("Admin message, waking all sessions globally.")
             if await dispatcher.security_manager.handle_admin_commands(msg_type, user_id, raw):
                 return True
-        return False
 
-class SleepFreezeMiddleware(EventMiddleware):
-    async def process(self, dispatcher, event: dict, context: dict) -> bool:
-        msg_type = context.get("msg_type")
-        user_id = context.get("user_id")
-        session_key = context.get("session_key")
-        raw = context.get("raw")
-        
+        # 休眠/冻结拦截
         if dispatcher.security_manager.is_private_chat_paused(msg_type, user_id) or dispatcher._sleep_modes.get(session_key, False):
-            logger.info(f"Private chat paused/sleeping. Silently ignoring message from {user_id}: {raw[:50]}")
+            logger.info(f"Session sleeping, ignoring: {raw[:50]}")
             return True
         return False
 
-class PendingPermissionMiddleware(EventMiddleware):
+
+class QuickReplyMiddleware(EventMiddleware):
+    """合并 PendingPermission + PodcastTopic + VoiceCommand：快捷回复拦截。"""
+
     async def process(self, dispatcher, event: dict, context: dict) -> bool:
         session_key = context.get("session_key")
         raw = context.get("raw")
-        
+        msg_type = context.get("msg_type")
+        user_id = context.get("user_id")
+        group_id = context.get("group_id")
+
+        # 权限审批回复 (y/n)
         if session_key in dispatcher._pending_perms:
             evt_perm = dispatcher._pending_perms[session_key]
             is_approved = raw.lower() in ("y", "yes", "允许", "ok", "通过")
             evt_perm.set(is_approved)
             return True
-        return False
 
-class PodcastTopicMiddleware(EventMiddleware):
-    async def process(self, dispatcher, event: dict, context: dict) -> bool:
-        session_key = context.get("session_key")
-        raw = context.get("raw")
-        
+        # 播客选题回复 (1/2/3)
         if dispatcher._waiting_podcast_topic.get(session_key):
             dispatcher._waiting_podcast_topic[session_key] = False
             choices = dispatcher._podcast_choices.get(session_key, [])
-            
             selected_topic = raw.strip()
             if selected_topic in ("1", "2", "3") and len(choices) >= 3:
                 selected_topic = choices[int(selected_topic) - 1]
@@ -167,9 +162,8 @@ class PodcastTopicMiddleware(EventMiddleware):
                     selected_topic = selected_topic.split(". ", 1)[1]
                 elif "、" in selected_topic:
                     selected_topic = selected_topic.split("、", 1)[1]
-                    
-            await dispatcher.context.send_msg("private", dispatcher.admin_id, "", f"🎯 已锁定明早播客选题：【{selected_topic}】。\n正在为您融合本地笔记与网络参考资料，合成为约 2000 字的极客研究笔记并投喂云端，请稍等...")
-            
+            await dispatcher.context.send_msg("private", dispatcher.admin_id, "",
+                f"已锁定播客选题：【{selected_topic}】。正在生成研究笔记...")
             bot = dispatcher.bot
             if bot:
                 try:
@@ -177,24 +171,19 @@ class PodcastTopicMiddleware(EventMiddleware):
                 except AttributeError:
                     pass
             return True
-        return False
 
-class VoiceCommandMiddleware(EventMiddleware):
-    async def process(self, dispatcher, event: dict, context: dict) -> bool:
-        raw = context.get("raw")
-        msg_type = context.get("msg_type")
-        user_id = context.get("user_id")
-        group_id = context.get("group_id")
-        
+        # 语音测试命令
         test_style, test_text = parse_voice_test_command(raw)
         if test_style is not None:
             if test_text:
                 await send_voice(dispatcher.context, msg_type, user_id, group_id, test_text, test_style, is_test=True)
             else:
-                await dispatcher.context.send_msg(msg_type, user_id, group_id, 
-                    "⚠️ 请输入要合成的文本，格式如：小萤语音测试：[委屈] 小萤好难过呀", skip_delay=True)
+                await dispatcher.context.send_msg(msg_type, user_id, group_id,
+                    "请输入要合成的文本，格式：小萤语音测试：[委屈] 小萤好难过呀", skip_delay=True)
             return True
+
         return False
+
 
 class TaskDispatcherMiddleware(EventMiddleware):
     async def process(self, dispatcher, event: dict, context: dict) -> bool:
