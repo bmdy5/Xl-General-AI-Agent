@@ -42,7 +42,7 @@ def run_async_handler(coro):
 
 def get_skills_root() -> Path:
     """自适应获取项目的 skills 物理根目录"""
-    return Path(__file__).resolve().parents[2] / "skills"
+    return Path(__file__).resolve().parents[2] / "agent_memory" / "skills"
 
 def _rule_categorize(name: str, trigger: str) -> str:
     """基于物理规则归类技能"""
@@ -267,38 +267,34 @@ def register_skill_evolution(folder_name: str, md_content: str, script_name: str
                 md_content = md_content.replace("---\n", f"---\ncategory: {category}\n", 1)
 
         # 尝试语义查重合并
-        similar_folder = None
+        similar_file = None
         if agent:
             try:
                 name = meta.get("name", folder_name)
                 trigger = meta.get("trigger", "")
                 steps_text = re.findall(r'\d+\.\s*(.*)', md_content)
-                similar_folder = run_async_handler(_llm_find_similar_skill(agent, category, name, trigger, steps_text))
+                similar_file = run_async_handler(_llm_find_similar_skill(agent, category, name, trigger, steps_text))
             except Exception:
                 pass
 
-        target_folder = similar_folder if similar_folder else clean_folder
-        skill_dir = skills_root / target_folder
-        skill_dir.mkdir(parents=True, exist_ok=True)
+        target_name = similar_file if similar_file else f"{clean_folder}.md"
+        skill_md_path = skills_root / target_name
         
-        skill_md_path = skill_dir / "SKILL.md"
-        
-        if similar_folder:
+        if similar_file and skill_md_path.exists():
             try:
-                old_content = skill_md_path.read_text(encoding="utf-8") if skill_md_path.exists() else ""
-                if old_content:
-                    trigger = meta.get("trigger", "")
-                    steps_text = re.findall(r'\d+\.\s*(.*)', md_content)
-                    md_content = run_async_handler(_llm_merge_skills(agent, old_content, trigger, steps_text))
-                    logger.info(f"Smart evolved existing skill via register_skill_evolution: {similar_folder}")
+                old_content = skill_md_path.read_text(encoding="utf-8")
+                trigger = meta.get("trigger", "")
+                steps_text = re.findall(r'\d+\.\s*(.*)', md_content)
+                md_content = run_async_handler(_llm_merge_skills(agent, old_content, trigger, steps_text))
+                logger.info(f"Smart evolved existing skill via register_skill_evolution: {similar_file}")
             except Exception as e:
-                logger.error(f"Failed to merge registration for {similar_folder}: {e}")
+                logger.error(f"Failed to merge registration for {similar_file}: {e}")
 
         skill_md_path.write_text(md_content, encoding="utf-8")
         
         if script_name and script_code:
             clean_script = re.sub(r'[^\w.-]', '_', script_name)
-            script_path = skill_dir / clean_script
+            script_path = skills_root / clean_script
             script_path.write_text(script_code, encoding="utf-8")
             logger.info(f"Helper script {clean_script} created at {script_path}")
             

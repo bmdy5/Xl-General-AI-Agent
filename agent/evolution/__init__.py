@@ -7,3 +7,4 @@ from .coach import PENDING_DIR
 from .tester import SandboxToolRegistry, generate_test_prompt, run_llm_judge, run_self_test
 from .traces import get_today_traces, get_recent_corrections, TRACES_DIR, record_tool_call
 from .apply import EvolutionEngine, on_session_start
+from .dream import trigger_deep_dream_evolution

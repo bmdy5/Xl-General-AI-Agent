@@ -25,7 +25,7 @@ async def extract_coworker_memory(agent):
     if len(agent.messages) < 4:
         return
 
-    memory_file = Path(__file__).resolve().parents[2] / "memory" / f"coworker_{user_id}.json"
+    memory_file = Path(__file__).resolve().parents[2] / "agent_memory" / "context" / f"coworker_{user_id}.json"
     
     existing_memories = []
     if memory_file.exists():
