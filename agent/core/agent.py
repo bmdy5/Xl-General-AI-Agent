@@ -16,7 +16,9 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 from .llm import LLMClient
-from ..memory.manager import MemoryManager
+from typing import TYPE_CHECKING
+if TYPE_CHECKING:
+    from ..memory.manager import MemoryManager
 from ..session.handler import SessionHandler
 from ..tools.registry import ToolRegistry
 from .compressor import ContextCompressor
@@ -57,7 +59,11 @@ class Agent:
     ):
         self.llm = llm
         self.registry = registry
-        self.memory = memory or MemoryManager()
+        if memory is None:
+            from ..memory.manager import MemoryManager
+            self.memory = MemoryManager()
+        else:
+            self.memory = memory
         self.session = session
         self.static_prompt = system_prompt or STATIC_PROMPT
         self.max_turns = max_turns

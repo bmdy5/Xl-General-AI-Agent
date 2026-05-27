@@ -53,20 +53,27 @@ def setup_system():
         return handler
 
     # 分流规则
-    def is_metrics(r): return "metrics" in r.name or "llm_stream" in r.name or "CACHE" in str(r.msg) or "TOKEN AUDIT" in str(r.msg)
-    def is_dream(r): return "dreaming" in r.name or "KI" in str(r.msg) or "热备份" in str(r.msg) or "合并" in str(r.msg)
-    def is_gw(r): return "net_gateway" in r.name or "Gateway" in r.name or "WebSocket" in str(r.msg)
-    def is_core(r): return not (is_metrics(r) or is_dream(r) or is_gw(r))
+    def is_activity(r):
+        # 1. 显式指定的活动日志 logger 命名空间
+        if r.name.startswith("agent.activity") or r.name.startswith("net_gateway.activity"):
+            return True
+        # 2. 消息内容判定：仅包含高纯度业务聊天/决策思考流水
+        msg_str = str(r.msg)
+        is_chat = ("[用户输入]" in msg_str or "[AI 计划" in msg_str or "[Agent回复]" in msg_str or "[测试]" in msg_str or "交互对话" in msg_str)
+        is_react = ("🧠 [思考]" in msg_str or "🛠️ [工具执行完毕]" in msg_str or "💡 [Scavenger 自愈]" in msg_str or "💡 [JSON Repair 自愈]" in msg_str or "🚨 [JSON 截断熔断保护]" in msg_str or "🚨 [死循环熔断拦截]" in msg_str or "🛡️ [沙箱物理拦截]" in msg_str)
+        is_memory = ("✨ [灵魂记忆自愈]" in msg_str)
+        return is_chat or is_react or is_memory
 
-    root_logger.addHandler(create_handler("metrics.log", is_metrics))
-    root_logger.addHandler(create_handler("dreaming.log", is_dream))
-    root_logger.addHandler(create_handler("gateway.log", is_gw))
-    root_logger.addHandler(create_handler("agent_core.log", is_core))
+    def is_system(r):
+        return not is_activity(r)
+
+    root_logger.addHandler(create_handler("system.log", is_system))
+    root_logger.addHandler(create_handler("activity.log", is_activity))
     
     # 增加控制台纯净输出
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
-    console.addFilter(type('CustomFilter', (logging.Filter,), {'filter': lambda self, r: is_core(r) or is_gw(r)})())
+    console.addFilter(type('CustomFilter', (logging.Filter,), {'filter': lambda self, r: is_activity(r) or ("net_gateway" in r.name and "WebSocket" not in str(r.msg))})())
     root_logger.addHandler(console)
 
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)

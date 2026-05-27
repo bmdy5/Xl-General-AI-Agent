@@ -5,6 +5,9 @@ import math
 import sqlite3
 import logging
 import asyncio
+import random
+import functools
+import inspect
 from pathlib import Path
 from collections import OrderedDict
 from typing import Optional
@@ -14,6 +17,45 @@ logger = logging.getLogger("agent.memory.index")
 # 代理导入以保持向下兼容与 100% 外界零感知
 from .cache import MemoryCache
 from .embedding import _get_embedding, save_ki_embedding
+
+def with_db_retry(max_retries: int = 5, base_delay: float = 0.01):
+    """自适应指数退避延迟重试装饰器，应对 SQLite 排他写锁 database is locked 的并发高吞吐"""
+    def decorator(func):
+        if inspect.iscoroutinefunction(func):
+            @functools.wraps(func)
+            async def async_wrapper(*args, **kwargs):
+                attempt = 0
+                while True:
+                    try:
+                        return await func(*args, **kwargs)
+                    except sqlite3.OperationalError as e:
+                        err_msg = str(e).lower()
+                        if "locked" in err_msg and attempt < max_retries:
+                            attempt += 1
+                            delay = base_delay * (2 ** attempt) + random.uniform(0.005, 0.02)
+                            logger.warning(f"⚠️ [SQLite 写锁碰撞] 数据库写锁碰撞 (locked)，第 {attempt}/{max_retries} 次指数退避，延迟 {delay*1000:.1f}ms 后重试...")
+                            await asyncio.sleep(delay)
+                        else:
+                            raise e
+            return async_wrapper
+        else:
+            @functools.wraps(func)
+            def sync_wrapper(*args, **kwargs):
+                attempt = 0
+                while True:
+                    try:
+                        return func(*args, **kwargs)
+                    except sqlite3.OperationalError as e:
+                        err_msg = str(e).lower()
+                        if "locked" in err_msg and attempt < max_retries:
+                            attempt += 1
+                            delay = base_delay * (2 ** attempt) + random.uniform(0.005, 0.02)
+                            logger.warning(f"⚠️ [SQLite 写锁碰撞] 数据库同步写锁碰撞 (locked)，第 {attempt}/{max_retries} 次指数退避，延迟 {delay*1000:.1f}ms 后重试...")
+                            time.sleep(delay)
+                        else:
+                            raise e
+            return sync_wrapper
+    return decorator
 
 def _get_db(manager) -> sqlite3.Connection:
     """惰性初始化 SQLite + FTS5 索引，自动无损升级老数据为 CJK 高精度索引."""
