@@ -28,19 +28,19 @@ def _run_async(coro):
 
 
 def search_notes(manager, query: str, limit: int = 5) -> list[dict]:
-    """搜索笔记知识库。返回 BM25 排序的分块结果。"""
     cache_key = (query, limit)
+    short_query = query if len(query) <= 30 else query[:27] + "..."
     cached_res = manager._note_cache.get(cache_key)
     if cached_res is not None:
         logger.info(
-            f"[NOTE CACHE HIT] Query: '{query}' | "
+            f"[NOTE CACHE HIT] Query: '{short_query}' | "
             f"Hits: {manager._note_cache.hits}, Misses: {manager._note_cache.misses} | "
             f"Hit Rate: {manager._note_cache.hit_rate:.1f}%"
         )
         return cached_res
     else:
         logger.info(
-            f"[NOTE CACHE MISS] Query: '{query}' | "
+            f"[NOTE CACHE MISS] Query: '{short_query}' | "
             f"Hits: {manager._note_cache.hits}, Misses: {manager._note_cache.misses} | "
             f"Hit Rate: {manager._note_cache.hit_rate:.1f}%"
         )
@@ -111,18 +111,19 @@ def _like_search(db, table: str, query: str, limit: int = 5) -> list[dict]:
 
 def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
     """FTS5 + 768维语义向量双通道混合检索 (RRF 融合重排 + 时序热度衰减)"""
+    short_query = query if len(query) <= 30 else query[:27] + "..."
     cache_key = (query, limit)
     cached_res = manager._mem_cache.get(cache_key)
     if cached_res is not None:
         logger.info(
-            f"[MEMORY CACHE HIT] Query: '{query}' | "
+            f"[MEMORY CACHE HIT] Query: '{short_query}' | "
             f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
             f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
         )
         return cached_res
     else:
         logger.info(
-            f"[MEMORY CACHE MISS] Query: '{query}' | "
+            f"[MEMORY CACHE MISS] Query: '{short_query}' | "
             f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
             f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
         )
@@ -169,8 +170,9 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
             # 语义缓存检查：用 query_vec 在缓存中找语义相似的旧 query
             cached_semantic = manager._mem_cache.get(cache_key, query_vec=query_vec)
             if cached_semantic is not None:
+                short_query = query if len(query) <= 30 else query[:27] + "..."
                 logger.info(
-                    f"[MEMORY SEMANTIC CACHE HIT] Query: '{query}' | "
+                    f"[MEMORY SEMANTIC CACHE HIT] Query: '{short_query}' | "
                     f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
                     f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
                 )
