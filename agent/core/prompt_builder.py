@@ -76,7 +76,9 @@ def _calculate_skill_score(query: str, trigger_str: str, file_name: str) -> floa
     # 如果有多个词同时匹配，给予组合关联加成
     if matched_count >= 2:
         score += matched_count * 1.5
-        
+
+    # 关键字得分上限 9.0，确保全子串匹配 (10.0) 始终优先
+    score = min(score, 9.0)
     return score
 
 def _load_core_skills(query_text: str = "") -> str:
@@ -113,7 +115,7 @@ def _load_core_skills(query_text: str = "") -> str:
             file_name = folder_name if is_dir else file_path.name
             
             score = _calculate_skill_score(query_text, trigger_str, file_name)
-            if score >= 2.0:  # 过滤完全不相关的技能
+            if score >= 2.5:  # 过滤低相关技能，单 2 字符关键字得分 2.0 不通过
                 scored_entries.append((score, file_path, is_dir, file_name, content))
         except Exception as e:
             logger.debug(f"Failed to score skill {file_path}: {e}")
@@ -176,7 +178,7 @@ def _search_experiences(query: str) -> str:
     if len(query.strip()) < 2:
         return ""
         
-    exp_dir = Path(__file__).resolve().parents[2] / "experience"
+    exp_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "experiences"
     if not exp_dir.exists():
         return ""
         
@@ -334,7 +336,7 @@ async def build_system_prompt(agent) -> str:
         coworker_id = getattr(agent, "current_user_id", "未知同事")
         coworker_mem_str = ""
         try:
-            memory_file = Path(__file__).resolve().parent / "memory" / f"coworker_{coworker_id}.json"
+            memory_file = Path(__file__).resolve().parents[2] / "agent_memory" / "context" / f"coworker_{coworker_id}.json"
             if memory_file.exists():
                 data = json.loads(memory_file.read_text(encoding="utf-8"))
                 memories = data.get("memories", [])
