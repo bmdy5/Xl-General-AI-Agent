@@ -16,17 +16,11 @@ async def run_gateway():
         print("\n  Gateway stopped.")
 
 async def run_douyin_gateway():
-    """Douyin 独立网关：拉取抖音私信并上报到 QQ 大脑."""
-    print("\n  MyAgent — Douyin Gateway")
-    print()
-
+    """Douyin 独立网关已移除，保留入口用于兼容旧脚本."""
+    print("\n  Douyin Gateway 已移除，请使用新版视觉引擎 (browser_agent/desktop_agent)")
     import asyncio
-    from agent.net_gateway.douyin_bot import douyin_gateway
     try:
-        douyin_gateway.start()
         while True:
             await asyncio.sleep(3600)
     except (KeyboardInterrupt, asyncio.CancelledError):
         print("\n  Douyin Gateway stopped.")
-    finally:
-        await douyin_gateway.stop()

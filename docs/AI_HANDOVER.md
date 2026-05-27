@@ -402,7 +402,7 @@ make gateway-restart  # 启动/重启 QQ 大脑
 | --- | --- | --- |
 | `BaseVisualAgent` (`core/visual_agent.py`) | 认知骨架：决策循环、截图哈希容错、记忆存取 | 基类 |
 | `VisualAgent` (`core/visual_agent.py`) | 网页引擎 | 继承基类，Playwright CDP 控制 Chrome |
-| `DesktopVisualAgent` (`core/desktop_agent.py`) | 桌面引擎 | 继承基类，`screencapture -C` + `pyautogui` 控制 macOS |
+| `DesktopVisualAgent` | 桌面引擎（规划中） | 继承基类，`screencapture -C` + `pyautogui` 控制 macOS |
 
 ### 工作流程
 
@@ -530,7 +530,7 @@ PYTHONPATH=. venv/bin/pytest tests/test_token_metrics.py
 - **截断保护**：单次召回 Skills 内容总长度受 2500 字符截断保护，超限时记录 Warning 日志并安全截断
 
 #### 第二级：动态经验区 (Dynamic Experiences)
-- **路径**：`experience/*.md`（已从 `agent/experience/*.md` 扁平化迁移）
+- **路径**：`agent_memory/experiences/*.md`（已从根目录 `experience/` 扁平化迁移）
 - **定位**：特定业务场景的实战经验与操作手册
 - **加载机制**：
   - BM25 词频匹配，Query 长度 ≥2 字符时动态召回 Top-2 经验
