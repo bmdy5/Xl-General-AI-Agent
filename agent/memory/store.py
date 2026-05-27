@@ -309,15 +309,19 @@ async def verify_index(manager) -> list[dict]:
     return broken
 
 async def gc_and_merge_fragmented_memories(manager) -> int:
-    """碎片小记忆垃圾回收与归档合并."""
+    """散落临时碎片小记忆物理蒸馏与核心归档 GC 回收引擎 (无损合并并物理销毁)"""
     if not manager.base_dir.exists():
         return 0
 
     fragments = []
+    # 核心主脑文件和系统级管理文件排除列表
+    core_files_set = {k.lower() for k in CORE_FILES.keys()}
+    excluded_set = core_files_set.union({"memory.md", "routing_rules.md", "skill.md"})
+    
     for p in manager.base_dir.iterdir():
         if p.is_file() and p.suffix == ".md":
             name = p.name.lower()
-            if name.startswith("reflect_") or name.startswith("audit_"):
+            if (name.startswith("reflect_") or name.startswith("audit_")) and name not in excluded_set and not name.startswith("."):
                 fragments.append(p)
 
     if not fragments:
