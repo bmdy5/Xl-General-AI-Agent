@@ -644,3 +644,36 @@ from agent.core.paths import PROJECT_ROOT, SKILLS_DIR, EXPERIENCES_DIR, CONTEXT_
 | `tts_health_timeout` | 3.0 | TTS 健康探测超时秒数 |
 | `tts_health_fail_threshold` | 3 | TTS 自愈前连续失败次数 |
 
+---
+
+## 19. 2026-05-27 架构精简与缓存优化变更记录
+
+### 19.1 缓存修复
+- **时间戳粒度**：`%Y-%m-%d %H:%M` → `%Y-%m-%d`（当日缓存全部命中）
+- **Compressor 移除**：删除 compress()/should_compress()/熔断器（230→23 行），由疲劳+dreaming 替代
+- **前缀缓存保护**：dynamic_context 合并到 system[0].content 末尾，不再单独占消息
+
+### 19.2 Token 与请求数控制
+- `max_tokens`：16384 → 4096（输出上限 ~6000 汉字）
+- `max_turns`：40 → 20（每次对话最多 20 轮工具调用）
+- bash 非分析型命令成功时仅返回 `(exit code: 0)`
+- System Prompt 新增回复长度自控规范 + `[SPLIT]` 分段说明
+- 硬编码按标点分句已删除，由模型自主用 `[SPLIT]` 控制
+
+### 19.3 死代码删除（~4500 行）
+- 删除 15 个文件：coach.py, tester.py, apply.py, douyin_browser.py, duoagent/, media/image_server.py, 5 个 tool stub, tool_decorator.py, debate.py 保留
+- migration.py 204→8 行 no-op
+- traces.py 删除 3 个死函数
+- compressor.py 230→23 行
+
+### 19.4 架构精简
+- 视觉工具 5→1（保留 BrowserAgentTool）
+- 中间件 11→8（SessionControl + QuickReply 合并 5 个为 2 个）
+- `_cjk_space` 3 处重复统一到 `agent.memory`
+- `_sync_environ_keys` 移除 `os.environ.pop()` 避免并发竞态
+
+### 19.5 性能优化
+- `_load_core_skills`：mtime 缓存避免重复扫描
+- `repair_history`：消息数未变时跳过全量扫描
+- 日志双文件 + logger name 前缀路由（chat.log / system.log）
+
