@@ -251,13 +251,31 @@ class BashTool(BaseTool):
                 return
 
             output = stdout.decode("utf-8", errors="replace")
-            if len(output) > MAX_OUTPUT:
-                output = output[:MAX_OUTPUT] + f"\n\n... (truncated, {len(output)} bytes total)"
 
-            yield ToolResult(
-                type="result",
-                data=f"$ {command}\n{output}\n(exit code: {process.returncode})",
-            )
+            # 非分析型命令成功时精简输出，只返回成功状态，减缓 Prompt 膨胀
+            _ANALYTICAL_CMDS = ("grep", "cat", "head", "tail", "find", "ls", "wc", "du", "df",
+                                "ps", "top", "netstat", "curl", "wget", "python", "node", "jq",
+                                "awk", "sed", "diff", "git log", "git show", "git diff", "pgrep")
+            cmd_base = command.strip().split()[0] if command.strip() else ""
+            cmd_first_two = " ".join(command.strip().split()[:2]) if command.strip() else ""
+            is_analytical = cmd_base in _ANALYTICAL_CMDS or cmd_first_two in _ANALYTICAL_CMDS
+            is_success = process.returncode == 0
+
+            if is_success and not is_analytical:
+                if len(output) > MAX_OUTPUT:
+                    output = output[:MAX_OUTPUT] + f"\n\n... (truncated, {len(output)} bytes total)"
+                yield ToolResult(type="result", data=f"$ {command}\n(exit code: 0)")
+            elif len(output) > MAX_OUTPUT:
+                output = output[:MAX_OUTPUT] + f"\n\n... (truncated, {len(output)} bytes total)"
+                yield ToolResult(
+                    type="result",
+                    data=f"$ {command}\n{output}\n(exit code: {process.returncode})",
+                )
+            else:
+                yield ToolResult(
+                    type="result",
+                    data=f"$ {command}\n{output}\n(exit code: {process.returncode})",
+                )
 
         except FileNotFoundError:
             yield ToolResult(type="result", data=f"Error: command not found: {command}")
