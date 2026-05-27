@@ -182,8 +182,8 @@ async def on_session_end(agent):
                     trigger = pattern.get("trigger", "")
                     if name and len(steps) >= 2:
                         import re
-                        # 强力重定向落点：会话反思自检测出的 SOP 模式一律以降落为 experiences 经验开始！
-                        exp_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "experiences"
+                        from agent.core.paths import EXPERIENCES_DIR
+                        exp_dir = EXPERIENCES_DIR
                         exp_dir.mkdir(parents=True, exist_ok=True)
                         safe_name = re.sub(r'[^\w-]', '_', name.lower().strip())
                         exp_path = exp_dir / f"{safe_name}.md"

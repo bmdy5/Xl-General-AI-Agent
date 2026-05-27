@@ -59,8 +59,9 @@ class RecordSkillUsageTool(BaseTool):
         success = args.get("success", True)
         
         try:
-            exp_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "experiences"
-            skills_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "skills"
+            from agent.core.paths import EXPERIENCES_DIR, SKILLS_DIR
+            exp_dir = EXPERIENCES_DIR
+            skills_dir = SKILLS_DIR
             skill_file = exp_dir / f"{skill_name}.md"
             skills_file = skills_dir / f"{skill_name}.md"
             

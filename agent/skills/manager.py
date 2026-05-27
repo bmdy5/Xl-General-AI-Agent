@@ -42,7 +42,8 @@ def run_async_handler(coro):
 
 def get_skills_root() -> Path:
     """自适应获取项目的 skills 物理根目录"""
-    return Path(__file__).resolve().parents[2] / "agent_memory" / "skills"
+    from agent.core.paths import SKILLS_DIR
+    return SKILLS_DIR
 
 def _rule_categorize(name: str, trigger: str) -> str:
     """基于物理规则归类技能"""

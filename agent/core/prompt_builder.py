@@ -3,8 +3,9 @@ import re
 import json
 import logging
 import threading
-from pathlib import Path
 from datetime import datetime, timezone, timedelta
+
+from .paths import SKILLS_DIR, EXPERIENCES_DIR, CONTEXT_DIR
 
 logger = logging.getLogger("agent.prompt_builder")
 
@@ -83,7 +84,7 @@ def _calculate_skill_score(query: str, trigger_str: str, file_name: str) -> floa
 
 def _load_core_skills(query_text: str = "") -> str:
     """按需动态召回顶级技能到 System Prompt (Muscle Memory & Score-based Heuristic Recall)"""
-    skills_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "skills"
+    skills_dir = SKILLS_DIR
     if not skills_dir.exists():
         return ""
     
@@ -178,7 +179,7 @@ def _search_experiences(query: str) -> str:
     if len(query.strip()) < 2:
         return ""
         
-    exp_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "experiences"
+    exp_dir = EXPERIENCES_DIR
     if not exp_dir.exists():
         return ""
         
@@ -336,7 +337,7 @@ async def build_system_prompt(agent) -> str:
         coworker_id = getattr(agent, "current_user_id", "未知同事")
         coworker_mem_str = ""
         try:
-            memory_file = Path(__file__).resolve().parents[2] / "agent_memory" / "context" / f"coworker_{coworker_id}.json"
+            memory_file = CONTEXT_DIR / f"coworker_{coworker_id}.json"
             if memory_file.exists():
                 data = json.loads(memory_file.read_text(encoding="utf-8"))
                 memories = data.get("memories", [])
