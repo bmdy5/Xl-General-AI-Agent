@@ -648,3 +648,34 @@ description: 微信小程序自动化操作手册
 #### 打卡要求
 当上下文出现 `[DYNAMIC EXPERIENCE BLOCK]` 时，任务完成后必须调用 `record_skill_usage` 工具，传入经验的 `skill_name` 及成功/失败状态。
 
+---
+
+## 18. 全局路径常量与阈值配置化 (2026-05-27)
+
+### 18.1 统一路径常量 (`agent/core/paths.py`)
+
+消除各处重复的 `Path(__file__).resolve().parents[2]` 路径解析，所有 `agent_memory/` 子目录路径统一从此模块导入：
+
+```python
+from agent.core.paths import PROJECT_ROOT, SKILLS_DIR, EXPERIENCES_DIR, CONTEXT_DIR, SELF_EVOLUTION_DIR
+```
+
+后续新增子目录或移动文件时，只需修改 `paths.py` 一处即可。
+
+### 18.2 阈值配置化 (`config/settings.yaml` → `thresholds`)
+
+所有运行时阈值集中管理在 `settings.yaml` 的 `thresholds:` 节点下，代码通过 `settings.get_threshold(key, default)` 读取，配置缺失时回退到默认值保证不崩溃。
+
+| 键 | 默认值 | 用途 |
+|---|---|---|
+| `skill_relevance_low` | 2.5 | 技能召回最低相关度分数 |
+| `skill_relevance_high` | 5.0 | 高相关度技能分类边界 |
+| `skill_prompt_max_chars` | 2500 | 技能 Prompt 截断字符数 |
+| `skill_promotion_usage` | 5 | 经验晋升技能所需最低使用次数 |
+| `skill_promotion_success_rate` | 0.90 | 经验晋升技能所需最低成功率 |
+| `experience_recall_top_k` | 2 | 动态经验召回数量 |
+| `experience_prompt_max_chars` | 2000 | 经验 Prompt 截断字符数 |
+| `tts_idle_timeout_seconds` | 7200 | TTS 闲置超时强杀秒数 |
+| `tts_health_timeout` | 3.0 | TTS 健康探测超时秒数 |
+| `tts_health_fail_threshold` | 3 | TTS 自愈前连续失败次数 |
+
