@@ -83,11 +83,11 @@ gateway-restart:
 		pkill -9 -f "main.py --gateway" 2>/dev/null || true; \
 		sleep 1; \
 		mkdir -p logs; \
-		nohup venv/bin/python -u main.py --gateway >> logs/gateway.log 2>&1 & \
+		nohup venv/bin/python -u main.py --gateway >> logs/startup.log 2>&1 & \
 	fi
 
 	@echo "✅ QQ Gateway 重启完成"
-	@echo "   查看日志: tail -f logs/gateway.log"
+	@echo "   查看日志: tail -f logs/startup.log"
 
 # ── 重启独立 Douyin Gateway（改完代码后执行） ──
 douyin-restart:
