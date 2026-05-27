@@ -500,9 +500,21 @@ make gateway-restart  # 独立启动/重启 QQ 大脑
 3. **后台进化通道 (`dreaming.log`)**：隔离深夜异步图谱合并（KI Merge）和记忆双写过程，防止后台任务污染前台日志。
 4. **底层网络通道 (`gateway.log`)**：回归纯粹，仅保留 QQ WebSocket 重连、API 熔断报错等心跳与网络抛错。
 
-**【上下文染色追踪 (ContextVars)】**
-系统通过 `contextvars` 在请求到达的最顶层强制打上 `[session_id]` 或 `[System:Dream]` 前缀。并发请求时，通过正则或 `grep "User_1705919142"` 即可 100% 提取无串台的单用户纯净对话链路。
 **严禁退回单一的 `basicConfig` 暴力输出时代！**
+
+### 13.5 🎯 极速排查与分析日志速查指南 (Log Inspection Cheat Sheet)
+
+为了消灭“多通道日志难以同时查看”的烦恼，不论是您亲自排查，还是未来的 AI 助手接班，都可以直接通过以下极简定位指南，实现秒级精准查看：
+
+| 🔍 排查诉求 | 📂 目标物理文件 | 💻 极速查看指令 (Terminal 命令) | 💡 核心看点 |
+| :--- | :--- | :--- | :--- |
+| **只想看清爽的聊天对话流水** | [`logs/agent_activity.log`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/logs/agent_activity.log) | `tail -f logs/agent_activity.log` | **最通俗直观**。以 `[用户输入]`、`[AI 计划/答复]` 展现纯对话与结果，没有任何代码日志干扰。 |
+| **看 AI 是否胡思乱想/调用工具耗时** | [`logs/agent_core.log`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/logs/agent_core.log) | `tail -f logs/agent_core.log` | **看内心OS与工具**。能清晰看到 `🧠 [思考]` 以及 `🛠️ [工具执行完毕] {tool}，耗时: X.XXs` 耗时闭环记录。 |
+| **看消息有没有发出去/有没有人被拦截** | [`logs/gateway.log`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/logs/gateway.log) | `tail -f logs/gateway.log` | **看网络心跳与安全**。过滤了所有思考日志，只剩 `Agent → QQ` 发信记录以及 🛡️ `[安全拦截]` 警告日志。 |
+| **看亮哥（特定会话）的专属链路** | 以上任意日志均可 | `grep "user_1705919142" logs/agent_core.log` | **并发无串台**。通过 ContextVars 染色，利用 `grep` 可在并发环境下 100% 提取主人会话的单线思考/通信全貌。 |
+| **看深夜脑壳做梦/记忆有没有合并** | [`logs/dreaming.log`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/logs/dreaming.log) | `tail -f logs/dreaming.log` | **看大脑自我进化**。只记录 KI 梦境合并事实、版本纠偏以及灵魂记忆热双写备份记录。 |
+| **看大模型费用/缓存命中率** | [`logs/metrics.log`](file:///Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/logs/metrics.log) | `tail -n 30 logs/metrics.log` | **看系统指标**。记录每次流式调用的 `Hit Rate` 缓存率和 `Token` 精准数据，用于极速审计费用。 |
+
 ### 13.2 🚨 AI 开发者自检与优化红线
 
 后续所有被唤醒的 AI 编码助手，在开始调试、修复 Bug 或新增任何重大功能之前，**必须前置执行 Token 与缓存审计自检**：
