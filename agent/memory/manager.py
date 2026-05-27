@@ -23,6 +23,85 @@ from .index import MemoryCache
 from .store import PROTECTED_FILES, CORE_FILES, get_default_routing_rules
 from .migration import _run_hot_migration_if_needed
 
+def _migrate_old_paths_to_unified_brain():
+    """将项目下旧版散落的脑区（.memory, memory, skills, experience）无损且原子地物理热迁移归并至 agent_memory 下"""
+    project_root = Path(__file__).resolve().parents[2]
+    flag_file = project_root / "agent_memory" / ".migrated_to_agent_memory"
+    
+    if flag_file.exists():
+        return
+        
+    old_dot_memory = project_root / ".memory"
+    old_memory = project_root / "memory"
+    old_skills = project_root / "skills"
+    old_experience = project_root / "experience"
+    
+    # 没有任何旧版散落脑区时直接写入标志，防止重复扫描
+    if not (old_dot_memory.exists() or old_memory.exists() or old_skills.exists() or old_experience.exists()):
+        new_dir = project_root / "agent_memory"
+        new_dir.mkdir(parents=True, exist_ok=True)
+        flag_file.write_text("ok", encoding="utf-8")
+        return
+
+    import shutil
+    logging.getLogger("agent.memory.migration").info("🔄 [大脑大统一物理搬家] 检测到旧有分散脑区资产，正在进行无损迁移升级...")
+    
+    # 创建新版四叶脑叶结构
+    new_core = project_root / "agent_memory" / "core"
+    new_skills = project_root / "agent_memory" / "skills"
+    new_experiences = project_root / "agent_memory" / "experiences"
+    new_context = project_root / "agent_memory" / "context"
+    
+    for d in [new_core, new_skills, new_experiences, new_context]:
+        d.mkdir(parents=True, exist_ok=True)
+        
+    try:
+        # 1. 迁移 .memory -> core/
+        if old_dot_memory.exists():
+            for item in old_dot_memory.iterdir():
+                if item.name.startswith("."):
+                    continue
+                dest = new_core / item.name
+                if item.is_dir():
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(item, dest)
+                else:
+                    shutil.copy2(item, dest)
+            shutil.rmtree(old_dot_memory)
+            
+        # 2. 迁移 memory -> context/
+        if old_memory.exists():
+            for item in old_memory.iterdir():
+                if item.is_file() and item.name.endswith(".json"):
+                    shutil.copy2(item, new_context / item.name)
+            shutil.rmtree(old_memory)
+            
+        # 3. 迁移 skills -> skills/
+        if old_skills.exists():
+            for item in old_skills.iterdir():
+                if item.is_file() and item.name.endswith(".md"):
+                    shutil.copy2(item, new_skills / item.name)
+                elif item.is_dir() and not item.name.startswith("."):
+                    dest = new_skills / item.name
+                    if dest.exists():
+                        shutil.rmtree(dest)
+                    shutil.copytree(item, dest)
+            shutil.rmtree(old_skills)
+            
+        # 4. 迁移 experience -> experiences/
+        if old_experience.exists():
+            for item in old_experience.iterdir():
+                if item.is_file() and item.name.endswith(".md"):
+                    shutil.copy2(item, new_experiences / item.name)
+            shutil.rmtree(old_experience)
+            
+        flag_file.write_text("migration_success", encoding="utf-8")
+        logging.getLogger("agent.memory.migration").info("✨ [大脑大统一物理搬家] 旧有分散脑区资产无损搬家热升级大获成功！")
+        
+    except Exception as e:
+        logging.getLogger("agent.memory.migration").error(f"❌ [大脑大统一物理搬家] 热迁移时遇到了阻碍异常: {e}")
+
 class MemoryManager:
     """长期记忆与自学习大脑 — 外观 Facade 编排层."""
 
@@ -38,6 +117,9 @@ class MemoryManager:
 
     def __init__(self, base_dir: Optional[Union[str, Path]] = None):
         from agent.core.config import settings
+        
+        # 0. 启动大脑物理资产热迁移搬家
+        _migrate_old_paths_to_unified_brain()
         
         # 1. 提取 settings 配置
         memory_cfg = settings.get("memory") or {}
@@ -92,6 +174,24 @@ class MemoryManager:
         # 6. 主动触发老旧无隔离数据库到多实例隔离新库的平滑无损热迁移
         self._run_hot_migration_if_needed()
 
+        # 7. 启动后延迟 1 秒在后台自动启动物理碎片大蒸馏 GC，实现脑区脱水极致纯净 (方案 A 全自动静默守护)
+        async def _startup_gc_daemon():
+            await asyncio.sleep(1.0)
+            try:
+                cleaned = await self.gc_and_merge_fragmented_memories()
+                if cleaned > 0:
+                    logging.getLogger("agent.memory.gc").info(
+                        f"✨ [大脑自动蒸馏] 成功自动熔接并物理清退了 {cleaned} 个零散碎片，脑区已脱水极致纯净！"
+                    )
+            except Exception as gc_err:
+                logging.getLogger("agent.memory.gc").error(f"Failed to run startup auto-gc: {gc_err}")
+                
+        try:
+            loop = asyncio.get_running_loop()
+            loop.create_task(_startup_gc_daemon())
+        except RuntimeError:
+            pass
+
     def trigger_backup(self):
         """异步防抖热双写备份引擎：通过官方 SQLite backup() API 或 copy 进行数据同步"""
         if not self.auto_backup:
@@ -120,11 +220,20 @@ class MemoryManager:
                         logger.warning(f"SQLite backup() API failed, falling back to copy: {backup_api_err}")
                         shutil.copy2(db_path, backup_db_path)
                 
-                # 2. 物理同步核心 Markdown 记忆文件与索引
+                # 2. 物理同步核心 Markdown 记忆文件与索引 (镜像级删除与拷贝一致性对齐)
+                # 首先，前置清理：如果项目备份目录中存在的 .md 文件在主物理目录中已被清退删除，同步执行物理 unlink 销毁
+                if self.backup_dir.exists():
+                    for dest_file in self.backup_dir.iterdir():
+                        if dest_file.is_file() and dest_file.suffix == ".md":
+                            src_file = self.base_dir / dest_file.name
+                            if not src_file.exists():
+                                dest_file.unlink()
+
+                # 接着，正向覆盖拷贝
                 for src_file in self.base_dir.iterdir():
                     if src_file.is_file() and src_file.suffix == ".md":
                         shutil.copy2(src_file, self.backup_dir / src_file.name)
-                logger.info(f"💾 [热备份成功] 小萤的灵魂记忆已安全双写同步至项目沙箱: {self.backup_dir}")
+                logger.info(f"💾 [热备份成功] 小萤的灵魂记忆已安全镜像双写同步至项目沙箱: {self.backup_dir}")
             except Exception as backup_err:
                 logger.warning(f"Failed to backup memory database: {backup_err}")
                 
@@ -166,6 +275,7 @@ class MemoryManager:
         """非阻塞式异步内存防抖刷盘。消息先保留在内存，1.0秒防抖延迟后一次性写入SQLite。"""
         import json
         from datetime import datetime, timezone
+        from .index import with_db_retry
         
         # 1. 序列化消息数据以快照保存，规避协程挂起期间 messages 列表被后方修改导致的数据同步不一致
         try:
@@ -179,17 +289,32 @@ class MemoryManager:
         if old_task and not old_task.done():
             old_task.cancel()
 
-        # 3. 创建全新的防抖物理写入 Task
+        # 3. 带自适应指数重试的写库协程与同步函数
+        @with_db_retry()
+        async def _async_write_db():
+            db = self._get_db()
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            with db:
+                db.execute(
+                    "INSERT OR REPLACE INTO active_sessions (session_key, messages, updated_at) VALUES (?, ?, ?)",
+                    (session_key, serialized_msgs, now_str)
+                )
+
+        @with_db_retry()
+        def _sync_write_db():
+            db = self._get_db()
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            with db:
+                db.execute(
+                    "INSERT OR REPLACE INTO active_sessions (session_key, messages, updated_at) VALUES (?, ?, ?)",
+                    (session_key, serialized_msgs, now_str)
+                )
+
+        # 4. 创建全新的防抖物理写入 Task
         async def _do_debounce_write():
             try:
                 await asyncio.sleep(1.0)
-                db = self._get_db()
-                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                with db:
-                    db.execute(
-                        "INSERT OR REPLACE INTO active_sessions (session_key, messages, updated_at) VALUES (?, ?, ?)",
-                        (session_key, serialized_msgs, now_str)
-                    )
+                await _async_write_db()
                 logger.debug(f"💾 [防抖刷盘成功] session {session_key} 内存消息已被同步至 SQLite。")
             except asyncio.CancelledError:
                 # 任务被取消是正常防抖现象，不打印 error
@@ -208,13 +333,7 @@ class MemoryManager:
         except RuntimeError:
             # 兼容同步单测环境无事件循环时，直接阻塞写（容灾）
             try:
-                db = self._get_db()
-                now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                with db:
-                    db.execute(
-                        "INSERT OR REPLACE INTO active_sessions (session_key, messages, updated_at) VALUES (?, ?, ?)",
-                        (session_key, serialized_msgs, now_str)
-                    )
+                _sync_write_db()
             except Exception as sync_write_err:
                 logger.error(f"Failed to execute synchronous active session write: {sync_write_err}")
 
@@ -279,9 +398,9 @@ class MemoryManager:
 
     # ── 3. ki.py 代理 ───────────────────────────────────────────
 
-    def save_ki(self, ki_data: dict) -> str:
+    def save_ki(self, ki_data: dict, _existing_db=None) -> str:
         from .ki import save_ki
-        res = save_ki(self, ki_data)
+        res = save_ki(self, ki_data, _existing_db=_existing_db)
         self.trigger_backup()
         return res
 
