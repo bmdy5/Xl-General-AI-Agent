@@ -135,11 +135,14 @@ class RecordSkillUsageTool(BaseTool):
             finally:
                 conn.close()
                 
-            # 3. 动态评分晋升校验 (使用次数 >= 5, 成功率 >= 90%, 且当前依然是 experiences 经验)
+            from agent.core.config import settings
+            # 3. 动态评分晋升校验
             success_rate = db_success / db_usage if db_usage > 0 else 0.0
             is_promoted = False
-            
-            if target_file == skill_file and not is_skills and db_usage >= 5 and success_rate >= 0.90:
+            promo_usage = settings.get_threshold("skill_promotion_usage", 5)
+            promo_rate = settings.get_threshold("skill_promotion_success_rate", 0.90)
+
+            if target_file == skill_file and not is_skills and db_usage >= promo_usage and success_rate >= promo_rate:
                 skills_dir.mkdir(parents=True, exist_ok=True)
                 dest_file = skills_dir / f"{skill_name}.md"
                 

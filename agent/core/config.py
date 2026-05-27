@@ -45,5 +45,12 @@ class Settings:
             return self._data[name]
         return os.environ.get(name, default)
 
+    def get_threshold(self, key: str, default):
+        """从 thresholds 配置节读取阈值，缺失时返回 default 保证不崩溃。"""
+        thresholds = self._data.get("thresholds", {})
+        if isinstance(thresholds, dict):
+            return thresholds.get(key, default)
+        return default
+
 # 单例模式暴露
 settings = Settings()

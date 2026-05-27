@@ -6,6 +6,7 @@ import threading
 from datetime import datetime, timezone, timedelta
 
 from .paths import SKILLS_DIR, EXPERIENCES_DIR, CONTEXT_DIR
+from .config import settings
 
 logger = logging.getLogger("agent.prompt_builder")
 
@@ -116,7 +117,7 @@ def _load_core_skills(query_text: str = "") -> str:
             file_name = folder_name if is_dir else file_path.name
             
             score = _calculate_skill_score(query_text, trigger_str, file_name)
-            if score >= 2.5:  # 过滤低相关技能，单 2 字符关键字得分 2.0 不通过
+            if score >= settings.get_threshold("skill_relevance_low", 2.5):  # 过滤低相关技能
                 scored_entries.append((score, file_path, is_dir, file_name, content))
         except Exception as e:
             logger.debug(f"Failed to score skill {file_path}: {e}")
@@ -125,10 +126,10 @@ def _load_core_skills(query_text: str = "") -> str:
     scored_entries.sort(key=lambda x: x[0], reverse=True)
     
     # 3. 智能动态阈值挂载策略
-    # - 高度相关 (score >= 5.0) 的全部加载。
-    # - 中度相关 (score 在 [2.0, 5.0) 之间) 的，若高度相关为空或不足，补齐最多 Top-2 个。
-    highly_relevant = [x for x in scored_entries if x[0] >= 5.0]
-    moderately_relevant = [x for x in scored_entries if 2.0 <= x[0] < 5.0]
+    skill_high = settings.get_threshold("skill_relevance_high", 5.0)
+    skill_low = settings.get_threshold("skill_relevance_low", 2.5)
+    highly_relevant = [x for x in scored_entries if x[0] >= skill_high]
+    moderately_relevant = [x for x in scored_entries if skill_low <= x[0] < skill_high]
     
     selected_entries = []
     selected_entries.extend(highly_relevant)
@@ -166,10 +167,11 @@ def _load_core_skills(query_text: str = "") -> str:
     combined_blocks = [f"### [Skill: {name}]\n{body}" for name, body in blocks]
     combined = "\n\n".join(combined_blocks)
     
-    # 2500字符截断熔断保护 (按需召回上限截断，高可用非报错)
-    if len(combined) > 2500:
-        logger.warning("Recalled skills length exceeded 2500 chars. Truncating to protect system limits.")
-        combined = combined[:2500] + "\n... [Truncated for High Availability]"
+    # 截断熔断保护
+    skill_max = settings.get_threshold("skill_prompt_max_chars", 2500)
+    if len(combined) > skill_max:
+        logger.warning(f"Recalled skills length exceeded {skill_max} chars. Truncating.")
+        combined = combined[:skill_max] + "\n... [Truncated for High Availability]"
         
     return f"\n## 🔴 Core Embedded Skills (Muscle Memory)\n{combined}\n"
 
@@ -203,9 +205,10 @@ def _search_experiences(query: str) -> str:
     if not results:
         return ""
         
-    # 取 Top 2
+    # 取 Top K
     results.sort(key=lambda x: x[0], reverse=True)
-    top_results = results[:2]
+    top_k = settings.get_threshold("experience_recall_top_k", 2)
+    top_results = results[:top_k]
     
     blocks = []
     for score, name, content in top_results:
@@ -214,8 +217,9 @@ def _search_experiences(query: str) -> str:
         
     combined = "\n\n".join(blocks)
     # 截断保护
-    if len(combined) > 2000:
-        combined = combined[:2000] + "\n... (Truncated)"
+    exp_max = settings.get_threshold("experience_prompt_max_chars", 2000)
+    if len(combined) > exp_max:
+        combined = combined[:exp_max] + "\n... (Truncated)"
         
     return f"\n[DYNAMIC EXPERIENCE BLOCK]\n以下是系统为你动态匹配的场景避坑指南与经验（Top-2），请在操作前仔细参考：\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
 
