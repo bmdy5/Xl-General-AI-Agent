@@ -25,7 +25,7 @@ class LLMClient:
         model: str = "openai/gpt-4o",
         api_key: Optional[str] = None,
         api_base: Optional[str] = None,
-        max_tokens: int = 16384,
+        max_tokens: int = 4096,
         temperature: float = 1.0,
         model_vision: Optional[str] = None,
         model_pro: Optional[str] = None,

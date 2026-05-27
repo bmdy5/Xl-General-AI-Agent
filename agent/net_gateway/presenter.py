@@ -47,7 +47,7 @@ class StreamPresenter:
             # 语音回复时不进行流式分句发送，全量缓存在 buf 中以保持语音连贯性
             pass
         else:
-            # 文本流式分句分段发送，保证极速拟真微交互
+            # [SPLIT] 由模型自主决定分段，不再硬编码按标点切分
             if "[SPLIT]" in self.buf:
                 parts = self.buf.split("[SPLIT]")
                 for part in parts[:-1]:
@@ -56,27 +56,6 @@ class StreamPresenter:
                         await self.context.send_chunk(msg_type, user_id, group_id, part.strip())
                         self.total_sent_tokens += self.executor._count_tokens(part.strip())
                 self.buf = parts[-1]
-            elif "\n\n" in self.buf and len(self.buf) > 40:
-                idx = self.buf.rfind("\n\n")
-                to_send = self.buf[:idx]
-                if to_send.strip():
-                    self.executor._log_activity_dispatcher("AI 计划/答复", to_send.strip(), user_id=user_id)
-                    await self.context.send_chunk(msg_type, user_id, group_id, to_send.strip())
-                    self.total_sent_tokens += self.executor._count_tokens(to_send.strip())
-                self.buf = self.buf[idx+2:]
-            elif len(self.buf) > 100 and any(p in self.buf for p in ("。", "！", "？")):
-                idx = -1
-                for p in ("。", "！", "？"):
-                    p_idx = self.buf.rfind(p)
-                    if p_idx > idx:
-                        idx = p_idx
-                if idx != -1:
-                    to_send = self.buf[:idx+1]
-                    if to_send.strip():
-                        self.executor._log_activity_dispatcher("AI 计划/答复", to_send.strip(), user_id=user_id)
-                        await self.context.send_chunk(msg_type, user_id, group_id, to_send.strip())
-                        self.total_sent_tokens += self.executor._count_tokens(to_send.strip())
-                    self.buf = self.buf[idx+1:]
  
     async def flush_buffer(self, msg_type: str, user_id: str, group_id: str):
         """强行冲刷缓冲区，并进行语音合成的最终投递"""
