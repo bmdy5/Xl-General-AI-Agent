@@ -27,14 +27,14 @@ scratch/*
 agent/model/
 /model/
 scripts/
-/skills/
 
 # 归档目录 (历史运行时产物)
 archive/
 
-# 记忆沙箱与测试记忆 (0ms 一键换家与 TDD 安全沙箱)
-.memory/
-.memory_test/
+# 记忆大脑大统一过滤控制 (Unified Brain Git Filter)
+/agent_memory/core/
+# 仅允许追踪常驻技能与动态经验目录，杜绝深夜做梦大熔炼产生的临时影子碎片对 Git 历史进行噪声刷屏
+# 允许追踪整个 agent_memory/skills/ 与 agent_memory/experiences/ 目录下的所有 .md 资产
 
 # 本地测试与扫码登录临时缓存文件
 debug_mcp.py
@@ -43,7 +43,6 @@ qrcode_page.html
 
 # 本地运行时临时生成的数据与日志
 logs/
-/memory/
 
 # Antigravity IDE assets
 .agent/
