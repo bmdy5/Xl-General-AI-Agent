@@ -168,7 +168,7 @@ def build_agent(session_id: str = "default"):
         registry=registry,
         memory=memory,
         session=session,
-        max_turns=int(os.environ.get("MYAGENT_MAX_TURNS", "40"))
+        max_turns=int(os.environ.get("MYAGENT_MAX_TURNS", "20"))
     )
 
     agent_instance.session_key = session_id  # 显式绑定，用于短期记忆持久化与自愈定位
