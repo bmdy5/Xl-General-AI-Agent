@@ -126,7 +126,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         fatigue_threshold = 100000 if is_debugging else 64000
         is_fatigued = agent.compressor.estimate_tokens(agent.messages) > fatigue_threshold
 
-        # 构建动态环境上下文，将其作为第二条 System 消息以彻底抑制最前面巨大核心 Prompt 的前缀缓存抖动
+        # 动态上下文合并到 system[0] 末尾，保持 messages[1:] 绝对静态以保护前缀缓存
         context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
         if memory_block:
             context_parts.append(f"## 召回的辅助记忆 context\n{memory_block}")
@@ -143,39 +143,30 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
                 "注意：必须明确提及在完成手头这一轮工作之后，你要求去大睡一觉以整理大脑记忆。"
             )
 
-        dynamic_system_prompt = "\n\n".join(context_parts)
-        
-        # 寻找当前回合的发起 User 消息索引
+        dynamic_context = "\n\n".join(context_parts)
+        merged_system = system_prompt + "\n\n" + dynamic_context
+
         user_idx = -1
         for idx in range(len(agent.messages) - 1, -1, -1):
             if agent.messages[idx].get("role") == "user":
                 user_idx = idx
                 break
 
-        # 基于插入点极简分片重组，杜绝冗余
         llm_messages = []
-        llm_messages.append({"role": "system", "content": system_prompt})
+        llm_messages.append({"role": "system", "content": merged_system})
 
         if user_idx != -1:
-            # 1. 历史会话（静态，100% 缓存）
             for m in agent.messages[:user_idx]:
                 copy = dict(m)
                 if "deepseek" not in agent.llm.model.lower():
                     copy.pop("reasoning_content", None)
                 llm_messages.append(copy)
-            
-            # 2. 插入点：动态上下文（Time + RAG）
-            llm_messages.append({"role": "system", "content": dynamic_system_prompt})
-            
-            # 3. 当前回合活动消息（提问 + 随后的 ToolCall/Result）
             for m in agent.messages[user_idx:]:
                 copy = dict(m)
                 if "deepseek" not in agent.llm.model.lower():
                     copy.pop("reasoning_content", None)
                 llm_messages.append(copy)
         else:
-            # Fallback 兜底防灾
-            llm_messages.append({"role": "system", "content": dynamic_system_prompt})
             for m in agent.messages:
                 copy = dict(m)
                 if "deepseek" not in agent.llm.model.lower():
