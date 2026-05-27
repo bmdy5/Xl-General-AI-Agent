@@ -14,15 +14,63 @@ def _load_dotenv():
         from dotenv import load_dotenv
         load_dotenv(env_file, override=True)
 
+from contextvars import ContextVar
+from logging.handlers import RotatingFileHandler
+
+session_ctx = ContextVar('session_id', default="System")
+
+class ContextFormatter(logging.Formatter):
+    def format(self, record):
+        ctx = session_ctx.get()
+        if ctx:
+            record.session = f"[{ctx}]"
+        else:
+            record.session = "[System]"
+        return super().format(record)
+
 def setup_system():
-    """初始化系统环境：加载 .env、警告过滤与统一日志格式"""
+    """初始化系统环境：加载 .env、警告过滤与四通道独立日志格式"""
     _load_dotenv()
-    logging.basicConfig(
-        level=logging.INFO,
-        format='%(asctime)s - %(levelname)s - %(message)s',
-        handlers=[logging.StreamHandler(sys.stdout)],
-    )
+    
+    # 清理原有拦截器
+    root_logger = logging.getLogger()
+    root_logger.setLevel(logging.INFO)
+    for h in root_logger.handlers[:]:
+        root_logger.removeHandler(h)
+        
+    formatter = ContextFormatter('%(asctime)s - %(session)s - %(levelname)s - %(name)s - %(message)s')
+    
+    os.makedirs("logs", exist_ok=True)
+    
+    def create_handler(filename, filter_func=None):
+        handler = RotatingFileHandler(f"logs/{filename}", maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
+        handler.setFormatter(formatter)
+        if filter_func:
+            class CustomFilter(logging.Filter):
+                def filter(self, record):
+                    return filter_func(record)
+            handler.addFilter(CustomFilter())
+        return handler
+
+    # 分流规则
+    def is_metrics(r): return "metrics" in r.name or "llm_stream" in r.name or "CACHE" in str(r.msg) or "TOKEN AUDIT" in str(r.msg)
+    def is_dream(r): return "dreaming" in r.name or "KI" in str(r.msg) or "热备份" in str(r.msg) or "合并" in str(r.msg)
+    def is_gw(r): return "net_gateway" in r.name or "Gateway" in r.name or "WebSocket" in str(r.msg)
+    def is_core(r): return not (is_metrics(r) or is_dream(r) or is_gw(r))
+
+    root_logger.addHandler(create_handler("metrics.log", is_metrics))
+    root_logger.addHandler(create_handler("dreaming.log", is_dream))
+    root_logger.addHandler(create_handler("gateway.log", is_gw))
+    root_logger.addHandler(create_handler("agent_core.log", is_core))
+    
+    # 增加控制台纯净输出
+    console = logging.StreamHandler(sys.stdout)
+    console.setFormatter(formatter)
+    console.addFilter(type('CustomFilter', (logging.Filter,), {'filter': lambda self, r: is_core(r) or is_gw(r)})())
+    root_logger.addHandler(console)
+
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
+    logging.getLogger("sentence_transformers").setLevel(logging.WARNING)
     warnings.filterwarnings("ignore", category=UserWarning, module="pydantic")
 
 def build_agent(session_id: str = "default"):

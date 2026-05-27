@@ -378,10 +378,18 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
             try:
                 tool_instance = agent.registry.get(tool_name)
                 tool_timeout = getattr(tool_instance, "timeout", 40) if tool_instance else 40
+                
+                logger.info(f"🧠 [思考] 决定调用工具 {tool_name}，参数: {tool_args}")
+                
+                import time
+                t_start = time.perf_counter()
                 result_str = await asyncio.wait_for(
                     agent.registry.dispatch(tool_name, tool_args, context=agent),
                     timeout=tool_timeout,
                 )
+                elapsed = time.perf_counter() - t_start
+                logger.info(f"🛠️ [工具执行完毕] {tool_name}，耗时: {elapsed:.2f}s，结果大小: {len(result_str or '')} 字节")
+                
                 if any(ind in (result_str or "") for ind in ERROR_INDICATORS):
                     await agent._handle_tool_error(tool_name, result_str)
             except asyncio.TimeoutError:
