@@ -83,44 +83,54 @@ def _calculate_skill_score(query: str, trigger_str: str, file_name: str) -> floa
     score = min(score, 9.0)
     return score
 
+_skills_cache: dict = {}  # {mtime_sum: [(file_path, is_dir, folder_name, content, meta)]}
+
+
 def _load_core_skills(query_text: str = "") -> str:
-    """按需动态召回顶级技能到 System Prompt (Muscle Memory & Score-based Heuristic Recall)"""
+    """按需动态召回顶级技能到 System Prompt，mtime 缓存避免重复扫描。"""
     skills_dir = SKILLS_DIR
     if not skills_dir.exists():
         return ""
-    
-    # 1. 递归扫描 skills/ 根目录文件与一级子目录的 SKILL.md
-    skill_entries = []
+
+    # mtime 缓存：目录无变化时复用已解析的技能文件
     try:
-        for item in sorted(skills_dir.iterdir()):
-            if item.is_file() and item.name.endswith(".md") and not item.name.startswith("."):
-                skill_entries.append((item, False, ""))
-            elif item.is_dir() and not item.name.startswith("."):
-                skill_md = item / "SKILL.md"
-                if skill_md.exists() and skill_md.is_file():
-                    skill_entries.append((skill_md, True, item.name))
-    except Exception as e:
-        logger.error(f"Error scanning skills directory: {e}")
-        return ""
-        
-    blocks = []
-    
-    # 2. 算分并排序
-    scored_entries = []
-    for file_path, is_dir, folder_name in skill_entries:
+        mtime_sum = sum(
+            p.stat().st_mtime_ns for p in skills_dir.rglob("*")
+            if p.is_file() and p.name.endswith(".md")
+        )
+    except Exception:
+        mtime_sum = 0
+
+    cached = _skills_cache.get("mtime")
+    if cached == mtime_sum and "entries" in _skills_cache:
+        skill_entries = _skills_cache["entries"]
+    else:
+        skill_entries = []
         try:
-            # 引入 rules_lock 互斥保障并发读盘安全
-            with rules_lock:
-                content = file_path.read_text(encoding="utf-8")
-            meta = _parse_yaml_frontmatter(content)
-            trigger_str = meta.get("trigger", "")
-            file_name = folder_name if is_dir else file_path.name
-            
-            score = _calculate_skill_score(query_text, trigger_str, file_name)
-            if score >= settings.get_threshold("skill_relevance_low", 2.5):  # 过滤低相关技能
-                scored_entries.append((score, file_path, is_dir, file_name, content))
+            for item in sorted(skills_dir.iterdir()):
+                if item.is_file() and item.name.endswith(".md") and not item.name.startswith("."):
+                    with rules_lock:
+                        content = item.read_text(encoding="utf-8")
+                    skill_entries.append((item, False, "", content, _parse_yaml_frontmatter(content)))
+                elif item.is_dir() and not item.name.startswith("."):
+                    skill_md = item / "SKILL.md"
+                    if skill_md.exists() and skill_md.is_file():
+                        with rules_lock:
+                            content = skill_md.read_text(encoding="utf-8")
+                        skill_entries.append((skill_md, True, item.name, content, _parse_yaml_frontmatter(content)))
         except Exception as e:
-            logger.debug(f"Failed to score skill {file_path}: {e}")
+            logger.error(f"Error scanning skills directory: {e}")
+            return ""
+        _skills_cache = {"mtime": mtime_sum, "entries": skill_entries}
+
+    # 算分（轻量，每次根据 query_text 动态计算）
+    scored_entries = []
+    for file_path, is_dir, folder_name, content, meta in skill_entries:
+        trigger_str = meta.get("trigger", "")
+        file_name = folder_name if is_dir else file_path.name
+        score = _calculate_skill_score(query_text, trigger_str, file_name)
+        if score >= settings.get_threshold("skill_relevance_low", 2.5):
+            scored_entries.append((score, file_path, is_dir, file_name, content))
             
     # 按 score 从高到低排序
     scored_entries.sort(key=lambda x: x[0], reverse=True)

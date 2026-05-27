@@ -9,6 +9,13 @@ async def repair_history(agent) -> None:
     if not agent.messages:
         return
 
+    # 脏标记：消息数未变则跳过全量扫描
+    msg_count = len(agent.messages)
+    last_count = getattr(agent, "_repair_last_count", 0)
+    if msg_count == last_count:
+        return
+    agent._repair_last_count = msg_count
+
     repair_logger = logging.getLogger("agent.repair")
 
     # 0. 智能重排交错的工具响应与用户/系统消息
