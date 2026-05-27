@@ -190,7 +190,7 @@ class MemoryManager:
             loop = asyncio.get_running_loop()
             loop.create_task(_startup_gc_daemon())
         except RuntimeError:
-            pass
+            logger.debug("startup GC daemon skipped: no running event loop (expected in sync/CLI contexts)")
 
     def trigger_backup(self):
         """异步防抖热双写备份引擎：通过官方 SQLite backup() API 或 copy 进行数据同步"""
