@@ -37,13 +37,17 @@ async def evolve_rules(agent) -> list[str]:
     if len(feedbacks) < 2:
         return []
 
-    rules_file = agent.memory.base_dir / "EVOLVED_RULES.md"
+    skills_dir = Path(__file__).resolve().parents[2] / "skills" / "自学习技能"
+    skills_dir.mkdir(parents=True, exist_ok=True)
+    rules_file = skills_dir / "规则与偏好.md"
     existing = rules_file.read_text(encoding="utf-8") if rules_file.exists() else ""
 
     try:
+        # 提取现有子规则（仅以 - 开头的行）
+        existing_bullet_points = "\n".join([l for l in existing.split("\n") if l.strip().startswith("-")])
         prompt = EVOLVE_RULES_PROMPT.format(
             feedbacks="\n---\n".join(feedbacks[-15:]),
-            existing_rules=existing[:1000] or "(无)",
+            existing_rules=existing_bullet_points[:1000] or "(无)",
         )
         response = await agent.llm.chat(
             messages=[{"role": "user", "content": prompt}],
@@ -62,8 +66,24 @@ async def evolve_rules(agent) -> list[str]:
             for rule in new_rules:
                 lines.append(f"- [{now}] {rule}")
             lines = lines[-8:]
-            rules_file.write_text("\n".join(lines), encoding="utf-8")
-            logger.info(f"Evolved {len(new_rules)} rule(s)")
+            
+            # 重构包含标准 YAML Frontmatter 的技能文件内容
+            new_content = (
+                "---\n"
+                "name: 自学习规则与偏好\n"
+                "description: 会话反思与工具审计中自动提炼的自进化规则\n"
+                "trigger: 规则, 偏好, 习惯, 编程, 开发, 调试, 代码, 修改, 提问\n"
+                "created: 2026-05-27T02:00:00Z\n"
+                "version: 1.0\n"
+                "---\n\n"
+                "# 自学习规则与偏好\n\n"
+                + "\n".join(lines)
+            )
+            # 引入规则全局锁，防范深夜进化时前台并行读取发生文件破损冲突
+            from agent.core.prompt_builder import rules_lock
+            with rules_lock:
+                rules_file.write_text(new_content, encoding="utf-8")
+            logger.info(f"Evolved {len(new_rules)} rule(s) saved to dynamic skills")
 
         return new_rules
     except Exception as e:

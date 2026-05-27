@@ -148,9 +148,21 @@ async def run_self_test(llm, memory, days: int = 3) -> dict:
         return {"total": 0, "passed": 0, "failed": 0, "details": []}
 
     rules_content = ""
-    rules_file = memory.base_dir / "EVOLVED_RULES.md"
+    skills_dir = Path(__file__).resolve().parents[2] / "skills" / "自学习技能"
+    rules_file = skills_dir / "规则与偏好.md"
     if rules_file.exists():
-        rules_content = rules_file.read_text(encoding="utf-8")[:4000]
+        try:
+            from ..core.prompt_builder import _strip_yaml_frontmatter, rules_lock
+            with rules_lock:
+                raw_text = rules_file.read_text(encoding="utf-8")
+            rules_content = _strip_yaml_frontmatter(raw_text).strip()[:4000]
+        except Exception:
+            try:
+                from ..core.prompt_builder import rules_lock
+                with rules_lock:
+                    rules_content = rules_file.read_text(encoding="utf-8")[:4000]
+            except Exception:
+                pass
 
     results = []
     # 限制最多测试最近 5 个事件
