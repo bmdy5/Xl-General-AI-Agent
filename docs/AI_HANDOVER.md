@@ -37,18 +37,15 @@ Xl-General-AI-Agent/ (项目根目录)
 ├── config/
 │   ├── settings.yaml           <-- 中央配置 (模型 key、NapCat ws/http、Stitch 等)
 │   └── .stitch_env             <-- Stitch MCP 环境配置
-├── skills/                     <-- 三级架构：第一级 核心技能区 (启发式按需召回)
-│   ├── *.md                    <-- 技能文档
-│   └── 自学习技能/             <-- 自演进规则目录
-│       └── 规则与偏好.md
-├── experience/                 <-- 三级架构：第二级 动态经验区 (扁平化存储)
-│   └── *.md                    <-- 经验文档 (2500 字符上限)
+├── agent_memory/               <-- 统一记忆大脑 (四叶结构，三级认知架构物理落点)
+│   ├── skills/                 <-- 第一级：核心技能区
+│   ├── experiences/            <-- 第二级：动态经验区
+│   ├── context/                <-- 上下文记忆 (coworker JSON)
+│   └── core/                   <-- 第三级：知识库 (memories.db, gitignored)
 ├── logs/                       <-- 运行时日志
-│   ├── agent_core.log          <-- 核心推理：AI 思考过程、Tool 调用追踪
-│   ├── metrics.log             <-- 引擎指标：Token 审计、RAG 缓存命中
-│   ├── dreaming.log            <-- 后台进化：图谱合并、记忆双写
-│   ├── gateway.log             <-- 底层网络：QQ WS 重连、API 超时报错
-│   └── startup.log             <-- 启动日志
+│   ├── chat.log                <-- 对话全貌：用户输入、工具调用、回复、Token审计
+│   ├── system.log              <-- 系统运维：网关状态、错误、记忆自愈
+│   └── startup.log             <-- 启动脚本输出
 ├── scripts/                    <-- 开发调试脚本
 │   ├── debug_run.py
 │   ├── debug_stitch.py
@@ -422,59 +419,27 @@ make gateway-restart  # 启动/重启 QQ 大脑
 
 ## 14. Token 消耗与缓存命中率监控
 
-所有 LLM 调用（LiteLLM / OpenAI / DeepSeek）均在 `agent/core/react_loop.py` 中输出 `[TOKEN AUDIT]` 标识的监控指标。
+所有 LLM 调用（LiteLLM / OpenAI / DeepSeek）均在 `agent/core/react_loop.py` 中输出 `[TOKEN AUDIT]` 标识的监控指标，路由至 `chat.log`。
 
-### 14.1 日志提取与监控
+Token 获取自愈（流式 Usage 跨帧捕获、保守上限法智能估算）机制详见 `agent/core/llm.py` 和 `agent/net_gateway/executor.py`，测试覆盖在 `tests/test_token_metrics.py`。
 
-* **审计日志路径**：`logs/gateway.log`
-* **查看命令**：
-  ```bash
-  grep “\[TOKEN AUDIT\]” logs/gateway.log | tail -n 20
-  ```
-* **标准输出格式**：
-  ```text
-  [TOKEN AUDIT] llm_stream | Prompt: 48200 (Cached: 46250, Hit Rate: 95.9%) | Completion: 180 | Total: 48380 (Total Cached: 124500)
-  ```
+### 14.2 双通道日志架构 (2026-05-27)
 
-### 14.2 非标 API 渠道 Token 获取自愈 (2026-05-25)
+系统采用**双文件 + logger name 前缀路由**，不再依赖消息内容字符串匹配：
 
-解决部分 API 中转代理在流式回复中丢失 `usage` 指标的问题：
+| 文件 | 路由规则 | 内容 |
+|------|----------|------|
+| `chat.log` | `agent.activity.*`, `agent.react_loop`, `net_gateway.logger` | 用户输入、小萤回复、工具调用、Token审计、缓存命中 |
+| `system.log` | 其余全部 | 网关连接/断线、错误异常、记忆自愈、做梦GC |
 
-1. **流式 Usage 跨帧捕获与去重**
-   * **机制**：`llm.py` 流式处理中引入 `usage_yielded` 去重开关，无论 Choices 块是否为空，只要 `chunk` 携带 `usage.total_tokens > 0` 即捕获并 yield，且通过 `usage_yielded` 确保仅截获一次。
-2. **保守上限法智能估算**
-   * **机制**：`executor.py` 调度末尾，若 `total_sent_tokens` 仍为 0（被中转商清零），系统结合 RAG 预估 `ctx_tokens` 和实际输出字数做估算。日志中输出 `约 XXX Tokens (智能估算)`。
-   * **测试**：`tests/test_token_metrics.py` 中 `test_llm_stream_data_chunk_usage_capture` 用例已验证。
+### 14.3 日志速查指南
 
-### 14.3 多通道日志架构 (2026-05-26)
-
-系统已演进为四通道独立日志：
-
-1. **核心推理 (`agent_core.log`)**：AI 思考过程、Tool 调用入参与意图
-2. **引擎指标 (`metrics.log`)**：Token 统计、RAG 命中率，超长 Query 强制截断
-3. **后台进化 (`dreaming.log`)**：深夜 KI 合并和记忆双写过程
-4. **底层网络 (`gateway.log`)**：QQ WebSocket 重连、API 熔断报错
-
-### 14.4 日志速查指南
-
-| 排查诉求 | 目标文件 | 查看命令 | 核心看点 |
-| :--- | :--- | :--- | :--- |
-| 聊天对话流水 | `logs/agent_activity.log` | `tail -f logs/agent_activity.log` | `[用户输入]`、`[AI 计划/答复]` 纯对话记录 |
-| AI 思考/工具耗时 | `logs/agent_core.log` | `tail -f logs/agent_core.log` | `[思考]`、`[工具执行完毕] {tool}，耗时: X.XXs` |
-| 消息发送/安全拦截 | `logs/gateway.log` | `tail -f logs/gateway.log` | `Agent → QQ` 发信记录、`[安全拦截]` 日志 |
-| 特定会话链路 | 以上任意日志 | `grep “user_xxx” logs/agent_core.log` | 通过 ContextVars 染色，并发无串台 |
-| 梦境/记忆合并 | `logs/dreaming.log` | `tail -f logs/dreaming.log` | KI 合并事实、版本纠偏、记忆双写备份 |
-| 费用/缓存命中率 | `logs/metrics.log` | `tail -n 30 logs/metrics.log` | Hit Rate 缓存率、Token 数据 |
-
-### 14.5 缓存优化约束
-
-开发者在调试、修复 Bug 或新增功能前，必须遵守：
-
-1. **缓存命中率不得低于 80%**：若持续低于 80%，必须排查原因后再继续。
-2. **禁止前缀抖动**：
-   - 所有动态上下文（时间戳、cwd、RAG 记忆块）必须追加在 System Prompt 末尾。
-   - `agent.messages` 中的历史消息在 ReAct 循环中途不允许重写或动态拼接。
-3. **静态时间戳**：`run_loop` 初始化时锁定 `now = datetime.now().strftime(“%Y-%m-%d %H:%M”)`，循环中途不得重复调用 `datetime.now()` 覆盖该变量，否则会破坏前缀缓存。
+| 排查诉求 | 目标文件 | 查看命令 |
+| :--- | :--- | :--- |
+| 对话+工具+Token 全貌 | `logs/chat.log` | `tail -f logs/chat.log` |
+| 网关/错误/自愈 | `logs/system.log` | `tail -f logs/system.log` |
+| 特定会话链路 | 以上任意 | `grep “user_xxx” logs/chat.log` |
+| Token 消耗/缓存命中 | `logs/chat.log` | `grep “TOKEN AUDIT” logs/chat.log` |
 
 ---
 
