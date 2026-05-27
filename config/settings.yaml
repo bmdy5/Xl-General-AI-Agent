@@ -69,3 +69,15 @@ knowledge_base:
 # 10. 敏感操作会话级全局绿灯超时时间 (Session Permission Timeout)
 SESSION_PERMISSION_TIMEOUT: 1800               # 默认为 30 分钟（1800 秒），亮哥授权一次后在此时间段内全部自动放行并动态顺延
 
+# 11. 系统阈值配置 (System Thresholds)
+thresholds:
+  skill_relevance_low: 2.5           # 技能召回最低相关度分数
+  skill_relevance_high: 5.0          # 高相关度技能分类边界
+  skill_prompt_max_chars: 2500       # 注入 Prompt 的技能内容最大字符数
+  skill_promotion_usage: 5           # 经验晋升技能所需最低使用次数
+  skill_promotion_success_rate: 0.90 # 经验晋升技能所需最低成功率
+  experience_recall_top_k: 2         # 动态经验召回数量
+  experience_prompt_max_chars: 2000  # 注入 Prompt 的经验内容最大字符数
+  tts_idle_timeout_seconds: 7200     # TTS 闲置超时强杀秒数 (2h)
+  tts_health_timeout: 3.0            # TTS 健康探测超时秒数
+  tts_health_fail_threshold: 3       # TTS 自愈前连续失败次数

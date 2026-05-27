@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 import aiohttp
 
+from agent.core.config import settings
+
 # 物理强穿透：保障各种运行环境/子进程下均能正确寻址项目根目录
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
@@ -80,8 +82,9 @@ class GatewayScheduler:
                 
                 if active:
                     now_ts = time.time()
-                    if now_ts - last_time > 7200:  # 2小时 = 7200秒
-                        logger.info("🎙️ [守护进程] 语音服务已闲置满 2 小时，执行物理强杀释放 3GB 内存，并进行磁盘垃圾清理...")
+                    tts_idle = settings.get_threshold("tts_idle_timeout_seconds", 7200)
+                    if now_ts - last_time > tts_idle:
+                        logger.info(f"TTS idle for {tts_idle}s, killing to free memory...")
                         
                         cmd_kill = 'pkill -f "api_v2.py" || true'
                         import os
@@ -108,7 +111,8 @@ class GatewayScheduler:
                         logger.info("🎙️ [守护进程] 语音服务物理内存与磁盘缓存彻底复归清爽 (IDLE)")
                     else:
                         try:
-                            timeout_tts = aiohttp.ClientTimeout(total=3.0)
+                            tts_timeout = settings.get_threshold("tts_health_timeout", 3.0)
+                            timeout_tts = aiohttp.ClientTimeout(total=tts_timeout)
                             if self.bot._http and not self.bot._http.closed:
                                 async with self.bot._http.get("http://127.0.0.1:9880/", timeout=timeout_tts) as resp:
                                     if resp.status not in (200, 404):
@@ -121,7 +125,8 @@ class GatewayScheduler:
                             self._tts_fail_count = 0  # 探测成功，重置计数
                         except Exception as probe_err:
                             self._tts_fail_count += 1
-                            if self._tts_fail_count >= 3:
+                            tts_fail_limit = settings.get_threshold("tts_health_fail_threshold", 3)
+                            if self._tts_fail_count >= tts_fail_limit:
                                 logger.warning(f"🎙️ [守护进程] 语音服务连续 {self._tts_fail_count} 次探测失败 (最近错误: {probe_err})，判定为假死/挂起，执行自愈重启...")
                                 tts_dir = str(root_dir.parent / "GPT-SoVITS")
                                 cmd_kill = 'pkill -f "api_v2.py" || true'
