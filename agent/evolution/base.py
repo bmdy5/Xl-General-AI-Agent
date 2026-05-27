@@ -181,8 +181,23 @@ async def on_session_end(agent):
                     steps = pattern.get("steps", [])
                     trigger = pattern.get("trigger", "")
                     if name and len(steps) >= 2:
-                        from ..skills import create_skill
-                        create_skill(name, trigger, steps, agent=agent)
+                        import re
+                        # 强力重定向落点：会话反思自检测出的 SOP 模式一律以降落为 experiences 经验开始！
+                        exp_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "experiences"
+                        exp_dir.mkdir(parents=True, exist_ok=True)
+                        safe_name = re.sub(r'[^\w-]', '_', name.lower().strip())
+                        exp_path = exp_dir / f"{safe_name}.md"
+                        
+                        now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+                        content = (
+                            f"---\nname: {safe_name}\ntrigger: {trigger}\ndescription: 会话反思自动检测的重复任务模式\n"
+                            f"created: {now_str}\nversion: 1.0\nusage_count: 0\nsuccess_count: 0\n"
+                            f"category: verification\n---\n\n"
+                            f"# {name}\n\n## 触发条件\n{trigger}\n\n## 执行步骤\n"
+                            + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))
+                        )
+                        exp_path.write_text(content, encoding="utf-8")
+                        logger.info(f"🎉 [经验提炼成功] 会话反思 SOP 模式已成功安全降落在 experiences 池中: agent_memory/experiences/{safe_name}.md")
             except Exception as e:
                 logger.debug(f"Task pattern detection skipped: {e}")
 

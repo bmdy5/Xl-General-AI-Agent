@@ -14,7 +14,7 @@ PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(o
 if PROJECT_ROOT not in sys.path:
     sys.path.insert(0, PROJECT_ROOT)
 
-from agent.llm import LLMClient
+from agent.core.llm import LLMClient
 from agent.learn.podcast import NotebookLMMCPClient, ACTIVE_PODCAST_JSON, call_tool_with_retry
 
 # 设置日志
