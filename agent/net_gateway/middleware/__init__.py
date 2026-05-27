@@ -5,12 +5,9 @@ from .pipeline import (
     SecurityWhiteListMiddleware,
     GroupMessageFilterMiddleware,
     SecurityInterceptionMiddleware,
-    AdminCommandMiddleware,
-    SleepFreezeMiddleware,
-    PendingPermissionMiddleware,
-    PodcastTopicMiddleware,
-    VoiceCommandMiddleware,
-    TaskDispatcherMiddleware
+    SessionControlMiddleware,
+    QuickReplyMiddleware,
+    TaskDispatcherMiddleware,
 )
 
 def get_default_middlewares() -> list[EventMiddleware]:
@@ -20,10 +17,7 @@ def get_default_middlewares() -> list[EventMiddleware]:
         SecurityWhiteListMiddleware(),
         GroupMessageFilterMiddleware(),
         SecurityInterceptionMiddleware(),
-        AdminCommandMiddleware(),
-        SleepFreezeMiddleware(),
-        PendingPermissionMiddleware(),
-        PodcastTopicMiddleware(),
-        VoiceCommandMiddleware(),
-        TaskDispatcherMiddleware()
+        SessionControlMiddleware(),
+        QuickReplyMiddleware(),
+        TaskDispatcherMiddleware(),
     ]
