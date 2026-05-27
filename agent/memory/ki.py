@@ -1,11 +1,14 @@
 import json
 import logging
+from contextlib import nullcontext
 from datetime import datetime, timezone
 from typing import Optional
+from .index import with_db_retry
 
 logger = logging.getLogger("agent.memory.ki")
 
-def save_ki(manager, ki_data: dict) -> str:
+@with_db_retry()
+def save_ki(manager, ki_data: dict, _existing_db=None) -> str:
     """以原子事务形式将 KI 数据存入 SQLite，并同步更新高精度 CJK 全文检索表."""
     ki_id = ki_data["id"]
     title = ki_data["title"]
@@ -17,11 +20,12 @@ def save_ki(manager, ki_data: dict) -> str:
         keywords_str = str(keywords)
     summary = ki_data["summary"]
     content = ki_data["content"]
-    
+
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    
-    db = manager._get_db()
-    with db:
+
+    db = _existing_db if _existing_db is not None else manager._get_db()
+    ctx = db if _existing_db is None else nullcontext()
+    with ctx:
         cur = db.execute("SELECT created_at, visit_count, version, revision_history FROM knowledge_items WHERE id = ?", (ki_id,))
         row = cur.fetchone()
         if row:
@@ -87,6 +91,7 @@ def save_ki(manager, ki_data: dict) -> str:
     return now
 
 
+@with_db_retry()
 def merge_ki(manager, existing_id: str, title: str, category: str, keywords: list, summary: str, content: str, revision_history: Optional[list] = None) -> str:
     """合并并更新已有的 KI 数据，自动重用 save_ki 的强一致事务逻辑."""
     ki_data = {

@@ -10,6 +10,18 @@ from datetime import datetime, timezone
 
 logger = logging.getLogger("evolution.dream")
 
+from agent.memory.index import with_db_retry
+
+@with_db_retry()
+def _fuse_save_and_cleanup(agent, db, fused_ki_data, bucket):
+    """原子写入熔炼后的 KI 并清除被融合的旧碎片 KI，具备 SQLite 写锁碰撞自适应退避重试能力."""
+    with db:
+        agent.memory.save_ki(fused_ki_data, _existing_db=db)
+        for old_item in bucket:
+            db.execute("DELETE FROM knowledge_items WHERE id = ?", (old_item["id"],))
+            db.execute("DELETE FROM ki_embeddings WHERE ki_id = ?", (old_item["id"],))
+            db.execute("DELETE FROM kis_fts WHERE ki_id = ?", (old_item["id"],))
+
 from .dream_prompts import (
     DREAM_MERGE_PROMPT,
     DAMPING_JUDGE_PROMPT,
@@ -238,14 +250,40 @@ async def trigger_deep_dream_evolution(agent, history_messages=None) -> str:
                 md_content = result_skill.get("skill_md_content", "")
                 
                 if folder_name and md_content:
-                    from ..skills import register_skill_evolution
-                    script_name = result_skill.get("helper_script_filename")
-                    script_code = result_skill.get("helper_script_content")
-                    register_skill_evolution(folder_name, md_content, script_name, script_code, agent=agent)
+                    # 强力重定向落点：禁止绕过晋升，全部强制降落在 experiences/ 避坑经验池中！
+                    exp_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "experiences"
+                    exp_dir.mkdir(parents=True, exist_ok=True)
+                    exp_path = exp_dir / f"{folder_name}.md"
+                    
+                    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                    # 补齐 Frontmatter 标签，确保初始计数置零
+                    if not md_content.strip().startswith("---"):
+                        trigger = result_skill.get("trigger", folder_name)
+                        desc = result_skill.get("description", "会话自提炼与梦境进化得出的实战经验")
+                        frontmatter = (
+                            f"---\nname: {folder_name}\ntrigger: {trigger}\ndescription: {desc}\n"
+                            f"created: {now_str}\nversion: 1.0\nusage_count: 0\nsuccess_count: 0\n"
+                            f"category: verification\n---\n\n"
+                        )
+                        md_content = frontmatter + md_content
+                    else:
+                        # 确保 usage_count 与 success_count 初始化为 0
+                        if "usage_count:" not in md_content:
+                            md_content = md_content.replace("---\n", f"---\nusage_count: 0\nsuccess_count: 0\n", 1)
+                    
+                    exp_path.write_text(md_content, encoding="utf-8")
                     saved_skills.append(skill_name)
-                    logger.info(f"🎉 [技能进化成功] 自进化突变合成全新技能: 【{skill_name}】 -> skills/{folder_name}/")
+                    logger.info(f"🎉 [技能降落成功] 自进化突变提炼出全新实战经验，已安全降落在 experiences 池中: 【{skill_name}】 -> agent_memory/experiences/{folder_name}.md")
     except Exception as e:
         logger.error(f"❌ [技能突变异常] 自进化合成 Skill 失败: {e}")
+
+    # 2.5 🌙 深夜进化做梦收尾：自动唤醒脑区物理大蒸馏 GC，清退合并被吞噬的旧资产影子文件，防止磁盘臃肿
+    try:
+        cleaned = await agent.memory.gc_and_merge_fragmented_memories()
+        if cleaned > 0:
+            logger.info(f"🌙 [梦境大熔炼] 深夜大脱水自动清退了 {cleaned} 个被合并吞噬的旧资产影子文件！")
+    except Exception as dream_gc_err:
+        logger.error(f"Failed to run nightly dream GC: {dream_gc_err}")
 
     # 3. 生成做梦自省总结卡片 (高情商交互与 8s 容灾 Fallback)
     summary_card = ""
@@ -457,14 +495,9 @@ async def trigger_deep_dream_evolution(agent, history_messages=None) -> str:
                         
                         # 写入并提取新向量
                         logger.info(f"FUSED_KI_DATA TO WRITE: {fused_ki_data}")
-                        agent.memory.save_ki(fused_ki_data)
                         
-                        # 强一致原子删除清退桶内的旧碎片 KI
-                        with db:
-                            for old_item in bucket:
-                                db.execute("DELETE FROM knowledge_items WHERE id = ?", (old_item["id"],))
-                                db.execute("DELETE FROM ki_embeddings WHERE ki_id = ?", (old_item["id"],))
-                                db.execute("DELETE FROM kis_fts WHERE ki_id = ?", (old_item["id"],))
+                        # 使用带指数退避的重试机制，进行原子写入与碎片清理
+                        _fuse_save_and_cleanup(agent, db, fused_ki_data, bucket)
                                 
                         embed_text = f"标题: {fused_title}\n摘要: {fused_summary}\n正文: {fused_content}"
                         asyncio.create_task(agent.memory.save_ki_embedding(fused_id, embed_text))
