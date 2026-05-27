@@ -56,7 +56,7 @@ TENCENT_CLOUD_COS_REGION: "ap-guangzhou"
 # 9. 记忆库物理沙箱化与跨平台解耦 (Sandbox Memory & Dynamic Caching)
 memory:
   base_dir: "~/.my-agent/memory"                # 记忆数据库在 Home 目录的主物理温床
-  backup_dir: "./.memory"                       # 项目相对的自封包备份温床，实现 0ms 一键换家
+  backup_dir: "./agent_memory/core"             # 项目相对的自封包备份温床，实现 0ms 一键换家
   auto_backup_to_project: true                  # 强力开启动态异步热双写备份
   multi_instance_isolation: true               # 强力开启基于 admin_id 的多开实例哈希隔离
 
