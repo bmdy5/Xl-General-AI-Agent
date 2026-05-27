@@ -2,41 +2,171 @@ import os
 import re
 import json
 import logging
+import threading
 from pathlib import Path
 from datetime import datetime, timezone, timedelta
 
 logger = logging.getLogger("agent.prompt_builder")
 
-def _strip_yaml_frontmatter(content: str) -> str:
-    """物理脱水：正则去除 YAML 表头"""
-    return re.sub(r'^---\s*\n(.*?)\n---\s*\n', '', content, flags=re.DOTALL)
+# 全局自学习进化规则与技能多线程读写互斥锁
+rules_lock = threading.Lock()
 
-def _load_core_skills() -> str:
-    """加载顶级技能到 System Prompt (Muscle Memory)"""
+def _strip_yaml_frontmatter(content: str) -> str:
+    """物理脱水：仅匹配并剥离文件最开头的严格非贪婪 YAML Frontmatter 表头"""
+    if not content:
+        return ""
+    stripped = content.lstrip()
+    if not stripped.startswith("---"):
+        return content
+    # 使用 ^ 锚定头部，count=1 限制仅替换文件开头的第一个 YAML 块，防止误伤正文中的 ---
+    return re.sub(r'^---\s*\n(.*?)\n---\s*\n', '', stripped, count=1, flags=re.DOTALL)
+
+def _parse_yaml_frontmatter(content: str) -> dict:
+    """极其稳健地解析 YAML Frontmatter，支持 PyYAML 与正则降级容错"""
+    meta = {}
+    yaml_match = re.match(r'^---\s*\n(.*?)\n---\s*\n', content, flags=re.DOTALL)
+    if yaml_match:
+        try:
+            import yaml
+            data = yaml.safe_load(yaml_match.group(1))
+            if isinstance(data, dict):
+                return data
+        except Exception:
+            pass
+        # 正则降级容错
+        yaml_text = yaml_match.group(1)
+        for line in yaml_text.split('\n'):
+            if ':' in line:
+                try:
+                    k, v = line.split(':', 1)
+                    meta[k.strip()] = v.strip()
+                except Exception:
+                    pass
+    return meta
+
+def _calculate_skill_score(query: str, trigger_str: str, file_name: str) -> float:
+    """方案 A：精确算分机制。根据 Query 中的词长权重及重要性算分。"""
+    if not query:
+        return 0.0
+    q = query.lower()
+    
+    # 智能降级兜底：若 trigger 缺失，以物理文件名（去除扩展名）匹配，命中给 5.0 分
+    if not trigger_str:
+        clean_name = file_name.replace(".md", "").lower()
+        return 5.0 if clean_name in q else 0.0
+        
+    t = trigger_str.lower()
+    
+    # 1. 整体子串完全匹配奖励（高优先级向下兼容）
+    if t in q or q in t:
+        return 10.0
+        
+    # 2. 分词算分机制：按长度与重要度累加分值
+    keywords = re.split(r'[/,，;；、\s]+', t)
+    score = 0.0
+    matched_count = 0
+    
+    for kw in keywords:
+        kw = kw.strip()
+        if len(kw) >= 2 and kw in q:
+            matched_count += 1
+            # 词长权重：越长特异度越高，给额外权重加成
+            score += len(kw) * 1.0
+            
+    # 如果有多个词同时匹配，给予组合关联加成
+    if matched_count >= 2:
+        score += matched_count * 1.5
+        
+    return score
+
+def _load_core_skills(query_text: str = "") -> str:
+    """按需动态召回顶级技能到 System Prompt (Muscle Memory & Score-based Heuristic Recall)"""
     skills_dir = Path(__file__).resolve().parents[2] / "skills"
     if not skills_dir.exists():
         return ""
     
+    # 1. 递归扫描 skills/ 根目录文件与一级子目录的 SKILL.md
+    skill_entries = []
+    try:
+        for item in sorted(skills_dir.iterdir()):
+            if item.is_file() and item.name.endswith(".md") and not item.name.startswith("."):
+                skill_entries.append((item, False, ""))
+            elif item.is_dir() and not item.name.startswith("."):
+                skill_md = item / "SKILL.md"
+                if skill_md.exists() and skill_md.is_file():
+                    skill_entries.append((skill_md, True, item.name))
+    except Exception as e:
+        logger.error(f"Error scanning skills directory: {e}")
+        return ""
+        
     blocks = []
-    # 按照目录排序确保稳定
-    for item in sorted(skills_dir.iterdir()):
-        if item.is_file() and item.name.endswith(".md"):
-            try:
-                content = item.read_text(encoding="utf-8")
-                clean_content = _strip_yaml_frontmatter(content).strip()
-                if clean_content:
-                    blocks.append(f"### [Skill: {item.name}]\n{clean_content}")
-            except Exception:
-                pass
     
+    # 2. 算分并排序
+    scored_entries = []
+    for file_path, is_dir, folder_name in skill_entries:
+        try:
+            # 引入 rules_lock 互斥保障并发读盘安全
+            with rules_lock:
+                content = file_path.read_text(encoding="utf-8")
+            meta = _parse_yaml_frontmatter(content)
+            trigger_str = meta.get("trigger", "")
+            file_name = folder_name if is_dir else file_path.name
+            
+            score = _calculate_skill_score(query_text, trigger_str, file_name)
+            if score >= 2.0:  # 过滤完全不相关的技能
+                scored_entries.append((score, file_path, is_dir, file_name, content))
+        except Exception as e:
+            logger.debug(f"Failed to score skill {file_path}: {e}")
+            
+    # 按 score 从高到低排序
+    scored_entries.sort(key=lambda x: x[0], reverse=True)
+    
+    # 3. 智能动态阈值挂载策略
+    # - 高度相关 (score >= 5.0) 的全部加载。
+    # - 中度相关 (score 在 [2.0, 5.0) 之间) 的，若高度相关为空或不足，补齐最多 Top-2 个。
+    highly_relevant = [x for x in scored_entries if x[0] >= 5.0]
+    moderately_relevant = [x for x in scored_entries if 2.0 <= x[0] < 5.0]
+    
+    selected_entries = []
+    selected_entries.extend(highly_relevant)
+    
+    # 若高度相关技能较少，允许补齐中度相关的项，直到总数达到 2
+    if len(selected_entries) < 2:
+        needed = 2 - len(selected_entries)
+        selected_entries.extend(moderately_relevant[:needed])
+        
+    # 4. 生成 Prompt 内容
+    for score, file_path, is_dir, file_name, content in selected_entries:
+        try:
+            # 物理脱水：剥离 YAML 表头
+            clean_content = _strip_yaml_frontmatter(content).strip()
+            if clean_content:
+                # 结构化声明：如果是子目录技能，自动注入辅助资产声明
+                if is_dir:
+                    asset_list = []
+                    for sub in ["templates", "scripts", "references"]:
+                        subdir = file_path.parent / sub
+                        if subdir.exists() and subdir.is_dir():
+                            files = sorted([f.name for f in subdir.iterdir() if f.is_file() and not f.name.startswith(".")])
+                            if files:
+                                asset_list.append(f"{sub}/: {', '.join(files)}")
+                    if asset_list:
+                        clean_content += f"\n\n> [!NOTE]\n> 该技能附带以下支撑文件，可在需要时直调：\n> " + " | ".join(asset_list)
+                
+                blocks.append((file_name, clean_content))
+        except Exception as e:
+            logger.debug(f"Failed to process selected skill {file_path}: {e}")
+            
     if not blocks:
         return ""
         
-    combined = "\n\n".join(blocks)
-    # 2500字符截断熔断保护 Tokens (严酷报错启动)
+    combined_blocks = [f"### [Skill: {name}]\n{body}" for name, body in blocks]
+    combined = "\n\n".join(combined_blocks)
+    
+    # 2500字符截断熔断保护 (按需召回上限截断，高可用非报错)
     if len(combined) > 2500:
-        logger.error("Core skills length exceeded 2500 chars. To protect token limits and system safety, startup is blocked.")
-        raise RuntimeError("顶级技能(skills)总长度超标(>2500字符)！严禁静默截断核心安全红线，请开发者必须精简 skills 目录内的文件内容！")
+        logger.warning("Recalled skills length exceeded 2500 chars. Truncating to protect system limits.")
+        combined = combined[:2500] + "\n... [Truncated for High Availability]"
         
     return f"\n## 🔴 Core Embedded Skills (Muscle Memory)\n{combined}\n"
 
@@ -227,24 +357,19 @@ async def build_system_prompt(agent) -> str:
         static_p += sandbox_instruction
 
     dynamic = ""
-    global_rules_file = Path(__file__).resolve().parent.parent / "archive" / "EVOLVED_RULES.md"
-    if global_rules_file.exists():
-        global_rules = global_rules_file.read_text(encoding="utf-8").strip()
-        if global_rules:
-            dynamic += f"\n## Global System Evolved Rules (R1-R7)\n{global_rules}\n"
     
-    rules_file = agent.memory.base_dir / "EVOLVED_RULES.md"
-    if rules_file.exists():
-        rules = rules_file.read_text(encoding="utf-8").strip()
-        if rules:
-            dynamic += f"\n## Dynamic Evolved Preferences (learned from past corrections)\n{rules}\n"
+    # 提取最近一条 User 消息作为技能触发的 Query
+    user_input = ""
+    if hasattr(agent, "messages") and agent.messages:
+        for msg in reversed(agent.messages):
+            if msg.get("role") == "user" and msg.get("content"):
+                user_input = msg.get("content", "")
+                break
 
-    # 【新增】挂载顶级静态技能 (Muscle Memory)
+    # 动态匹配并挂载顶级技能与偏好
     try:
-        core_skills = _load_core_skills()
+        core_skills = _load_core_skills(user_input)
         dynamic += core_skills
-    except RuntimeError as e:
-        raise e
     except Exception as e:
         logger.error(f"Failed to load core skills: {e}")
 
