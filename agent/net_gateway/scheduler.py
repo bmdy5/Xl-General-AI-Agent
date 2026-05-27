@@ -3,10 +3,17 @@ import json
 import logging
 import os
 import re
+import sys
 import shutil
 import urllib.request
 from datetime import datetime
+from pathlib import Path
 import aiohttp
+
+# 物理强穿透：保障各种运行环境/子进程下均能正确寻址项目根目录
+PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
 logger = logging.getLogger("net_gateway.scheduler")
 
@@ -101,21 +108,21 @@ class GatewayScheduler:
                         logger.info("🎙️ [守护进程] 语音服务物理内存与磁盘缓存彻底复归清爽 (IDLE)")
                     else:
                         try:
-                            timeout_tts = aiohttp.ClientTimeout(total=6.0)
+                            timeout_tts = aiohttp.ClientTimeout(total=3.0)
                             if self.bot._http and not self.bot._http.closed:
                                 async with self.bot._http.get("http://127.0.0.1:9880/", timeout=timeout_tts) as resp:
                                     if resp.status not in (200, 404):
                                         raise ValueError(f"Status {resp.status}")
                             else:
                                 async with aiohttp.ClientSession(timeout=timeout_tts) as session:
-                                    async with session.get("http://127.0.0.1:9880/") as resp:
+                                    async with session.get("http://127.0.0.1:9880/", timeout=timeout_tts) as resp:
                                         if resp.status not in (200, 404):
                                             raise ValueError(f"Status {resp.status}")
                             self._tts_fail_count = 0  # 探测成功，重置计数
-                        except Exception:
+                        except Exception as probe_err:
                             self._tts_fail_count += 1
-                            if self._tts_fail_count >= 2:
-                                logger.warning(f"🎙️ [守护进程] 语音服务连续 {self._tts_fail_count} 次探测失败，判定为假死/挂起，执行自愈重启...")
+                            if self._tts_fail_count >= 3:
+                                logger.warning(f"🎙️ [守护进程] 语音服务连续 {self._tts_fail_count} 次探测失败 (最近错误: {probe_err})，判定为假死/挂起，执行自愈重启...")
                                 tts_dir = str(root_dir.parent / "GPT-SoVITS")
                                 cmd_kill = 'pkill -f "api_v2.py" || true'
                                 cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
@@ -124,7 +131,7 @@ class GatewayScheduler:
                                 os.system(cmd_start)
                                 self._tts_fail_count = 0  # 重启后重置
                             else:
-                                logger.info(f"🎙️ [守护进程] 语音服务探测失败 (第 {self._tts_fail_count} 次)，继续防抖观察中...")
+                                logger.info(f"🎙️ [守护进程] 语音服务探测失败 (第 {self._tts_fail_count} 次: {probe_err})，继续防抖观察中...")
                 else:
                     pass
             except Exception as tts_manage_err:
@@ -142,6 +149,12 @@ class GatewayScheduler:
                     asyncio.create_task(self._trigger_night_podcast_selection(p_key, self.admin_id))
                     await asyncio.sleep(20)  # 防重入冷却
             
+            # 定时任务：每日 03:00 自动触发夜间梦境净化与脑壳清账 (Active Sleep & Compaction)
+            if now_dt.hour == 3 and now_dt.minute == 0 and 0 <= now_dt.second < 20:
+                logger.info("⏰ Time hit 03:00. Triggering active dream evolution...")
+                asyncio.create_task(self._trigger_active_dream_evolution())
+                await asyncio.sleep(20)  # 防重入冷却
+
             # 定时任务：每日 04:00 自动触发物理技能增量去重自演进
             if now_dt.hour == 4 and now_dt.minute == 0 and 0 <= now_dt.second < 20:
                 logger.info("⏰ Time hit 04:00. Triggering daily skills incremental deduplication...")
@@ -157,6 +170,56 @@ class GatewayScheduler:
                 logger.info("⏰ Time hit 06:00. Triggering morning technical podcast push...")
                 asyncio.create_task(self._trigger_morning_podcast_download(self.admin_id))
                 await asyncio.sleep(20)  # 防重入冷却
+
+    async def _trigger_active_dream_evolution(self):
+        """主动梦境反思与清账切片高可用任务"""
+        logger.info("💤 [主动做梦] 凌晨 03:00 定时主动做梦启动...")
+        from agent.core.bootstrap import session_ctx
+        
+        # 1. 提取当前所有活跃的 Agent 实例
+        agents_map = getattr(self.bot, "_agents", {})
+        if not agents_map:
+            logger.info("💤 [主动做梦] 当前无活跃 Agent 会话，做梦跳过。")
+            return
+            
+        for session_key, agent in list(agents_map.items()):
+            try:
+                # 2. 检查该会话是否有历史消息需要反思
+                messages = getattr(agent, "messages", [])
+                if not messages:
+                    logger.debug(f"💤 [主动做梦] 会话 {session_key} 历史为空，跳过。")
+                    continue
+                    
+                logger.info(f"💤 [主动做梦] 正在对会话 {session_key} 执行主动做梦自进化...")
+                session_ctx.set("System:Dream")
+                
+                # 3. 快照增量切片算法防前台干扰
+                snapshot = list(messages)
+                snapshot_len = len(snapshot)
+                
+                summary_card = ""
+                try:
+                    from agent.evolution import trigger_deep_dream_evolution
+                    # 传入老历史快照，执行脑力大熔炼
+                    summary_card = await trigger_deep_dream_evolution(agent, history_messages=snapshot)
+                except Exception as dream_err:
+                    logger.error(f"❌ [主动做梦] 会话 {session_key} 做梦提炼崩溃: {dream_err}")
+                finally:
+                    # 4. 增量清账切片与 SQLite active_sessions 持久化同步
+                    current_msgs = getattr(agent, "messages", [])
+                    if len(current_msgs) >= snapshot_len:
+                        agent.messages = current_msgs[snapshot_len:]
+                    else:
+                        agent.messages = []
+                        
+                    # 持久化同步刷盘
+                    if hasattr(agent.memory, "save_active_session_async"):
+                        agent.memory.save_active_session_async(session_key, agent.messages)
+                        
+                logger.info(f"🎉 [主动做梦] 会话 {session_key} 主动梦境进化完成！提炼卡片摘要:\n{summary_card or '(无记忆提炼)'}")
+                
+            except Exception as e:
+                logger.error(f"❌ [主动做梦] 处理会话 {session_key} 异常: {e}")
 
     async def _trigger_night_podcast_selection(self, session_key: str, admin_id: str):
         """夜间播客自动选题器"""
