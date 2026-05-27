@@ -5,7 +5,7 @@ import sys, os, asyncio, json, subprocess, urllib.request, ssl
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 os.environ["STITCH_TIMEOUT"] = "300"
 
-from agent.tools.stitch_tool import StitchTool
+from agent.tools.mcp.stitch import StitchTool
 
 async def download_html(code_url: str) -> str:
     ctx = ssl.create_default_context()
