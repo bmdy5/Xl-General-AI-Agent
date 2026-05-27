@@ -29,19 +29,18 @@ class ContextFormatter(logging.Formatter):
         return super().format(record)
 
 def setup_system():
-    """初始化系统环境：加载 .env、警告过滤与四通道独立日志格式"""
+    """初始化系统环境：加载 .env、警告过滤与双通道日志"""
     _load_dotenv()
-    
-    # 清理原有拦截器
+
     root_logger = logging.getLogger()
     root_logger.setLevel(logging.INFO)
     for h in root_logger.handlers[:]:
         root_logger.removeHandler(h)
-        
+
     formatter = ContextFormatter('%(asctime)s - %(session)s - %(levelname)s - %(name)s - %(message)s')
-    
+
     os.makedirs("logs", exist_ok=True)
-    
+
     def create_handler(filename, filter_func=None):
         handler = RotatingFileHandler(f"logs/{filename}", maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
         handler.setFormatter(formatter)
@@ -52,28 +51,24 @@ def setup_system():
             handler.addFilter(CustomFilter())
         return handler
 
-    # 分流规则
-    def is_activity(r):
-        # 1. 显式指定的活动日志 logger 命名空间
-        if r.name.startswith("agent.activity") or r.name.startswith("net_gateway.activity"):
-            return True
-        # 2. 消息内容判定：仅包含高纯度业务聊天/决策思考流水
-        msg_str = str(r.msg)
-        is_chat = ("[用户输入]" in msg_str or "[AI 计划" in msg_str or "[Agent回复]" in msg_str or "[测试]" in msg_str or "交互对话" in msg_str)
-        is_react = ("🧠 [思考]" in msg_str or "🛠️ [工具执行完毕]" in msg_str or "💡 [Scavenger 自愈]" in msg_str or "💡 [JSON Repair 自愈]" in msg_str or "🚨 [JSON 截断熔断保护]" in msg_str or "🚨 [死循环熔断拦截]" in msg_str or "🛡️ [沙箱物理拦截]" in msg_str)
-        is_memory = ("✨ [灵魂记忆自愈]" in msg_str)
-        return is_chat or is_react or is_memory
+    # 分流规则：按 logger name 前缀路由，不依赖消息内容
+    CHAT_LOGGERS = ("agent.activity", "agent.react_loop", "net_gateway.logger")
+
+    def is_chat(r):
+        return r.name.startswith(CHAT_LOGGERS)
 
     def is_system(r):
-        return not is_activity(r)
+        return not is_chat(r)
 
     root_logger.addHandler(create_handler("system.log", is_system))
-    root_logger.addHandler(create_handler("activity.log", is_activity))
-    
-    # 增加控制台纯净输出
+    root_logger.addHandler(create_handler("chat.log", is_chat))
+
+    # 控制台：chat 内容 + 网关关键状态（排除 WebSocket 心跳噪音）
     console = logging.StreamHandler(sys.stdout)
     console.setFormatter(formatter)
-    console.addFilter(type('CustomFilter', (logging.Filter,), {'filter': lambda self, r: is_activity(r) or ("net_gateway" in r.name and "WebSocket" not in str(r.msg))})())
+    def _console_filter(r):
+        return is_chat(r) or (r.name.startswith("net_gateway") and "WebSocket" not in str(r.msg))
+    console.addFilter(type('ConsoleFilter', (logging.Filter,), {'filter': lambda self, r: _console_filter(r)})())
     root_logger.addHandler(console)
 
     logging.getLogger("LiteLLM").setLevel(logging.WARNING)
