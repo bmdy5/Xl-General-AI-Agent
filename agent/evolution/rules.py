@@ -37,7 +37,8 @@ async def evolve_rules(agent) -> list[str]:
     if len(feedbacks) < 2:
         return []
 
-    skills_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "skills" / "自学习技能"
+    from agent.core.paths import SELF_EVOLUTION_DIR
+    skills_dir = SELF_EVOLUTION_DIR
     skills_dir.mkdir(parents=True, exist_ok=True)
     rules_file = skills_dir / "规则与偏好.md"
     existing = rules_file.read_text(encoding="utf-8") if rules_file.exists() else ""

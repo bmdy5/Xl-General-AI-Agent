@@ -250,8 +250,8 @@ async def trigger_deep_dream_evolution(agent, history_messages=None) -> str:
                 md_content = result_skill.get("skill_md_content", "")
                 
                 if folder_name and md_content:
-                    # 强力重定向落点：禁止绕过晋升，全部强制降落在 experiences/ 避坑经验池中！
-                    exp_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "experiences"
+                    from agent.core.paths import EXPERIENCES_DIR
+                    exp_dir = EXPERIENCES_DIR
                     exp_dir.mkdir(parents=True, exist_ok=True)
                     exp_path = exp_dir / f"{folder_name}.md"
                     

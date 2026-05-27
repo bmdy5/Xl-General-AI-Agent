@@ -148,7 +148,8 @@ async def run_self_test(llm, memory, days: int = 3) -> dict:
         return {"total": 0, "passed": 0, "failed": 0, "details": []}
 
     rules_content = ""
-    skills_dir = Path(__file__).resolve().parents[2] / "agent_memory" / "skills" / "自学习技能"
+    from agent.core.paths import SELF_EVOLUTION_DIR
+    skills_dir = SELF_EVOLUTION_DIR
     rules_file = skills_dir / "规则与偏好.md"
     if rules_file.exists():
         try:
