@@ -53,18 +53,7 @@ async def run_interactive():
     # 后台加载历史，不阻塞启动
     async def load_history():
         if agent.session:
-            all_msgs = await agent.session.initialize()
-            if len(all_msgs) > 20:
-                compressed, _ = await agent.compressor.compress(all_msgs, memory=agent.memory)
-                if agent.messages:
-                    compressed.extend(agent.messages)
-                agent.messages = compressed
-                if agent.session:
-                    await agent.session.replace_all(agent.messages)
-            else:
-                if agent.messages:
-                    all_msgs.extend(agent.messages)
-                agent.messages = all_msgs
+            agent.messages = await agent.session.initialize()
 
     load_task = asyncio.create_task(load_history())
 
