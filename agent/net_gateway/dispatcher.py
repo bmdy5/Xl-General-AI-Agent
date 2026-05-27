@@ -133,9 +133,14 @@ class MessageDispatcher:
         raw = html.unescape(event.get("raw_message", "").strip())
         user_id = str(event.get("user_id", ""))
         
-        # ── ⚡ 视觉审批卡片 QQ 消息全局劫持拦截器 ──
         group_id = str(event.get("group_id")) if msg_type == "group" else ""
         session_key = f"group_{group_id}" if msg_type == "group" else f"user_{user_id}"
+        
+        # ── ⚡ ContextVars 上下文染色追踪 ──
+        from agent.core.bootstrap import session_ctx
+        session_ctx.set(session_key)
+
+        # ── ⚡ 视觉审批卡片 QQ 消息全局劫持拦截器 ──
         agent = self.context._agents.get(session_key)
         if agent and getattr(agent, "approval_future", None) and not agent.approval_future.done():
             if str(user_id) == str(self.admin_id):

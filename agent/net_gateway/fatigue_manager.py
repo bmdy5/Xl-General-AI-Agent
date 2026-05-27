@@ -96,6 +96,8 @@ class FatigueManager:
 
     async def _private_sleep_and_dream_process(self, session_key: str, user_id: str, agent: object, sender_name: str = ""):
         """私聊异步做梦净化"""
+        from agent.core.bootstrap import session_ctx
+        session_ctx.set("System:Dream")
         try:
             # 1. 睡眠期间不主动清空 messages，仅安全等待（以防中途重启）
             await asyncio.sleep(self.fatigue_sleep_seconds)
@@ -198,6 +200,8 @@ class FatigueManager:
 
     async def _sleep_and_dream_process(self, group_id: str, agent: object):
         """群聊做梦净化闭环"""
+        from agent.core.bootstrap import session_ctx
+        session_ctx.set("System:Dream")
         session_key = f"group_{group_id}_{self.admin_id}"
         try:
             # 1. 睡眠期间不主动清空 messages，仅安全等待
