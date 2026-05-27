@@ -49,3 +49,4 @@ logs/
 .gemini/
 openspec/
 
+.memory_test/*.db
