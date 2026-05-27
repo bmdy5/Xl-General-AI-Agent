@@ -18,12 +18,7 @@ import aiofiles
 logger = logging.getLogger(__name__)
 
 # ── CJK tokenizer for FTS5 unicode61 compatibility ────────────
-_CJK_RE = re.compile(r'([一-鿿㐀-䶿　-〿＀-￯])')
-
-
-def _cjk_space(text: str) -> str:
-    """Insert spaces around CJK characters so unicode61 tokenizer splits each char."""
-    return _CJK_RE.sub(r' \1 ', text)
+from agent.memory import cjk_space as _cjk_space
 
 
 class SessionHandler:
