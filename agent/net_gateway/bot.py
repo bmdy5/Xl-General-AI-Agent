@@ -79,7 +79,7 @@ class QQGateway:
         logger.info(f"WebSocket: {NC_WS_URL}")
         logger.info(f"HTTP API:  {NC_HTTP_URL}")
 
-        asyncio.create_task(self._start_brain_server())
+        await self._start_brain_server()
 
         self._http = aiohttp.ClientSession()
         try:
