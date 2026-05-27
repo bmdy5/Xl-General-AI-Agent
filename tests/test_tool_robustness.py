@@ -1,8 +1,8 @@
 import pytest
 from pathlib import Path
 from agent.tools.registry import ToolRegistry
-from agent.tools.memory_tool import MemoryTool
-from agent.tools.file_tools import ReadFileTool
+from agent.tools.meta.memory import MemoryTool
+from agent.tools.filesystem.read import ReadFileTool
 from agent.core import Agent
 
 
@@ -347,8 +347,8 @@ class DummyLLMWithResponse:
 async def test_read_file_auto_maintain_note(tmp_path):
     import asyncio
     import shutil
-    from agent.tools.file_tools import ReadFileTool
-    
+    from agent.tools.filesystem.read import ReadFileTool
+
     note_dir = tmp_path / "学习笔记"
     note_dir.mkdir()
     note_file = note_dir / "测试笔记.md"

@@ -8,7 +8,7 @@ from unittest.mock import MagicMock, AsyncMock
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from agent.tools.memory_tool import _find_similar_memory, _merge_memories
+from agent.tools.meta.memory import _find_similar_memory, _merge_memories
 from agent.memory.manager import MemoryManager
 
 

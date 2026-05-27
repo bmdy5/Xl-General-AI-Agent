@@ -166,7 +166,7 @@ class AutoLearner:
 
     async def _spawn_learn(self, topic: str) -> dict:
         """spawn 一个 coder 子代理去学一个主题."""
-        from agent.tools.spawn_agent_tool import SpawnAgentTool
+        from agent.tools.agent.spawn import SpawnAgentTool
         tool = SpawnAgentTool()
 
         task = (
