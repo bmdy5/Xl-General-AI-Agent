@@ -91,13 +91,7 @@ gateway-restart:
 
 # ── 重启独立 Douyin Gateway（改完代码后执行） ──
 douyin-restart:
-	@echo "🔄 正在重启独立 Douyin Gateway..."
-	@pkill -9 -f "main.py --douyin" 2>/dev/null || true
-	@sleep 1
-	@mkdir -p logs
-	@nohup venv/bin/python -u main.py --douyin >> logs/douyin_gateway.log 2>&1 &
-	@echo "✅ 独立 Douyin Gateway 重启完成"
-	@echo "   查看日志: tail -f logs/douyin_gateway.log"
+	@echo "⚠️ 独立 Douyin Gateway 已按照主人要求物理下线并禁用，不再生成日志。"
 
 # ── 一键物理技能增量去重 ──
 
