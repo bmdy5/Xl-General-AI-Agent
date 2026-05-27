@@ -40,47 +40,25 @@ class LLMClient:
         self.deepseek_api_key = os.getenv("DEEPSEEK_API_KEY") or ""
 
     def _sync_environ_keys(self, kwargs: dict):
-        """
-        物理动态同步环境变量，确保 LiteLLM 底层初始化不同 provider 时能 100% 识别密钥。
-        彻底自愈 'api_key client option must be set' 认证报错。
-        """
+        """仅设置当前 provider 的环境变量作为兜底，不删除其他 key 避免并发竞态。"""
         model_name = kwargs.get("model", "").lower()
         api_key = kwargs.get("api_key")
         api_base = kwargs.get("api_base")
-        
         if not api_key:
             return
-
         import os
-        # 1. 针对 DeepSeek 官方或兼容平台
         if "deepseek" in model_name:
             os.environ["DEEPSEEK_API_KEY"] = api_key
             if api_base:
                 os.environ["DEEPSEEK_API_BASE"] = api_base
-            else:
-                os.environ.pop("DEEPSEEK_API_BASE", None)
-            # 清理 OpenAI 环境变量以防冲突
-            os.environ.pop("OPENAI_API_KEY", None)
-            os.environ.pop("OPENAI_API_BASE", None)
-        
-        # 2. 针对 Anthropic / Claude 系列
         elif "claude" in model_name or "anthropic" in model_name:
             os.environ["ANTHROPIC_API_KEY"] = api_key
             if api_base:
                 os.environ["ANTHROPIC_API_BASE"] = api_base
-            else:
-                os.environ.pop("ANTHROPIC_API_BASE", None)
-            # 清理 OpenAI 环境变量以防冲突
-            os.environ.pop("OPENAI_API_KEY", None)
-            os.environ.pop("OPENAI_API_BASE", None)
-        
-        # 3. 兜底所有 OpenAI 兼容模式环境变量（彻底修复第三方转发路由丢失参数问题）
         else:
             os.environ["OPENAI_API_KEY"] = api_key
             if api_base:
                 os.environ["OPENAI_API_BASE"] = api_base
-            else:
-                os.environ.pop("OPENAI_API_BASE", None)
 
     async def chat(
         self,
