@@ -76,9 +76,9 @@ async def build_macros(manager, agent=None) -> dict:
         WHERE ki_type = 'micro' AND parent_id IS NULL
     """).fetchall()
 
-    if len(rows) < 2:
-        logger.info(f"Only {len(rows)} micro KIs, skipping clustering")
-        return {"created": 0, "skipped": 0}
+    if len(rows) == 0:
+        logger.info("No micro KIs found, skipping clustering")
+        return {"created": 0, "skipped": 0, "absorbed": 0}
 
     # 2. 提取 embeddings
     ki_map = {}
@@ -99,10 +99,92 @@ async def build_macros(manager, agent=None) -> dict:
         except Exception as e:
             logger.debug(f"Embedding failed for {ki_id}: {e}")
 
-    # 3. 构建无向图
+    # 2.5 增量吸收机制 (Incremental Absorption)
+    from datetime import datetime, timezone
+    import json
+    
+    macro_rows = db.execute("""
+        SELECT m.id, m.category, m.keywords, m.child_ids, e.embedding
+        FROM knowledge_items m
+        JOIN ki_embeddings e ON m.id = e.ki_id
+        WHERE m.ki_type = 'macro'
+    """).fetchall()
+
+    macros = []
+    for mr in macro_rows:
+        try:
+            vec = json.loads(mr[4]) if isinstance(mr[4], str) else mr[4]
+            macros.append({
+                "id": mr[0], "category": mr[1], "keywords": mr[2],
+                "child_ids": mr[3], "vec": vec
+            })
+        except Exception:
+            pass
+
+    absorbed_count = 0
+    remaining_ids = []
+    threshold = 0.82
+
+    for ki_id in list(ki_map.keys()):
+        ki = ki_map[ki_id]
+        if ki_id not in embeddings:
+            remaining_ids.append(ki_id)
+            continue
+            
+        best_macro = None
+        best_sim = 0.0
+        
+        for m in macros:
+            if m["category"] != ki["category"]: continue
+            if not _has_keyword_overlap(m["keywords"] or "[]", ki["keywords"] or "[]"): continue
+            
+            sim = _cosine_similarity(embeddings[ki_id], m["vec"])
+            if sim > best_sim and sim >= threshold:
+                best_sim = sim
+                best_macro = m
+                
+        if best_macro:
+            m_id = best_macro["id"]
+            logger.info(f"Incremental absorption: {ki_id} -> {m_id} (sim={best_sim:.3f})")
+            try:
+                cids = json.loads(best_macro["child_ids"] or "[]")
+            except Exception:
+                cids = []
+            if ki_id not in cids:
+                cids.append(ki_id)
+                
+            try:
+                m_kws = set(json.loads(best_macro["keywords"] or "[]"))
+            except Exception:
+                m_kws = set()
+            try:
+                k_kws = set(json.loads(ki["keywords"] or "[]")) if isinstance(ki["keywords"], str) else set(ki["keywords"] or [])
+            except Exception:
+                k_kws = set()
+            
+            new_kws = list(m_kws | k_kws)
+            now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+            
+            db.execute("UPDATE knowledge_items SET child_ids = ?, keywords = ?, updated_at = ? WHERE id = ?",
+                       (json.dumps(cids, ensure_ascii=False), json.dumps(new_kws, ensure_ascii=False), now_str, m_id))
+            from .fts_index import _cjk_space
+            db.execute("UPDATE kis_fts SET keywords = ? WHERE ki_id = ?",
+                       (_cjk_space(json.dumps(new_kws, ensure_ascii=False)), m_id))
+            db.execute("UPDATE knowledge_items SET parent_id = ? WHERE id = ?", (m_id, ki_id))
+            db.execute("DELETE FROM kis_fts WHERE ki_id = ?", (ki_id,))
+            
+            absorbed_count += 1
+            del ki_map[ki_id]
+        else:
+            remaining_ids.append(ki_id)
+
+    if len(ki_map) < 2:
+        logger.info(f"Only {len(ki_map)} micro KIs remaining after absorption, skipping graph clustering")
+        return {"created": 0, "skipped": 0, "absorbed": absorbed_count}
+
+    # 3. 构建无向图 (仅用 remaining_ids)
     edges = {kid: [] for kid in ki_map}
     ids = list(ki_map.keys())
-    threshold = 0.82
 
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
@@ -250,14 +332,16 @@ def expand_macro_result(manager, search_results: list[dict], max_content_chars: 
                 child_ids = []
 
             children_text = []
-            for cid in child_ids[:5]:  # 最多展开 5 个子 micro
-                crow = db.execute("SELECT title, content FROM knowledge_items WHERE id=?", (cid,)).fetchone()
-                if crow:
+            if child_ids:
+                placeholders = ",".join(["?"] * len(child_ids))
+                crows = db.execute(f"SELECT title, content FROM knowledge_items WHERE id IN ({placeholders}) ORDER BY updated_at DESC", child_ids).fetchall()
+                for crow in crows:
                     ctext = crow[1] or ""
-                    if total_chars + len(ctext) > max_content_chars:
-                        ctext = ctext[:max_content_chars - total_chars] + "..."
-                    children_text.append(f"[{crow[0]}]: {ctext[:500]}")
-                    total_chars += len(ctext[:500])
+                    segment = ctext[:500]
+                    if total_chars + len(segment) > max_content_chars:
+                        break
+                    children_text.append(f"[{crow[0]}]: {segment}")
+                    total_chars += len(segment)
 
             expanded.append(f"## {r.get('description','')}\n{chr(10).join(children_text)}")
         else:
