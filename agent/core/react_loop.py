@@ -126,11 +126,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
             context_parts.append(state_pref)
 
         if is_fatigued:
-            context_parts.append(
-                "## ⚠️【疲劳提醒】\n"
-                "当前对话上下文较长，你感到有点累了。请在回复中自然地说一声你该去睡觉整理记忆了，"
-                "并主动用一两句话总结当前讨论的核心要点，让亮哥知道你记住了什么。"
-            )
+            context_parts.append("## 疲劳提醒\n当前对话较长，你有些累了。")
 
         dynamic_context = "\n\n".join(context_parts)
         merged_system = system_prompt + "\n\n" + dynamic_context
