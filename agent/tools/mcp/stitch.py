@@ -7,22 +7,25 @@ from ..base_tool import BaseTool, ToolResult
 
 logger = logging.getLogger("agent.tools.mcp.stitch")
 
-STITCH_SERVER_CMD = os.getenv("STITCH_SERVER_CMD", "/Users/xiaofeng/.npm/_npx/d7bcf1e9427e7044/node_modules/.bin/stitch-mcp")
+_STITCH_HOME = os.getenv("STITCH_HOME", os.path.expanduser("~/.stitch-mcp"))
+STITCH_SERVER_CMD = os.getenv("STITCH_SERVER_CMD", "")
 STITCH_TIMEOUT = int(os.getenv("STITCH_TIMEOUT", "200"))
-CLOUDSDK_CONFIG = "/Users/xiaofeng/.stitch-mcp/config"
 STITCH_QUOTA_PROJECT = os.getenv("GOOGLE_CLOUD_QUOTA_PROJECT", os.getenv("GOOGLE_CLOUD_PROJECT", ""))
 
 def _get_stitch_env(token: str = "") -> dict:
     """构建 Stitch MCP 子进程所需的环境变量."""
     env = dict(os.environ)
-    gcloud_bin = "/Users/xiaofeng/.stitch-mcp/google-cloud-sdk/bin"
-    node_bin = "/Users/xiaofeng/.nvm/versions/node/v25.8.0/bin"
-    venv_python = "/Users/xiaofeng/bot-我的自搭建agent/新的agent/Xl-General-AI-Agent/venv/bin/python3"
+    gcloud_bin = os.getenv("STITCH_GCLOUD_BIN", f"{_STITCH_HOME}/google-cloud-sdk/bin")
+    node_bin = os.getenv("STITCH_NODE_BIN", "")
+    venv_python = os.getenv("STITCH_PYTHON", "")
 
-    env["PATH"] = f"{gcloud_bin}:{node_bin}:{env.get('PATH', '/usr/bin:/bin')}"
-    env["GOOGLE_CLOUD_PROJECT"] = "stitch-496215"
-    env["CLOUDSDK_CONFIG"] = "/Users/xiaofeng/.stitch-mcp/config"
-    env["CLOUDSDK_PYTHON"] = venv_python
+    path_parts = [p for p in [gcloud_bin, node_bin] if p]
+    if path_parts:
+        env["PATH"] = ":".join(path_parts + [env.get("PATH", "/usr/bin:/bin")])
+    env["GOOGLE_CLOUD_PROJECT"] = os.getenv("STITCH_PROJECT_ID", "")
+    env["CLOUDSDK_CONFIG"] = os.getenv("STITCH_CLOUDSDK_CONFIG", f"{_STITCH_HOME}/config")
+    if venv_python:
+        env["CLOUDSDK_PYTHON"] = venv_python
     if token:
         env["STITCH_ACCESS_TOKEN"] = token
     return env
