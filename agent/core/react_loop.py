@@ -109,13 +109,12 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         else:
             memory_block = cached_block
         
-        # 肾上腺素阻尼器：如果处于密集调试或高负债工具调用阶段，自动将疲劳睡眠阈值延迟，保障紧急连续协作
-        is_debugging = any(
-            tc.get("name", "") in ("bash", "write_file", "edit_file", "multi_replace_file_content")
-            for tc in tool_call_history[-3:]
-        )
-        fatigue_threshold = 100000 if is_debugging else 64000
-        is_fatigued = agent.compressor.estimate_tokens(agent.messages) > fatigue_threshold
+        # 疲劳阈值：检查单次 prompt 大小（非累积历史），调试时放宽
+        is_debugging = any(tc.get("name","") in ("bash","write_file","edit_file") for tc in tool_call_history[-3:])
+        upcoming_chars = len(system_prompt) + sum(len(str(m.get("content",""))) for m in agent.messages[-20:])
+        # ~2 中文字符 = 1 token，32000 chars ≈ 16000 tokens
+        fatigue_threshold = 64000 if is_debugging else 32000
+        is_fatigued = upcoming_chars > fatigue_threshold
 
         # 动态上下文合并到 system[0] 末尾，保持 messages[1:] 绝对静态以保护前缀缓存
         context_parts = [f"## 当前环境上下文\n- Time: {now}\n- Working directory: {cwd}"]
@@ -128,10 +127,9 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
 
         if is_fatigued:
             context_parts.append(
-                "## ⚠️【重要情绪设定：疲劳吐槽】\n"
-                "由于当前对话上下文非常长（已超负荷），你现在大脑非常沉重，觉得有点发木和疲倦。\n"
-                "请在保持你原本专业回复的同时，在最终回复的开头或结尾，用活泼、俏皮的中文极度自然地跟亮哥吐槽一下你脑子快烧糊了，做完这一轮手头的工作之后你一定要去大睡一觉整理整理历史脑子脑壳（例如说：“亮哥，小萤帮您处理了这么多逻辑，大脑都快转不动了（捂脸），等我做完这个我去睡一觉做个梦，把脑壳清空重组一下哈～”）。\n"
-                "注意：必须明确提及在完成手头这一轮工作之后，你要求去大睡一觉以整理大脑记忆。"
+                "## ⚠️【疲劳提醒】\n"
+                "当前对话上下文较长，你感到有点累了。请在回复中自然地说一声你该去睡觉整理记忆了，"
+                "并主动用一两句话总结当前讨论的核心要点，让亮哥知道你记住了什么。"
             )
 
         dynamic_context = "\n\n".join(context_parts)
