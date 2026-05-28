@@ -325,6 +325,14 @@ async def build_system_prompt(agent) -> str:
                 user_input = msg.get("content", "")
                 break
 
+    # 注入核心记忆（系统事实，不常变）
+    try:
+        core_file = agent.memory.base_dir / "core.md"
+        if core_file.exists():
+            dynamic = "\n\n## 核心记忆\n" + core_file.read_text(encoding="utf-8") + "\n" + dynamic
+    except Exception:
+        pass
+
     # 注入自演化规则（小萤通过对话自行更新，不硬编码）
     try:
         rules_file = agent.memory.base_dir / "routing_rules.md"
