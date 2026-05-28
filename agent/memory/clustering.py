@@ -212,3 +212,45 @@ async def build_macros(manager, agent=None) -> dict:
 
     db.commit()
     return {"created": created, "skipped": len(rows) - sum(len(c) for c in clusters)}
+
+
+def expand_macro_result(manager, search_results: list[dict], max_content_chars: int = 5000) -> str:
+    """展开搜索结果中的 macro，读取子 micro 内容注入上下文。"""
+    db = manager._get_db()
+    expanded = []
+    total_chars = 0
+
+    for r in search_results:
+        fid = r.get("filename", "")
+        k_id = fid[3:-3] if fid.startswith("ki_") and fid.endswith(".md") else fid
+        ki = db.execute("SELECT ki_type, child_ids, content FROM knowledge_items WHERE id=?", (k_id,)).fetchone()
+        if not ki:
+            continue
+
+        ki_type, child_ids_str, content = ki[0], ki[1], ki[2] or ""
+
+        if ki_type == "macro" and child_ids_str:
+            import json
+            try:
+                child_ids = json.loads(child_ids_str)
+            except Exception:
+                child_ids = []
+
+            children_text = []
+            for cid in child_ids[:5]:  # 最多展开 5 个子 micro
+                crow = db.execute("SELECT title, content FROM knowledge_items WHERE id=?", (cid,)).fetchone()
+                if crow:
+                    ctext = crow[1] or ""
+                    if total_chars + len(ctext) > max_content_chars:
+                        ctext = ctext[:max_content_chars - total_chars] + "..."
+                    children_text.append(f"[{crow[0]}]: {ctext[:500]}")
+                    total_chars += len(ctext[:500])
+
+            expanded.append(f"## {r.get('description','')}\n{chr(10).join(children_text)}")
+        else:
+            if total_chars + len(content) > max_content_chars:
+                content = content[:max_content_chars - total_chars] + "..."
+            expanded.append(f"## {r.get('description','')}\n{content[:800]}")
+            total_chars += len(content[:800])
+
+    return "\n\n".join(expanded) if expanded else ""
