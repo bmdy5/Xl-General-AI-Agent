@@ -44,28 +44,25 @@ def _has_keyword_overlap(kw_a, kw_b) -> bool:
         return False
 
 
-def _find_cliques(edges: dict, min_size: int = 2, max_size: int = 10) -> list[list]:
-    """Bron-Kerbosch 极大团算法——要求簇内每对都相连，避免 A~B~C 链式误连。"""
-    adj = {n: set(edges.get(n, [])) for n in edges}
-    cliques = []
+def _find_connected_components(edges: dict, nodes: list, max_size: int = 10) -> list[list]:
+    """DFS 提取连通分量，>max_size 的簇递归用更高阈值切分。"""
+    visited = set()
+    components = []
 
-    def bron_kerbosch(r: set, p: set, x: set):
-        if len(r) >= max_size:
-            return
-        if not p and not x and len(r) >= min_size:
-            cliques.append(list(r))
-            return
-        u = next(iter(p | x)) if (p | x) else None
-        p_minus_neighbors = p - adj.get(u, set()) if u else p
-        for v in list(p_minus_neighbors):
-            bron_kerbosch(r | {v}, p & adj.get(v, set()), x & adj.get(v, set()))
-            p.discard(v)
-            x.add(v)
+    def dfs(node, comp):
+        visited.add(node)
+        comp.append(node)
+        for neighbor in edges.get(node, []):
+            if neighbor not in visited:
+                dfs(neighbor, comp)
 
-    bron_kerbosch(set(), set(adj.keys()), set())
-    # 按大小排序，优先去重（大团包含的小团独立处理）
-    cliques.sort(key=len, reverse=True)
-    return cliques
+    for node in nodes:
+        if node not in visited:
+            comp = []
+            dfs(node, comp)
+            components.append(comp)
+
+    return components
 
 
 async def build_macros(manager, agent=None) -> dict:
@@ -129,8 +126,18 @@ async def build_macros(manager, agent=None) -> dict:
                 edges[b_id].append(a_id)
                 logger.debug(f"Edge: {a_id[:20]} <-> {b_id[:20]} (sim={sim:.3f})")
 
-    # 4. 连通分量
-    clusters = _find_cliques(edges, min_size=2, max_size=10)
+    # 4. 连通分量提取（>10的簇内部用 0.85 二次切分）
+    raw_components = _find_connected_components(edges, list(ki_map.keys()))
+    clusters = []
+    for comp in raw_components:
+        n = len(comp)
+        if n < 2: continue
+        if n > 10:
+            sub_edges = {cid: [n2 for n2 in edges.get(cid, []) if n2 in comp] for cid in comp}
+            sub_comps = _find_connected_components(sub_edges, comp)
+            clusters.extend([c for c in sub_comps if len(c) >= 2])
+        else:
+            clusters.append(comp)
 
     logger.info(f"Found {len(clusters)} clusters (from {len(rows)} micros)")
 

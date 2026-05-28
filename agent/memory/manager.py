@@ -193,10 +193,17 @@ class MemoryManager:
             logger.debug("startup GC daemon skipped: no running event loop (expected in sync/CLI contexts)")
 
     def trigger_backup(self):
-        """异步防抖热双写备份引擎：通过官方 SQLite backup() API 或 copy 进行数据同步"""
+        """异步防抖热双写备份，12 小时内最多触发一次。"""
         if not self.auto_backup:
             return
-            
+
+        # 冷却检查
+        import time
+        last = getattr(self, "_last_backup_ts", 0)
+        if time.time() - last < 43200:  # 12 小时
+            return
+        self._last_backup_ts = time.time()
+
         self.backup_dir.mkdir(parents=True, exist_ok=True)
         
         async def _async_backup():
