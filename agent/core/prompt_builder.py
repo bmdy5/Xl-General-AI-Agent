@@ -369,15 +369,6 @@ async def build_system_prompt(agent) -> str:
     except Exception as e:
         logger.error(f"Failed to load core skills: {e}")
 
-    # 注入笔记路由规则（内容少，读文件即可）
-    try:
-        rules_file = agent.memory.base_dir / "routing_rules.md"
-        if rules_file.exists():
-            rules = rules_file.read_text(encoding="utf-8")
-            dynamic += f"\n\n## 学习笔记路由规则\n{rules}\n"
-    except Exception:
-        pass
-
     return static_p + dynamic
 
 
