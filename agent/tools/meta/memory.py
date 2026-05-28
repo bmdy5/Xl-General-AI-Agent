@@ -53,8 +53,9 @@ class MemoryTool(BaseTool):
                     "审批说明：只有 'remove' (删除) 操作需要亮哥审批，其余操作 ('add', 'replace', 'search', 'merge_to_core') 都是自动放行的，请大胆使用。\n\n"
                     "记忆分类 (memory_type)：user(用户偏好) / feedback(纠正反馈) / project(项目经验) / reference(参考资料) / learn(学习笔记)。\n\n"
                     "【路由与存储规范】（严格执行）：\n"
-                    "1. 核心规范/流程/原则：必须设置 ki_type='ki'，直接存入 KI 向量数据库。\n"
-                    "2. 学习笔记：设置 memory_type='learn'，并指定 note_dir。具体要放到哪个目录，请先通过 read_file 读取 routing_rules.md，由你自己判断最合适的路径。"
+                    "1. 核心规则：仅当保存【必须全局遵守的行为准则、做事流程、红线纠正】时，必须设置 ki_type='ki'。\n"
+                    "2. 零碎事实：当保存单点踩坑记录、零碎习惯、参数配置等，必须设置 ki_type='micro'（后台会自动将其聚类提炼）。\n"
+                    "3. 学习笔记：设置 memory_type='learn'，并指定 note_dir。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -72,7 +73,7 @@ class MemoryTool(BaseTool):
                         "ki_type": {
                             "type": "string",
                             "enum": ["ki", "micro", "fragment"],
-                            "description": "底层数据库存储类型。如果是存系统规则、操作流程、规范纪律等长期核心知识，【必须】指定为 'ki'。",
+                            "description": "存储类型：ki=全局强约束核心规则，micro=单点/零散的踩坑事实与经验（首选）。",
                         },
                         "filename": {
                             "type": "string",
@@ -222,7 +223,7 @@ class MemoryTool(BaseTool):
                         logger.warning(f"save_to_notes failed for {note_dir}, falling back to core memory")
 
                 # 核心记忆：存本地向量库
-                ki_type = input_args.get("ki_type", "ki")
+                ki_type = input_args.get("ki_type", "micro")
                 timestamp = await mm.save(filename, f"[{memory_type}] {desc}", content, ki_type=ki_type)
                 is_new = "新增" if "<!-- updated:" not in (await mm.get_entry(filename) or "") else "更新"
                 yield ToolResult(
