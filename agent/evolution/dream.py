@@ -250,30 +250,26 @@ async def trigger_deep_dream_evolution(agent, history_messages=None) -> str:
                 md_content = result_skill.get("skill_md_content", "")
                 
                 if folder_name and md_content:
-                    from agent.core.paths import EXPERIENCES_DIR
-                    exp_dir = EXPERIENCES_DIR
-                    exp_dir.mkdir(parents=True, exist_ok=True)
-                    exp_path = exp_dir / f"{folder_name}.md"
-                    
-                    now_str = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-                    # 补齐 Frontmatter 标签，确保初始计数置零
-                    if not md_content.strip().startswith("---"):
-                        trigger = result_skill.get("trigger", folder_name)
-                        desc = result_skill.get("description", "会话自提炼与梦境进化得出的实战经验")
-                        frontmatter = (
-                            f"---\nname: {folder_name}\ntrigger: {trigger}\ndescription: {desc}\n"
-                            f"created: {now_str}\nversion: 1.0\nusage_count: 0\nsuccess_count: 0\n"
-                            f"category: verification\n---\n\n"
-                        )
-                        md_content = frontmatter + md_content
-                    else:
-                        # 确保 usage_count 与 success_count 初始化为 0
-                        if "usage_count:" not in md_content:
-                            md_content = md_content.replace("---\n", f"---\nusage_count: 0\nsuccess_count: 0\n", 1)
-                    
-                    exp_path.write_text(md_content, encoding="utf-8")
+                    import hashlib
+                    trigger = result_skill.get("trigger", folder_name)
+                    desc = result_skill.get("description", "会话自提炼与梦境进化得出的实战经验")
+                    ki_id = f"dream_exp_{hashlib.md5(folder_name.encode()).hexdigest()[:12]}"
+                    ki_data = {
+                        "id": ki_id,
+                        "title": folder_name,
+                        "category": "experience",
+                        "keywords": [kw.strip() for kw in trigger.replace("/", ",").split(",") if kw.strip()],
+                        "summary": desc,
+                        "content": md_content,
+                        "ki_type": "experience",
+                    }
+                    agent.memory.save_ki(ki_data)
+                    try:
+                        await agent.memory.save_ki_embedding(ki_id, folder_name + " " + desc)
+                    except Exception:
+                        pass
                     saved_skills.append(skill_name)
-                    logger.info(f"🎉 [技能降落成功] 自进化突变提炼出全新实战经验，已安全降落在 experiences 池中: 【{skill_name}】 -> agent_memory/experiences/{folder_name}.md")
+                    logger.info(f"Experience saved to DB: {skill_name}")
     except Exception as e:
         logger.error(f"❌ [技能突变异常] 自进化合成 Skill 失败: {e}")
 
