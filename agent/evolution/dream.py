@@ -505,4 +505,13 @@ async def trigger_deep_dream_evolution(agent, history_messages=None) -> str:
     except Exception as e:
         logger.error(f"❌ [深夜全局熔炼异常] {e}")
 
+    # 深夜聚类：micro → macro 索引
+    try:
+        from agent.memory.clustering import build_macros
+        cluster_result = await build_macros(agent.memory, agent=agent)
+        if cluster_result["created"] > 0:
+            logger.info(f"Clustering: {cluster_result['created']} macros created, {cluster_result['skipped']} isolated")
+    except Exception as e:
+        logger.error(f"Clustering failed: {e}")
+
     return summary_card

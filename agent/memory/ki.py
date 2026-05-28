@@ -20,7 +20,7 @@ def save_ki(manager, ki_data: dict, _existing_db=None) -> str:
         keywords_str = str(keywords)
     summary = ki_data["summary"]
     content = ki_data["content"]
-    ki_type = ki_data.get("ki_type", "ki")
+    ki_type = ki_data.get("ki_type", "micro")
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -103,7 +103,7 @@ def merge_ki(manager, existing_id: str, title: str, category: str, keywords: lis
         "summary": summary,
         "content": content,
         "revision_history": revision_history,
-        "ki_type": "ki",
+        "ki_type": "micro",
     }
     return manager.save_ki(ki_data)
 
