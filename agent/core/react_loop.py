@@ -12,7 +12,7 @@ from ..memory.error_tracker import ERROR_INDICATORS
 NORMAL_TIMEOUT = 300
 DEEP_TIMEOUT = 7200
 
-from ..evolution import audit_tool_call, on_session_end, inject_fatigue_prompt_if_needed
+from ..evolution import audit_tool_call, on_session_end
 from ..memory.error_tracker import L2_SELF_HEAL
 from .agent import AgentMode, PermissionCategory
 
@@ -423,7 +423,6 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
 
 async def llm_chat(agent, messages: list[dict], tools: list[dict]) -> tuple:
     """非流式 LLM 调用，返回 (content, reasoning, tool_calls)."""
-    messages = inject_fatigue_prompt_if_needed(agent, messages)
     try:
         llm_task = asyncio.create_task(
             agent.llm.chat(messages=messages, tools=tools if tools else None)
@@ -478,7 +477,6 @@ async def llm_chat(agent, messages: list[dict], tools: list[dict]) -> tuple:
 
 async def llm_stream(agent, messages: list[dict], tools: list[dict]) -> AsyncGenerator[dict, None]:
     """流式 LLM 调用，yield UI events，最后 yield _done 事件."""
-    messages = inject_fatigue_prompt_if_needed(agent, messages)
     text_parts = []
     reasoning_parts = []
     tool_calls = []
