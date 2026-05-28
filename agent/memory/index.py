@@ -118,15 +118,18 @@ def _get_db(manager) -> sqlite3.Connection:
                 cur = manager._db.execute("PRAGMA table_info(knowledge_items)")
                 columns = [row[1] for row in cur.fetchall()]
                 
-                if "version" not in columns or "revision_history" not in columns:
+                if "version" not in columns or "revision_history" not in columns or "ki_type" not in columns:
                     manager._db.execute("BEGIN TRANSACTION")
                     try:
                         if "version" not in columns:
                             manager._db.execute("ALTER TABLE knowledge_items ADD COLUMN version INTEGER DEFAULT 1")
-                            logger.info("Successfully added 'version' column to knowledge_items table.")
+                            logger.info("Added 'version' column to knowledge_items.")
                         if "revision_history" not in columns:
                             manager._db.execute("ALTER TABLE knowledge_items ADD COLUMN revision_history TEXT")
-                            logger.info("Successfully added 'revision_history' column to knowledge_items table.")
+                            logger.info("Added 'revision_history' column to knowledge_items.")
+                        if "ki_type" not in columns:
+                            manager._db.execute("ALTER TABLE knowledge_items ADD COLUMN ki_type TEXT DEFAULT 'ki'")
+                            logger.info("Added 'ki_type' column to knowledge_items.")
                         manager._db.commit()
                     except Exception as tx_err:
                         manager._db.execute("ROLLBACK")
