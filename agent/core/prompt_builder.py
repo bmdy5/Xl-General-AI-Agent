@@ -172,52 +172,44 @@ def _load_core_skills(query_text: str = "") -> str:
     combined = "\n".join(index_lines)
     return f"\n## Available Skills（需要时 read_file 读取全文）\n{combined}\n"
 
-def _search_experiences(query: str) -> str:
-    """动态经验检索 (Experience RAG)"""
-    # 阈值阻断: >= 2 字符即触发，适配高密度中文环境
+async def _search_experiences(agent, query: str) -> str:
+    """动态经验检索 — 从 knowledge_items 表查询 ki_type='experience'。"""
     if len(query.strip()) < 2:
         return ""
-        
-    exp_dir = EXPERIENCES_DIR
-    if not exp_dir.exists():
+
+    try:
+        results = agent.memory.search_memories(query, limit=10)
+    except Exception:
         return ""
-        
-    words = _KEYWORD_RE.findall(query.lower())
-    if not words:
+
+    # 过滤 ki_type='experience'
+    exp_results = []
+    for r in results:
+        ki_id = r.get("id", "")
+        try:
+            ki = agent.memory.get_ki(ki_id)
+            if ki and ki.get("ki_type") == "experience":
+                exp_results.append(r)
+        except Exception:
+            pass
+
+    if not exp_results:
         return ""
-        
-    results = []
-    for item in exp_dir.iterdir():
-        if item.is_file() and item.name.endswith(".md"):
-            try:
-                content = item.read_text(encoding="utf-8")
-                lower_content = content.lower()
-                score = sum(lower_content.count(w) for w in words)
-                # 命中阈值: 至少出现相关词汇
-                if score > 0:
-                    results.append((score, item.name, content))
-            except Exception:
-                pass
-                    
-    if not results:
-        return ""
-        
-    # 取 Top K
-    results.sort(key=lambda x: x[0], reverse=True)
+
     top_k = settings.get_threshold("experience_recall_top_k", 2)
-    top_results = results[:top_k]
-    
+    top_results = exp_results[:top_k]
+
     index_lines = []
-    for score, name, content in top_results:
-        meta = _parse_yaml_frontmatter(content)
-        desc = meta.get("description", "")
-        line = f"- `{name}` (相关度: {score})"
+    for r in top_results:
+        name = r.get("title", r.get("filename", "?"))
+        desc = r.get("summary", "")
+        line = f"- `{name}`"
         if desc:
-            line += f" — {desc}"
+            line += f" — {desc[:100]}"
         index_lines.append(line)
 
     combined = "\n".join(index_lines)
-    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n匹配经验（需要时 read_file 读全文）:\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
+    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n匹配经验（需要时 search_memories 读全文）:\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
 
 _KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')
 
@@ -568,7 +560,7 @@ async def build_memory_block(agent, user_input: str, turn: int) -> str:
 
     # 【新增】动态检索经验手册 (Experience)
     try:
-        experience_block = _search_experiences(user_input)
+        experience_block = await _search_experiences(agent, user_input)
         if experience_block:
             lines.append(experience_block)
     except Exception as e:
