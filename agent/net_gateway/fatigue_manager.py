@@ -86,7 +86,7 @@ class FatigueManager:
                 f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气幽默、活泼可爱且保持客观界限，带有动作描写（如：（揉了揉太阳穴）、（打了个哈欠）），绝不能出现任何与亮哥称呼相关的穿帮词。"
             )
             response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
+                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override=os.environ.get("MYAGENT_MODEL_FLASH", "deepseek/deepseek-v4-flash")),
                 timeout=8.0
             )
             res = response.get("content", "").strip().replace("```", "")
@@ -165,7 +165,7 @@ class FatigueManager:
                 f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气幽默活泼且克制客观，带有动作描写，绝不能出现任何与亮哥称呼相关的穿帮词。"
             )
             response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
+                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override=os.environ.get("MYAGENT_MODEL_FLASH", "deepseek/deepseek-v4-flash")),
                 timeout=8.0
             )
             res = response.get("content", "").strip().replace("```", "")
@@ -190,7 +190,7 @@ class FatigueManager:
                 f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气活灵活现，带有动作描写。"
             )
             response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
+                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override=os.environ.get("MYAGENT_MODEL_FLASH", "deepseek/deepseek-v4-flash")),
                 timeout=8.0
             )
             res = response.get("content", "").strip().replace("```", "")
@@ -261,7 +261,7 @@ class FatigueManager:
                 f"规范：符合单气泡三段呼吸律，字数 40 到 100 字，语气活灵活现，带有动作描写。"
             )
             response = await asyncio.wait_for(
-                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override="deepseek/deepseek-v4-flash"),
+                agent.llm.chat(messages=[{"role": "user", "content": prompt}], model_override=os.environ.get("MYAGENT_MODEL_FLASH", "deepseek/deepseek-v4-flash")),
                 timeout=8.0
             )
             res = response.get("content", "").strip().replace("```", "")
