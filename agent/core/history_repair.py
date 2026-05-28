@@ -274,7 +274,11 @@ def scavenge_tool_calls(text: str, allowed_names: list) -> list:
     """从大模型思维溢出的 reasoning 或正文中抢救性提取 JSON 工具调用 (限定处于 Markdown 代码块中)"""
     if not text:
         return []
-    
+
+    # 预检：没有疑似 tool call 特征则直接跳过
+    if not ("```" in text and ('"name"' in text or '"function"' in text or '<DSML' in text)):
+        return []
+
     import re
     import json
     allowed = set(allowed_names)
