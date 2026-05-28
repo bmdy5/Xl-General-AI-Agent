@@ -87,7 +87,7 @@ class MemoryTool(BaseTool):
                         "query": {"type": "string", "description": "Search query for action=search."},
                         "target_file": {
                             "type": "string",
-                            "description": "Target core filename for merge_to_core. One of: user_profile.md, communication_rules.md, operation_rules.md, xl_tool_guide.md, xl_architecture.md, xl_code_review.md, xl_identity.md, xl_debugging.md, xl_requirement_analysis.md",
+                            "description": "Optional label for the merged content (stored as KI title)",
                         },
                         "old_text": {
                             "type": "string",
@@ -143,17 +143,23 @@ class MemoryTool(BaseTool):
                 return
 
             if action == "merge_to_core":
-                target = input_args.get("target_file", "")
                 content = input_args.get("content", "")
                 desc = input_args.get("description", "merged reflect")
-                if not target or not content:
-                    yield ToolResult(type="result", data="Error: target_file and content required")
+                if not content:
+                    yield ToolResult(type="result", data="Error: content required")
                     return
-                if target not in CORE_FILES:
-                    opts = ", ".join(CORE_FILES.keys())
-                    yield ToolResult(type="result", data=f"Error: {target} not in core files. Options: {opts}")
-                    return
-                timestamp = await mm.append_to_core(target, desc, content)
+                import hashlib
+                ki_id = f"core_{hashlib.md5(content.encode()).hexdigest()[:12]}"
+                ki_data = {
+                    "id": ki_id, "title": desc[:80], "category": "operation_rules",
+                    "keywords": ["core_rule", "亮哥指令"], "summary": desc[:200],
+                    "content": content, "ki_type": "micro",
+                }
+                mm.save_ki(ki_data)
+                try:
+                    await mm.save_ki_embedding(ki_id, desc + " " + content[:500])
+                except Exception:
+                    pass
                 yield ToolResult(
                     type="result",
                     data=f"Merged to {target} ({timestamp})",
