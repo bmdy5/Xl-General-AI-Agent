@@ -52,7 +52,6 @@ class StreamPresenter:
                 parts = self.buf.split("[SPLIT]")
                 for part in parts[:-1]:
                     if part.strip():
-                        self.executor._log_activity_dispatcher("AI 计划/答复", part.strip(), user_id=user_id)
                         await self.context.send_chunk(msg_type, user_id, group_id, part.strip())
                         self.total_sent_tokens += self.executor._count_tokens(part.strip())
                 self.buf = parts[-1]
@@ -73,7 +72,6 @@ class StreamPresenter:
                     text = text[:32] + "..."
                 self.buf = text
 
-            self.executor._log_activity_dispatcher("AI 计划/答复", self.buf.strip(), user_id=user_id)
             if self.is_voice_reply:
                 style_match = re.match(r'^\[([^\s\]]+)\](.*)', self.buf.strip(), re.DOTALL)
                 pure_text = style_match.group(2).strip() if style_match else self.buf.strip()
