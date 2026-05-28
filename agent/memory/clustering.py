@@ -30,35 +30,42 @@ def _cosine_similarity(a: list, b: list) -> float:
     return dot / (mag_a * mag_b)
 
 
+GENERIC_KW = {"reflection", "learn", "project", "user", "feedback", "audit", "preference",
+              "experience", "insight", "observation", "note", "general", "other"}
+
 def _has_keyword_overlap(kw_a, kw_b) -> bool:
-    """检查两个 keywords 列表是否有交集。"""
+    """检查两个 keywords 列表是否有实质性交集（过滤通用词）。"""
     try:
         set_a = set(kw_a) if isinstance(kw_a, list) else set(json.loads(kw_a))
         set_b = set(kw_b) if isinstance(kw_b, list) else set(json.loads(kw_b))
-        return bool(set_a & set_b)
+        specific = (set_a & set_b) - GENERIC_KW
+        return len(specific) >= 1  # 至少 1 个专有词重合（极大团已提供严格过滤）
     except Exception:
         return False
 
 
-def _find_connected_components(edges: dict, nodes: list) -> list[list]:
-    """DFS 提取连通分量。"""
-    visited = set()
-    components = []
+def _find_cliques(edges: dict, min_size: int = 2, max_size: int = 10) -> list[list]:
+    """Bron-Kerbosch 极大团算法——要求簇内每对都相连，避免 A~B~C 链式误连。"""
+    adj = {n: set(edges.get(n, [])) for n in edges}
+    cliques = []
 
-    def dfs(node, comp):
-        visited.add(node)
-        comp.append(node)
-        for neighbor in edges.get(node, []):
-            if neighbor not in visited:
-                dfs(neighbor, comp)
+    def bron_kerbosch(r: set, p: set, x: set):
+        if len(r) >= max_size:
+            return
+        if not p and not x and len(r) >= min_size:
+            cliques.append(list(r))
+            return
+        u = next(iter(p | x)) if (p | x) else None
+        p_minus_neighbors = p - adj.get(u, set()) if u else p
+        for v in list(p_minus_neighbors):
+            bron_kerbosch(r | {v}, p & adj.get(v, set()), x & adj.get(v, set()))
+            p.discard(v)
+            x.add(v)
 
-    for node in nodes:
-        if node not in visited:
-            comp = []
-            dfs(node, comp)
-            components.append(comp)
-
-    return components
+    bron_kerbosch(set(), set(adj.keys()), set())
+    # 按大小排序，优先去重（大团包含的小团独立处理）
+    cliques.sort(key=len, reverse=True)
+    return cliques
 
 
 async def build_macros(manager, agent=None) -> dict:
@@ -98,7 +105,7 @@ async def build_macros(manager, agent=None) -> dict:
     # 3. 构建无向图
     edges = {kid: [] for kid in ki_map}
     ids = list(ki_map.keys())
-    threshold = 0.77
+    threshold = 0.82
 
     for i in range(len(ids)):
         for j in range(i + 1, len(ids)):
@@ -123,8 +130,7 @@ async def build_macros(manager, agent=None) -> dict:
                 logger.debug(f"Edge: {a_id[:20]} <-> {b_id[:20]} (sim={sim:.3f})")
 
     # 4. 连通分量
-    components = _find_connected_components(edges, list(ki_map.keys()))
-    clusters = [c for c in components if len(c) >= 2]
+    clusters = _find_cliques(edges, min_size=2, max_size=10)
 
     logger.info(f"Found {len(clusters)} clusters (from {len(rows)} micros)")
 
