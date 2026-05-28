@@ -80,3 +80,8 @@ thresholds:
   tts_idle_timeout_seconds: 7200     # TTS 闲置超时强杀秒数 (2h)
   tts_health_timeout: 3.0            # TTS 健康探测超时秒数
   tts_health_fail_threshold: 3       # TTS 自愈前连续失败次数
+  dream_cosine_merge: 0.90           # KI 合并余弦相似度阈值
+  dream_cosine_damping: 0.75         # KI 阻尼裁判余弦相似度下限
+  dream_trigger_tokens: 64000        # 触发做梦的 token 阈值
+  fatigue_decay_rate: 2.0            # 疲劳衰减率
+  cluster_similarity: 0.82           # Macro 聚类余弦相似度阈值
