@@ -42,7 +42,8 @@ def setup_system():
     os.makedirs("logs", exist_ok=True)
 
     def create_handler(filename, filter_func=None):
-        handler = RotatingFileHandler(f"logs/{filename}", maxBytes=5*1024*1024, backupCount=3, encoding='utf-8')
+        size = 50*1024*1024 if filename == "chat.log" else 5*1024*1024
+        handler = RotatingFileHandler(f"logs/{filename}", maxBytes=size, backupCount=10, encoding='utf-8')
         handler.setFormatter(formatter)
         if filter_func:
             class CustomFilter(logging.Filter):
@@ -52,7 +53,7 @@ def setup_system():
         return handler
 
     # 分流规则：按 logger name 前缀路由，不依赖消息内容
-    CHAT_LOGGERS = ("agent.activity.gateway",)  # 纯对话：用户输入+AI回复
+    CHAT_LOGGERS = ("agent.activity.gateway", "agent.react_loop", "net_gateway.logger")  # 对话+工具+Token
 
     def is_chat(r):
         return r.name.startswith(CHAT_LOGGERS)
