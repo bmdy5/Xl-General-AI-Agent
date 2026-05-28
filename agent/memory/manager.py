@@ -220,20 +220,7 @@ class MemoryManager:
                         logger.warning(f"SQLite backup() API failed, falling back to copy: {backup_api_err}")
                         shutil.copy2(db_path, backup_db_path)
                 
-                # 2. 物理同步核心 Markdown 记忆文件与索引 (镜像级删除与拷贝一致性对齐)
-                # 首先，前置清理：如果项目备份目录中存在的 .md 文件在主物理目录中已被清退删除，同步执行物理 unlink 销毁
-                if self.backup_dir.exists():
-                    for dest_file in self.backup_dir.iterdir():
-                        if dest_file.is_file() and dest_file.suffix == ".md":
-                            src_file = self.base_dir / dest_file.name
-                            if not src_file.exists():
-                                dest_file.unlink()
-
-                # 接着，正向覆盖拷贝
-                for src_file in self.base_dir.iterdir():
-                    if src_file.is_file() and src_file.suffix == ".md":
-                        shutil.copy2(src_file, self.backup_dir / src_file.name)
-                logger.info(f"💾 [热备份成功] 小萤的灵魂记忆已安全镜像双写同步至项目沙箱: {self.backup_dir}")
+                logger.info(f"Backup done: {self.backup_dir / 'memories.db'}")
             except Exception as backup_err:
                 logger.warning(f"Failed to backup memory database: {backup_err}")
                 
