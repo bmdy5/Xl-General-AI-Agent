@@ -180,7 +180,7 @@ async def on_session_end(agent):
                             "keywords": keywords,
                             "summary": f"会话反思自动检测的重复任务模式: {name}",
                             "content": content,
-                            "ki_type": "experience",
+                            "ki_type": "ki",
                         }
                         agent.memory.save_ki(ki_data)
                         try:
