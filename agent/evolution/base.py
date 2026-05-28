@@ -165,23 +165,29 @@ async def on_session_end(agent):
                     steps = pattern.get("steps", [])
                     trigger = pattern.get("trigger", "")
                     if name and len(steps) >= 2:
-                        import re
-                        from agent.core.paths import EXPERIENCES_DIR
-                        exp_dir = EXPERIENCES_DIR
-                        exp_dir.mkdir(parents=True, exist_ok=True)
+                        import re, hashlib
                         safe_name = re.sub(r'[^\w-]', '_', name.lower().strip())
-                        exp_path = exp_dir / f"{safe_name}.md"
-                        
-                        now_str = datetime.now().strftime("%Y-%m-%dT%H:%M:%SZ")
+                        ki_id = f"reflect_exp_{hashlib.md5(safe_name.encode()).hexdigest()[:12]}"
                         content = (
-                            f"---\nname: {safe_name}\ntrigger: {trigger}\ndescription: 会话反思自动检测的重复任务模式\n"
-                            f"created: {now_str}\nversion: 1.0\nusage_count: 0\nsuccess_count: 0\n"
-                            f"category: verification\n---\n\n"
                             f"# {name}\n\n## 触发条件\n{trigger}\n\n## 执行步骤\n"
                             + "\n".join(f"{i+1}. {s}" for i, s in enumerate(steps))
                         )
-                        exp_path.write_text(content, encoding="utf-8")
-                        logger.info(f"🎉 [经验提炼成功] 会话反思 SOP 模式已成功安全降落在 experiences 池中: agent_memory/experiences/{safe_name}.md")
+                        keywords = [kw.strip() for kw in trigger.replace("/", ",").split(",") if kw.strip()]
+                        ki_data = {
+                            "id": ki_id,
+                            "title": name,
+                            "category": "experience",
+                            "keywords": keywords,
+                            "summary": f"会话反思自动检测的重复任务模式: {name}",
+                            "content": content,
+                            "ki_type": "experience",
+                        }
+                        agent.memory.save_ki(ki_data)
+                        try:
+                            await agent.memory.save_ki_embedding(ki_id, name + " " + trigger)
+                        except Exception:
+                            pass
+                        logger.info(f"Experience saved to DB: {safe_name}")
             except Exception as e:
                 logger.debug(f"Task pattern detection skipped: {e}")
 
