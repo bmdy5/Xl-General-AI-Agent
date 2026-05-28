@@ -210,6 +210,19 @@ async def build_macros(manager, agent=None) -> dict:
         created += 1
         logger.info(f"Macro created: {macro_id} ({len(children)} children)")
 
+    # 为 macro 生成 embedding（使用 summary 文本）
+    for macro_id in [r[0] for r in db.execute("SELECT id FROM knowledge_items WHERE ki_type='macro' AND id NOT IN (SELECT ki_id FROM ki_embeddings)").fetchall()]:
+        try:
+            macro = db.execute("SELECT title, summary FROM knowledge_items WHERE id=?", (macro_id,)).fetchone()
+            if macro:
+                from .embedding import _get_embedding
+                embed_text = f"{macro[0]} {macro[1]}"
+                vec = await _get_embedding(manager, embed_text)
+                db.execute("INSERT OR REPLACE INTO ki_embeddings (ki_id, embedding) VALUES (?, ?)",
+                           (macro_id, str(vec)))
+        except Exception as e:
+            logger.debug(f"Embedding failed for macro {macro_id}: {e}")
+
     db.commit()
     return {"created": created, "skipped": len(rows) - sum(len(c) for c in clusters)}
 
