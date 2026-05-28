@@ -109,6 +109,21 @@ def _like_search(db, table: str, query: str, limit: int = 5) -> list[dict]:
     return results[:limit]
 
 
+
+def _bump_visit_counts(db, results):
+    """缓存命中时也更新 visit_count，避免检索统计遗漏。"""
+    try:
+        from datetime import datetime, timezone
+        now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        for r in results:
+            fid = r.get("filename", "")
+            k_id = fid[3:-3] if fid.startswith("ki_") and fid.endswith(".md") else fid
+            if k_id:
+                db.execute("UPDATE knowledge_items SET visit_count = visit_count + 1, last_hit_at = ? WHERE id = ?", (now, k_id))
+        db.commit()
+    except Exception:
+        pass
+
 def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
     """FTS5 + 768维语义向量双通道混合检索 (RRF 融合重排 + 时序热度衰减)"""
     short_query = query if len(query) <= 30 else query[:27] + "..."
@@ -120,6 +135,7 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
             f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
             f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
         )
+        _bump_visit_counts(manager._get_db(), cached_res)
         return cached_res
     else:
         logger.info(
@@ -176,6 +192,7 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
                     f"Hits: {manager._mem_cache.hits}, Misses: {manager._mem_cache.misses} | "
                     f"Hit Rate: {manager._mem_cache.hit_rate:.1f}%"
                 )
+                _bump_visit_counts(db, cached_semantic)
                 return cached_semantic
 
             q_mag = math.sqrt(sum(mul(x, x) for x in query_vec))
@@ -362,6 +379,7 @@ def search_memories(manager, query: str, limit: int = 5) -> list[dict]:
             emb_for_cache = query_vec
         except NameError:
             emb_for_cache = None
+        _bump_visit_counts(db, res)
         manager._mem_cache.set(cache_key, res, embedding=emb_for_cache)
         return res
     except Exception as e:
