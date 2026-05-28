@@ -307,17 +307,12 @@ async def build_system_prompt(agent) -> str:
     prof = agent._persona_cache
     persona_section = ""
     if prof:
-        pref_lines = "\n".join([f"- {p}" for p in prof.get("preferences", [])])
-        avoid_lines = "\n".join([f"- {a}" for a in prof.get("avoid_list", [])])
-        persona_section = (
-            f"## 你的人格自画像设定 (Your Persona Profile)\n"
-            f"- 你的名字: {prof.get('name', '小萤')}\n"
-            f"- 你的性别: {prof.get('gender', '女')}\n"
-            f"- 你称呼对方: {prof.get('user_address', '亮哥')}\n"
-            f"- 你的说话语气特质: {prof.get('tone_style', '')}\n"
-            f"- 你的行为偏好:\n{pref_lines}\n"
-            f"- 你绝不触碰的雷区:\n{avoid_lines}\n"
-        )
+        parts = [
+            f"- 你的名字: {prof.get('name', '小萤')}",
+            f"- 你的性别: {prof.get('gender', '女')}",
+            f"- 你称呼对方: {prof.get('user_address', '亮哥')}",
+        ]
+        persona_section = "## 基础身份\n" + "\n".join(parts) + "\n（性格与行为规则见下方自演化规则）"
     
     static_p = STATIC_PROMPT.replace("{persona_section}", persona_section)
     _user_address = prof.get("user_address", "亮哥")
