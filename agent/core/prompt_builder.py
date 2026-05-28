@@ -174,32 +174,23 @@ def _load_core_skills(query_text: str = "") -> str:
     return f"\n## Available Skills（需要时 read_file 读取全文）\n{combined}\n"
 
 async def _search_experiences(agent, query: str) -> str:
-    """动态经验检索 — 直接 SQL 查 ki_type='experience' 或 'skill'。"""
+    """搜索 macro + 孤立 micro，命中 macro 时自动展开子 micro 内容。"""
     if len(query.strip()) < 2:
         return ""
 
     try:
-        db = agent.memory._get_db()
-        rows = db.execute(
-            "SELECT title, summary, ki_type FROM knowledge_items WHERE ki_type IN ('experience','skill') LIMIT ?",
-            (settings.get_threshold("experience_recall_top_k", 2),)
-        ).fetchall()
+        results = agent.memory.search_memories(query, limit=10)
     except Exception:
         return ""
-
-    if not rows:
+    if not results:
         return ""
 
-    index_lines = []
-    for title, summary, kt in rows:
-        tag = "技能" if kt == "skill" else "经验"
-        line = f"- [{tag}] {title}"
-        if summary:
-            line += f" — {summary[:100]}"
-        index_lines.append(line)
+    from agent.memory.clustering import expand_macro_result
+    expanded = expand_macro_result(agent.memory, results, max_content_chars=3000)
+    if not expanded:
+        return ""
 
-    combined = "\n".join(index_lines)
-    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n匹配经验/技能（需要时 search_memories 读全文）:\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
+    return f"\n[MEMORY BLOCK — 搜索到相关记忆]\n{expanded}\n[/MEMORY BLOCK]\n"
 
 _KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')
 
