@@ -88,6 +88,7 @@ _skills_cache: dict = {}  # {mtime_sum: [(file_path, is_dir, folder_name, conten
 
 def _load_core_skills(query_text: str = "") -> str:
     """按需动态召回顶级技能到 System Prompt，mtime 缓存避免重复扫描。"""
+    global _skills_cache
     skills_dir = SKILLS_DIR
     if not skills_dir.exists():
         return ""
@@ -173,43 +174,32 @@ def _load_core_skills(query_text: str = "") -> str:
     return f"\n## Available Skills（需要时 read_file 读取全文）\n{combined}\n"
 
 async def _search_experiences(agent, query: str) -> str:
-    """动态经验检索 — 从 knowledge_items 表查询 ki_type='experience'。"""
+    """动态经验检索 — 直接 SQL 查 ki_type='experience' 或 'skill'。"""
     if len(query.strip()) < 2:
         return ""
 
     try:
-        results = agent.memory.search_memories(query, limit=10)
+        db = agent.memory._get_db()
+        rows = db.execute(
+            "SELECT title, summary, ki_type FROM knowledge_items WHERE ki_type IN ('experience','skill') LIMIT ?",
+            (settings.get_threshold("experience_recall_top_k", 2),)
+        ).fetchall()
     except Exception:
         return ""
 
-    # 过滤 ki_type='experience'
-    exp_results = []
-    for r in results:
-        ki_id = r.get("id", "")
-        try:
-            ki = agent.memory.get_ki(ki_id)
-            if ki and ki.get("ki_type") == "experience":
-                exp_results.append(r)
-        except Exception:
-            pass
-
-    if not exp_results:
+    if not rows:
         return ""
 
-    top_k = settings.get_threshold("experience_recall_top_k", 2)
-    top_results = exp_results[:top_k]
-
     index_lines = []
-    for r in top_results:
-        name = r.get("title", r.get("filename", "?"))
-        desc = r.get("summary", "")
-        line = f"- `{name}`"
-        if desc:
-            line += f" — {desc[:100]}"
+    for title, summary, kt in rows:
+        tag = "技能" if kt == "skill" else "经验"
+        line = f"- [{tag}] {title}"
+        if summary:
+            line += f" — {summary[:100]}"
         index_lines.append(line)
 
     combined = "\n".join(index_lines)
-    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n匹配经验（需要时 search_memories 读全文）:\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
+    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n匹配经验/技能（需要时 search_memories 读全文）:\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
 
 _KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')
 

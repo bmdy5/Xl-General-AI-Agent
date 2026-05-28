@@ -261,7 +261,7 @@ async def trigger_deep_dream_evolution(agent, history_messages=None) -> str:
                         "keywords": [kw.strip() for kw in trigger.replace("/", ",").split(",") if kw.strip()],
                         "summary": desc,
                         "content": md_content,
-                        "ki_type": "experience",
+                        "ki_type": "ki",
                     }
                     agent.memory.save_ki(ki_data)
                     try:
