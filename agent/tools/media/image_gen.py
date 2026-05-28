@@ -32,7 +32,7 @@ class Image2GenerateTool(BaseTool):
         return "image2_generate"
 
     async def description(self) -> str:
-        return "Generate pixel art textures using the Image2 API for office decoration."
+        return "调用 Image2 API 生成任意风格的图像（像素画、照片、概念图等）。"
 
     def is_read_only(self) -> bool:
         return False
@@ -49,22 +49,21 @@ class Image2GenerateTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Generate images using XiaoFeng's Image2 API. "
-                    "Can create any style: photos, illustrations, pixel art, concept art, etc. "
-                    "To send the generated image via QQ, include this in your reply: "
-                    "[CQ:image,file=FILE_PATH] where FILE_PATH is the saved absolute file path."
+                    "调用 Image2 接口生成图片。支持生成任何风格（照片、插画、像素画、概念图等）。 "
+                    "如果要通过 QQ 发送生成的图片，请在你的回复中包含： "
+                    "[CQ:image,file=生成的图片URL]。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "prompt": {
                             "type": "string",
-                            "description": "Image prompt. Be specific about subject, style, colors, composition.",
+                            "description": "图片提示词。请详细描述主体、风格、颜色和构图。",
                         },
                         "aspect_ratio": {
                             "type": "string",
                             "enum": ["1:1", "16:9", "9:16"],
-                            "description": "1:1 for square, 16:9 for landscape, 9:16 for portrait",
+                            "description": "图片比例。1:1（正方形）、16:9（横屏）、9:16（竖屏）。",
                         },
                     },
                     "required": ["prompt"],

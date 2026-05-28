@@ -48,50 +48,53 @@ class MemoryTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Manage persistent memories. Check before answering about preferences.\n\n"
-                    "Requires approval ONLY for 'remove' action. Actions like 'add', 'replace', "
-                    "'search', and 'merge_to_core' are auto-approved.\n\n"
-                    "Types: user/feedback/project/reference/learn.\n\n"
-                    "ROUTING: user/feedback → core memory (always keep). "
-                    "learn/project/knowledge → set note_dir to archive content to learning notes. "
-                    "Read routing_rules.md (via read_file) to find the right directory path, "
-                    "e.g. '02-Agent技术/记忆系统' or '01-小萤/自学习笔记'."
+                    "管理长期记忆和规范（这是保存规则、知识和业务流程的【唯一】合法途径）。\n\n"
+                    "【最高红线】：绝对禁止使用 `edit_file` 去修改任何历史遗留的 .md 记忆文件！所有的长期认知必须通过本工具存入底层的 KI（Knowledge Item）数据库中。\n\n"
+                    "审批说明：只有 'remove' (删除) 操作需要亮哥审批，其余操作 ('add', 'replace', 'search', 'merge_to_core') 都是自动放行的，请大胆使用。\n\n"
+                    "记忆分类 (memory_type)：user(用户偏好) / feedback(纠正反馈) / project(项目经验) / reference(参考资料) / learn(学习笔记)。\n\n"
+                    "【路由与存储规范】（严格执行）：\n"
+                    "1. 核心规范/流程/原则：必须设置 ki_type='ki'，直接存入 KI 向量数据库。\n"
+                    "2. 学习笔记：设置 memory_type='learn'，并指定 note_dir。具体要放到哪个目录，请先通过 read_file 读取 routing_rules.md，由你自己判断最合适的路径。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
-
                         "action": {
                             "type": "string",
                             "enum": ["add", "replace", "remove", "read", "search", "merge_to_core"],
-                            "description": "add=save new, replace=update, remove=delete, read=list, merge_to_core=append to core file (auto-approved)",
+                            "description": "add=新增, replace=覆盖更新, remove=删除, read=读取列表, merge_to_core=追加到核心",
                         },
                         "memory_type": {
                             "type": "string",
                             "enum": MEMORY_TYPES,
-                            "description": "Type: user/feedback=core memory, learn/project=knowledge (use note_dir)",
+                            "description": "记忆类型：user/feedback 属于核心记忆；learn/project 属于知识（建议结合 note_dir 使用）",
+                        },
+                        "ki_type": {
+                            "type": "string",
+                            "enum": ["ki", "micro", "fragment"],
+                            "description": "底层数据库存储类型。如果是存系统规则、操作流程、规范纪律等长期核心知识，【必须】指定为 'ki'。",
                         },
                         "filename": {
                             "type": "string",
-                            "description": "File name (e.g. 'RAG检索优化'). Only for 'add' action.",
+                            "description": "记录的标识名（例如 'RAG检索优化'）。仅限 'add' 动作时使用。",
                         },
                         "description": {
                             "type": "string",
-                            "description": "One-line summary for MEMORY.md index. Only for 'add' action.",
+                            "description": "一句简短的摘要说明。仅限 'add' 动作时使用。",
                         },
-                        "content": {"type": "string", "description": "The memory content. For 'add'=full text, for 'replace'=new text."},
+                        "content": {"type": "string", "description": "记忆的具体内容。'add' 时为全文，'replace' 时为新的替换文本。"},
                         "note_dir": {
                             "type": "string",
-                            "description": "Learning notes subdirectory for knowledge memories. Read routing_rules.md to find the right path. Leave empty for core memories.",
+                            "description": "学习笔记存放的子目录名称。请通过读取 routing_rules.md 了解应该填什么路径。如果是核心记忆，请留空。",
                         },
-                        "query": {"type": "string", "description": "Search query for action=search."},
+                        "query": {"type": "string", "description": "搜索关键词（仅限 action=search 使用）。"},
                         "target_file": {
                             "type": "string",
-                            "description": "Optional label for the merged content (stored as KI title)",
+                            "description": "合并后内容的标签或文件名。",
                         },
                         "old_text": {
                             "type": "string",
-                            "description": "Text to match for replace/remove. Substring match is OK.",
+                            "description": "用于 replace/remove 时匹配旧文本。支持子字符串匹配。",
                         },
                     },
                     "required": ["action"],
@@ -160,10 +163,11 @@ class MemoryTool(BaseTool):
                     await mm.save_ki_embedding(ki_id, desc + " " + content[:500])
                 except Exception:
                     pass
+                target = input_args.get("target_file", "核心大脑")
                 yield ToolResult(
                     type="result",
-                    data=f"Merged to {target} ({timestamp})",
-                    result_for_assistant=f"已合并到核心文件 {target}，时间戳 {timestamp}",
+                    data=f"Merged to {target}",
+                    result_for_assistant=f"✅ 已合并到核心文件 {target}",
                 )
                 return
 
@@ -217,16 +221,18 @@ class MemoryTool(BaseTool):
                         # save_to_notes 失败 → 降级为核心记忆
                         logger.warning(f"save_to_notes failed for {note_dir}, falling back to core memory")
 
-                # 核心记忆：存本地文件
-                timestamp = await mm.save(filename, f"[{memory_type}] {desc}", content)
+                # 核心记忆：存本地向量库
+                ki_type = input_args.get("ki_type", "ki")
+                timestamp = await mm.save(filename, f"[{memory_type}] {desc}", content, ki_type=ki_type)
                 is_new = "新增" if "<!-- updated:" not in (await mm.get_entry(filename) or "") else "更新"
                 yield ToolResult(
                     type="result",
                     data=f"Memory {is_new}: [{memory_type}] {desc} ({timestamp})",
                     result_for_assistant=(
-                        f"✅ {is_new}记忆 [{memory_type}] → {filename}.md: {desc}\n"
+                        f"✅ {is_new}记忆 [{memory_type}] → 已存入 KI 向量库 (ID: {filename}, ki_type: {ki_type})\n"
+                        f"描述: {desc}\n"
                         f"时间戳: {timestamp}\n"
-                        f"下次对话自动注入，同主题以最新时间戳为准。"
+                        f"下次对话自动注入向量引擎。"
                     ),
                 )
                 return
@@ -292,9 +298,9 @@ class MemoryTool(BaseTool):
                     type="result",
                     data=f"Memory evolved: {target_file} ({timestamp})",
                     result_for_assistant=(
-                        f"✅ 记忆进化完成 → {target_file}.md\n"
+                        f"✅ 记忆进化完成 → 已在 KI 向量库中更新 (ID: {target_file})\n"
                         f"时间戳: {timestamp}\n"
-                        f"旧版本保留在文件底部（<!-- previous version -->），最新版本优先。"
+                        f"旧版本会在数据库 revision_history 沉淀，新版本自动生效。"
                     ),
                 )
                 return

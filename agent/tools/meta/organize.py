@@ -40,7 +40,7 @@ class OrganizeNotesTool(BaseTool):
                     "properties": {
                         "directory": {
                             "type": "string",
-                            "description": "目标文件夹的绝对路径。如果为空，则默认使用 /Users/xiaofeng/Desktop/学习笔记",
+                            "description": "目标文件夹的绝对路径。如果为空，将自动从 routing_rules.md 中读取默认的【学习笔记根目录】",
                         },
                         "days_ago": {
                             "type": "integer",
@@ -61,7 +61,13 @@ class OrganizeNotesTool(BaseTool):
     async def call(self, args: dict, context=None) -> AsyncGenerator[ToolResult, None]:
         target_dir = args.get("directory", "")
         if not target_dir:
-            target_dir = "/Users/xiaofeng/Desktop/学习笔记"
+            import re
+            rules = context.memory.get_routing_rules() if context and hasattr(context, "memory") else ""
+            m = re.search(r'学习笔记根目录:\s*(.+)', rules)
+            if m:
+                target_dir = m.group(1).strip()
+            else:
+                target_dir = "/Users/xiaofeng/Documents/学习笔记"
             
         days_ago = args.get("days_ago", 3)
         base_path = Path(target_dir)

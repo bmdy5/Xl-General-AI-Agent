@@ -75,33 +75,30 @@ class EditFileTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Use SEARCH/REPLACE to make precise edits to a text file. "
-                    "Requires approval ONLY if editing core source directories (like agent/) "
-                    "or root system files. Edits to logs/ or note directories are auto-approved. "
-                    "The `search` text must match exactly (including whitespace) and appear "
-                    "exactly once in the file. Use this for small, targeted changes — "
-                    "it avoids rewriting the entire file. "
-                    "file_path MUST be an absolute path. "
-                    "For creating a new file, use write_file instead."
+                    "使用 SEARCH/REPLACE 模式对文本文件进行精确编辑。"
+                    "只有在编辑核心源码目录（如 agent/）或根系统文件时才需要审批。日志或笔记目录的编辑会自动获批。"
+                    "你要替换的 `search` 文本必须与文件中的内容完全一致（包括空格和换行），并且在文件中只能恰好出现一次。"
+                    "对于小幅的局部修改，请务必使用此工具，这能避免覆写整个文件。"
+                    "file_path 必须是绝对路径。"
+                    "如果要创建新文件，请使用 write_file 工具。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "file_path": {
                             "type": "string",
-                            "description": "Absolute path to the file to edit.",
+                            "description": "要编辑的文件的绝对路径。",
                         },
                         "search": {
                             "type": "string",
 
                             "description": (
-                                "The exact text to find and replace. Must match byte-for-byte "
-                                "in the file and appear exactly once."
+                                "要查找并替换的精确文本。必须与文件中的字节完全匹配，并且恰好出现一次。"
                             ),
                         },
                         "replace": {
                             "type": "string",
-                            "description": "The text to substitute in place of `search`.",
+                            "description": "用来替换 `search` 文本的新内容。",
                         },
                     },
                     "required": ["file_path", "search", "replace"],

@@ -99,127 +99,47 @@ def _match_core_file(description: str, content: str) -> Optional[str]:
     return None
 
 async def append_to_core(manager, target_file: str, description: str, content: str) -> str:
-    """追加到核心文件."""
-    if target_file in PROTECTED_FILES:
-        logger.warning(f"append_to_core blocked: {target_file} is protected")
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    
+    """追加到核心文件 (重构为纯 SQLite 向量库)."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-    filepath = manager.base_dir / target_file
-
-    if not filepath.exists():
-        filepath.write_text(
-            f"# {target_file.replace('.md','').replace('_',' ').title()}\n\n",
-            encoding="utf-8"
-        )
-
-    existing = filepath.read_text(encoding="utf-8")
-
-    content_hash = hashlib.md5(content.strip().encode('utf-8')).hexdigest()
-    hash_tag = f"<!-- hash:{content_hash} -->"
-    if hash_tag in existing:
-        return timestamp
-
-    append_entry = (
-        f"\n\n---\n"
-        f"<!-- {timestamp} -->\n"
-        f"{hash_tag}\n"
-        f"### {description}\n"
-        f"{content}\n"
-    )
-    with open(filepath, "a", encoding="utf-8") as f:
-        f.write(append_entry)
-
-    manager._upsert_index(target_file, f"- [{description}]({target_file}) `{timestamp}`")
-
-    try:
-        db = manager._get_db()
-        from .fts_index import populate as fts_populate
-        fts_populate(db, [{
-            "content": content[:5000],
-            "description": description[:200],
-            "memory_type": "merged",
-            "filename": target_file,
-            "timestamp": timestamp,
-        }])
-        db.commit()
-    except Exception:
-        pass
-
+    ki_id = f"core_{hashlib.md5(target_file.encode()).hexdigest()[:12]}_{hashlib.md5(content.strip().encode('utf-8')).hexdigest()[:12]}"
+    
+    ki_data = {
+        "id": ki_id,
+        "title": target_file.replace('.md', ''),
+        "category": "core",
+        "keywords": [target_file.replace('.md', '')],
+        "summary": description[:200],
+        "content": content,
+        "ki_type": "micro",
+    }
+    manager.save_ki(ki_data)
+    
     manager._mem_cache.invalidate_keys(keywords=description, text=content)
     manager._note_cache.invalidate_keys(keywords=description, text=content)
     return timestamp
 
 async def save(manager, filename: str, description: str, content: str,
-               note_path: Optional[str] = None) -> str:
-    """保存记忆."""
-    if filename in PROTECTED_FILES or Path(filename).name in PROTECTED_FILES:
-        logger.warning(f"save blocked: {filename} is protected")
-        return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+               note_path: Optional[str] = None, ki_type: str = "ki") -> str:
+    """保存记忆 (重构为纯 SQLite 向量库)."""
     timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-
-    core_file = _match_core_file(description, content)
-    
-    if not core_file and not note_path:
-        name_lower = filename.lower()
-        desc_lower = description.lower()
-        if name_lower.startswith("reflect_") or name_lower.startswith("audit_"):
-            if "user" in name_lower or "feedback" in name_lower or "user" in desc_lower or "feedback" in desc_lower:
-                core_file = "user_profile.md"
-            elif "tool" in name_lower or "audit" in name_lower or "tool" in desc_lower or "audit" in desc_lower:
-                core_file = "xl_tool_guide.md"
-            elif "project" in name_lower or "project" in desc_lower:
-                core_file = "xl_code_review.md"
-            else:
-                core_file = "xl_debugging.md"
-
-    if core_file and not note_path:
-        return await manager.append_to_core(core_file, description, content)
-
     safe_name = filename.replace("/", "_").replace("\\", "_").replace(" ", "_")
-    if not safe_name.endswith(".md"):
-        safe_name += ".md"
-    topic_file = manager.base_dir / safe_name
-    is_update = topic_file.exists()
-
+    ki_id = f"mem_{hashlib.md5(safe_name.encode()).hexdigest()[:12]}_{hashlib.md5(content.strip().encode('utf-8')).hexdigest()[:12]}"
+    mtype = description.split("]")[0].replace("[", "") if "[" in description else "other"
+    
     if note_path:
-        index_content = (
-            f"<!-- pointer -->\n"
-            f"# {description}\n\n"
-            f"→ 笔记位置: {note_path}\n\n"
-            f"_内容存储在{note_path}，这里只做索引。_"
-        )
-        topic_file.write_text(index_content, encoding="utf-8")
-        index_line = f"- [{description}]({note_path}) `{timestamp}`"
-        mtype = "knowledge"
-        update_knowledge_index("knowledge", f"{mtype} | {description} | {note_path}")
-    else:
-        if is_update:
-            old_content = topic_file.read_text(encoding="utf-8")
-            content = (
-                f"<!-- updated: {timestamp} -->\n{content}\n\n"
-                f"---\n<!-- previous version -->\n{old_content[:500]}"
-            )
-        topic_file.write_text(content, encoding="utf-8")
-        index_line = f"- [{description}]({safe_name}) `{timestamp}`"
-        mtype = description.split("]")[0].replace("[", "") if "[" in description else "other"
-        update_knowledge_index("memory", f"{mtype} | {description} | {safe_name}")
+        content = f"→ 笔记位置: {note_path}\n\n" + content
 
-    manager._upsert_index(safe_name, index_line)
-
-    try:
-        db = manager._get_db()
-        from .fts_index import populate as fts_populate
-        fts_populate(db, [{
-            "content": content[:5000],
-            "description": description[:200],
-            "memory_type": mtype,
-            "filename": safe_name,
-            "timestamp": timestamp,
-        }])
-        db.commit()
-    except Exception:
-        pass
+    ki_data = {
+        "id": ki_id,
+        "title": description[:80] if description else safe_name,
+        "category": mtype,
+        "keywords": [safe_name.replace('.md', '')],
+        "summary": description[:200],
+        "content": content,
+        "ki_type": ki_type,
+    }
+    manager.save_ki(ki_data)
+    
     manager._mem_cache.invalidate_keys(keywords=description, text=content)
     manager._note_cache.invalidate_keys(keywords=description, text=content)
     return timestamp

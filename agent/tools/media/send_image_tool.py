@@ -25,7 +25,7 @@ class SendImageToQqTool(BaseTool):
         return "send_image_to_qq"
 
     async def description(self) -> str:
-        return "Upload local image to Tencent Cloud COS and send it to Admin QQ via CQ code."
+        return "将本地图片上传至腾讯云 COS 并通过 QQ 推送给管理员。"
 
     def is_read_only(self) -> bool:
         return False
@@ -41,21 +41,21 @@ class SendImageToQqTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Upload a local image to Tencent Cloud COS and send it to the administrator QQ actively.",
+                "description": "主动将本地图片上传至腾讯云 COS，并将图片链接发送给管理员 QQ。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "local_path": {
                             "type": "string",
-                            "description": "Local absolute path of the image to send."
+                            "description": "要发送的本地图片绝对路径。"
                         },
                         "cos_key_suffix": {
                             "type": "string",
-                            "description": "Optional custom COS key suffix path. e.g. 'douyin_qrcode/login.png'."
+                            "description": "可选的 COS 自定义后缀路径。例如 'douyin_qrcode/login.png'。"
                         },
                         "message_prefix": {
                             "type": "string",
-                            "description": "Optional text message prefix to send along with the image."
+                            "description": "可选的文字前缀，会和图片一起发送。"
                         }
                     },
                     "required": ["local_path"]

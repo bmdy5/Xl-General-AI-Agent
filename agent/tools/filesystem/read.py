@@ -85,7 +85,7 @@ class ReadFileTool(BaseTool):
         return "read_file"
 
     async def description(self) -> str:
-        return "Read the contents of a file at the given absolute path."
+        return "读取指定绝对路径的文件内容。"
 
     def is_read_only(self) -> bool:
         return True
@@ -102,25 +102,25 @@ class ReadFileTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Read a file from the local filesystem. "
-                    "file_path MUST be an absolute path. "
-                    f"Files larger than {MAX_READ_SIZE // 1024}KB will be truncated. "
-                    "Use start_line/end_line to read specific line ranges from large files."
+                    "读取本地文件系统中的文件。"
+                    "file_path 必须是绝对路径。"
+                    f"如果文件大于 {MAX_READ_SIZE // 1024}KB，将被截断。"
+                    "对于大文件，请使用 start_line/end_line 参数分段读取指定的行号范围。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "file_path": {
                             "type": "string",
-                            "description": "Absolute path to the file to read.",
+                            "description": "要读取文件的绝对路径。",
                         },
                         "start_line": {
                             "type": "integer",
-                            "description": "Optional: first line number to read (1-indexed). Use for large files.",
+                            "description": "可选：开始读取的行号（从 1 开始计）。常用于分段读取大文件。",
                         },
                         "end_line": {
                             "type": "integer",
-                            "description": "Optional: last line number to read (inclusive). Use with start_line.",
+                            "description": "可选：结束读取的行号（包含该行）。搭配 start_line 使用。",
                         },
                     },
                     "required": ["file_path"],

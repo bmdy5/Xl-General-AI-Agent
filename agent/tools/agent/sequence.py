@@ -22,7 +22,7 @@ class RunSequenceTool(BaseTool):
         return "run_sequence"
 
     async def description(self) -> str:
-        return "Execute multiple tool calls in sequence. Pass a list of {tool, args} steps."
+        return "按顺序执行多个工具调用。传入一个包含 {tool, args} 的步骤列表。"
 
     def is_read_only(self) -> bool:
         return False
@@ -39,16 +39,16 @@ class RunSequenceTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Execute multiple tools in sequence. Each step: {tool: str, args: dict}. "
-                    "Steps run one after another. All results are returned as a numbered list. "
-                    "Use this when you need to do several operations that depend on each other."
+                    "按顺序链式执行多个工具。每个步骤的格式为：{tool: str, args: dict}。"
+                    "步骤将逐个执行，所有结果将以编号列表的形式返回。"
+                    "当你需要进行多个互相依赖的操作，或者想一次性完成多步操作时使用此工具。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "steps": {
                             "type": "array",
-                            "description": "List of steps. Each step: {tool: str (tool name), args: dict (tool arguments)}",
+                            "description": "步骤列表。每个步骤：{tool: str (工具名), args: dict (工具参数字典)}",
                             "items": {
                                 "type": "object",
                                 "properties": {
