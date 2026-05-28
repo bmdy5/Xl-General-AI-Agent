@@ -52,7 +52,7 @@ def setup_system():
         return handler
 
     # 分流规则：按 logger name 前缀路由，不依赖消息内容
-    CHAT_LOGGERS = ("agent.activity", "agent.react_loop", "net_gateway.logger")
+    CHAT_LOGGERS = ("agent.activity.gateway",)  # 纯对话：用户输入+AI回复
 
     def is_chat(r):
         return r.name.startswith(CHAT_LOGGERS)
