@@ -149,41 +149,28 @@ def _load_core_skills(query_text: str = "") -> str:
         needed = 2 - len(selected_entries)
         selected_entries.extend(moderately_relevant[:needed])
         
-    # 4. 生成 Prompt 内容
+    # 4. 只注入目录索引，模型需要时自行 read_file 读全文
+    index_lines = []
     for score, file_path, is_dir, file_name, content in selected_entries:
         try:
-            # 物理脱水：剥离 YAML 表头
-            clean_content = _strip_yaml_frontmatter(content).strip()
-            if clean_content:
-                # 结构化声明：如果是子目录技能，自动注入辅助资产声明
-                if is_dir:
-                    asset_list = []
-                    for sub in ["templates", "scripts", "references"]:
-                        subdir = file_path.parent / sub
-                        if subdir.exists() and subdir.is_dir():
-                            files = sorted([f.name for f in subdir.iterdir() if f.is_file() and not f.name.startswith(".")])
-                            if files:
-                                asset_list.append(f"{sub}/: {', '.join(files)}")
-                    if asset_list:
-                        clean_content += f"\n\n> [!NOTE]\n> 该技能附带以下支撑文件，可在需要时直调：\n> " + " | ".join(asset_list)
-                
-                blocks.append((file_name, clean_content))
+            meta = _parse_yaml_frontmatter(content)
+            trigger = meta.get("trigger", "")
+            desc = meta.get("description", "")
+            path_str = str(file_path.relative_to(SKILLS_DIR.parent)) if is_dir else f"agent_memory/skills/{file_name}"
+            line = f"- `{file_name}`"
+            if trigger:
+                line += f" (触发: {trigger})"
+            if desc:
+                line += f" — {desc}"
+            index_lines.append(line)
         except Exception as e:
-            logger.debug(f"Failed to process selected skill {file_path}: {e}")
-            
-    if not blocks:
+            logger.debug(f"Failed to index skill {file_path}: {e}")
+
+    if not index_lines:
         return ""
-        
-    combined_blocks = [f"### [Skill: {name}]\n{body}" for name, body in blocks]
-    combined = "\n\n".join(combined_blocks)
-    
-    # 截断熔断保护
-    skill_max = settings.get_threshold("skill_prompt_max_chars", 2500)
-    if len(combined) > skill_max:
-        logger.warning(f"Recalled skills length exceeded {skill_max} chars. Truncating.")
-        combined = combined[:skill_max] + "\n... [Truncated for High Availability]"
-        
-    return f"\n## 🔴 Core Embedded Skills (Muscle Memory)\n{combined}\n"
+
+    combined = "\n".join(index_lines)
+    return f"\n## Available Skills（需要时 read_file 读取全文）\n{combined}\n"
 
 def _search_experiences(query: str) -> str:
     """动态经验检索 (Experience RAG)"""
@@ -220,18 +207,17 @@ def _search_experiences(query: str) -> str:
     top_k = settings.get_threshold("experience_recall_top_k", 2)
     top_results = results[:top_k]
     
-    blocks = []
+    index_lines = []
     for score, name, content in top_results:
-        clean_content = _strip_yaml_frontmatter(content).strip()
-        blocks.append(f"### [Experience: {name} (Hit Score: {score})]\n{clean_content}")
-        
-    combined = "\n\n".join(blocks)
-    # 截断保护
-    exp_max = settings.get_threshold("experience_prompt_max_chars", 2000)
-    if len(combined) > exp_max:
-        combined = combined[:exp_max] + "\n... (Truncated)"
-        
-    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n以下是系统为你动态匹配的场景避坑指南与经验（Top-2），请在操作前仔细参考：\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
+        meta = _parse_yaml_frontmatter(content)
+        desc = meta.get("description", "")
+        line = f"- `{name}` (相关度: {score})"
+        if desc:
+            line += f" — {desc}"
+        index_lines.append(line)
+
+    combined = "\n".join(index_lines)
+    return f"\n[DYNAMIC EXPERIENCE BLOCK]\n匹配经验（需要时 read_file 读全文）:\n{combined}\n[/DYNAMIC EXPERIENCE BLOCK]\n"
 
 _KEYWORD_RE = re.compile(r'[一-鿿]{2,}|[a-zA-Z]{3,}')
 
