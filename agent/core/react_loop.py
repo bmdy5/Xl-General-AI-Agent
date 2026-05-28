@@ -16,17 +16,6 @@ from ..evolution import audit_tool_call, on_session_end
 from ..memory.error_tracker import L2_SELF_HEAL
 from .agent import AgentMode, PermissionCategory
 
-def _topic_distance(q1: str, q2: str) -> float:
-    """Jaccard 距离：1 - 关键词交集/并集。>0.3 算话题变化。"""
-    if not q1 or not q2:
-        return 1.0
-    import re
-    kw = lambda s: set(re.findall(r'[一-鿿]{2,}|[a-zA-Z]{3,}', s.lower()))
-    a, b = kw(q1), kw(q2)
-    if not a or not b:
-        return 1.0
-    return 1 - len(a & b) / len(a | b)
-
 def setup_prompt_caching(messages: list[dict], model_name: str) -> list[dict]:
     """
     针对 Anthropic 模型的 Prompt Caching 机制。
@@ -115,15 +104,7 @@ async def run_loop(agent, user_input: str, turn: int, stream: bool = False) -> A
         # 压缩已禁用：破坏 DeepSeek 前缀缓存，由疲劳+dreaming 兜底
 
         system_prompt = cached_prompt
-        # 话题变化时才刷新 memory_block（flash 1M context，不需要频繁刷新）
-        topic_changed = not hasattr(agent, '_last_query') or _topic_distance(
-            getattr(agent, '_last_query', ''), user_input) < 0.3
-        if topic_changed:
-            memory_block = await agent._build_memory_block(user_input, turn)
-            cached_block = memory_block
-            agent._last_query = user_input
-        else:
-            memory_block = cached_block
+        memory_block = cached_block  # flash 1M context，一次构建全程复用
         
         # 疲劳阈值：检查单次 prompt 大小（非累积历史），调试时放宽
         is_debugging = any(tc.get("name","") in ("bash","write_file","edit_file") for tc in tool_call_history[-3:])
