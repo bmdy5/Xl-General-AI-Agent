@@ -362,6 +362,14 @@ async def build_system_prompt(agent) -> str:
                 user_input = msg.get("content", "")
                 break
 
+    # 注入自演化规则（小萤通过对话自行更新，不硬编码）
+    try:
+        rules_file = agent.memory.base_dir / "routing_rules.md"
+        if rules_file.exists():
+            dynamic += "\n\n## 自演化规则\n" + rules_file.read_text(encoding="utf-8") + "\n"
+    except Exception:
+        pass
+
     # 动态匹配并挂载顶级技能与偏好
     try:
         core_skills = _load_core_skills(user_input)
