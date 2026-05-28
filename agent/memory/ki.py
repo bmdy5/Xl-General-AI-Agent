@@ -20,6 +20,7 @@ def save_ki(manager, ki_data: dict, _existing_db=None) -> str:
         keywords_str = str(keywords)
     summary = ki_data["summary"]
     content = ki_data["content"]
+    ki_type = ki_data.get("ki_type", "ki")
 
     now = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
@@ -54,9 +55,9 @@ def save_ki(manager, ki_data: dict, _existing_db=None) -> str:
             db.execute("""
                 UPDATE knowledge_items
                 SET title = ?, category = ?, keywords = ?, summary = ?, content = ?,
-                    updated_at = ?, last_hit_at = ?, version = ?, revision_history = ?
+                    updated_at = ?, last_hit_at = ?, version = ?, revision_history = ?, ki_type = ?
                 WHERE id = ?
-            """, (title, category, keywords_str, summary, content, now, now, version, new_rev_history_str, ki_id))
+            """, (title, category, keywords_str, summary, content, now, now, version, new_rev_history_str, ki_type, ki_id))
             db.execute("DELETE FROM kis_fts WHERE ki_id = ?", (ki_id,))
         else:
             created_at = now
@@ -70,9 +71,9 @@ def save_ki(manager, ki_data: dict, _existing_db=None) -> str:
                 new_rev_history_str = new_rev_history
                 
             db.execute("""
-                INSERT INTO knowledge_items (id, title, category, keywords, summary, content, created_at, updated_at, last_hit_at, visit_count, version, revision_history)
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-            """, (ki_id, title, category, keywords_str, summary, content, created_at, now, now, visit_count, version, new_rev_history_str))
+                INSERT INTO knowledge_items (id, title, category, keywords, summary, content, created_at, updated_at, last_hit_at, visit_count, version, revision_history, ki_type)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (ki_id, title, category, keywords_str, summary, content, created_at, now, now, visit_count, version, new_rev_history_str, ki_type))
         
         from .fts_index import _cjk_space
         db.execute("""
@@ -101,7 +102,8 @@ def merge_ki(manager, existing_id: str, title: str, category: str, keywords: lis
         "keywords": keywords,
         "summary": summary,
         "content": content,
-        "revision_history": revision_history
+        "revision_history": revision_history,
+        "ki_type": "ki",
     }
     return manager.save_ki(ki_data)
 
