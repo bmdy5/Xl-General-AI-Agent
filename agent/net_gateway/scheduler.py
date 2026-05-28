@@ -12,6 +12,8 @@ import aiohttp
 
 from agent.core.config import settings
 
+TTS_PORT = os.environ.get("TTS_PORT", "9880")
+
 # 物理强穿透：保障各种运行环境/子进程下均能正确寻址项目根目录
 PROJECT_ROOT = str(Path(__file__).resolve().parents[2])
 if PROJECT_ROOT not in sys.path:
@@ -114,12 +116,12 @@ class GatewayScheduler:
                             tts_timeout = settings.get_threshold("tts_health_timeout", 3.0)
                             timeout_tts = aiohttp.ClientTimeout(total=tts_timeout)
                             if self.bot._http and not self.bot._http.closed:
-                                async with self.bot._http.get("http://127.0.0.1:9880/", timeout=timeout_tts) as resp:
+                                async with self.bot._http.get("http://127.0.0.1:" + TTS_PORT + "/", timeout=timeout_tts) as resp:
                                     if resp.status not in (200, 404):
                                         raise ValueError(f"Status {resp.status}")
                             else:
                                 async with aiohttp.ClientSession(timeout=timeout_tts) as session:
-                                    async with session.get("http://127.0.0.1:9880/", timeout=timeout_tts) as resp:
+                                    async with session.get("http://127.0.0.1:" + TTS_PORT + "/", timeout=timeout_tts) as resp:
                                         if resp.status not in (200, 404):
                                             raise ValueError(f"Status {resp.status}")
                             self._tts_fail_count = 0  # 探测成功，重置计数
@@ -130,7 +132,7 @@ class GatewayScheduler:
                                 logger.warning(f"🎙️ [守护进程] 语音服务连续 {self._tts_fail_count} 次探测失败 (最近错误: {probe_err})，判定为假死/挂起，执行自愈重启...")
                                 tts_dir = str(root_dir.parent / "GPT-SoVITS")
                                 cmd_kill = 'pkill -f "api_v2.py" || true'
-                                cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p 9880 > tts.log 2>&1 &'
+                                cmd_start = f'cd {tts_dir} && nohup ./venv/bin/python3 api_v2.py -a 127.0.0.1 -p {TTS_PORT} > tts.log 2>&1 &'
                                 import os
                                 os.system(cmd_kill)
                                 os.system(cmd_start)
