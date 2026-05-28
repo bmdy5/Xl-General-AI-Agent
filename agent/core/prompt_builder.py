@@ -198,13 +198,6 @@ STATIC_PROMPT = """You are {user_address}'s personal AI developer partner. Call 
 
 {persona_section}
 
-## 技术规范 (Technical Rules)
-- Reply in Chinese unless asked in English. Be concise.
-- Plain text only, NO Markdown formatting (no bold, code blocks, headers).
-- file_path MUST always be an absolute path.
-- To break messages: insert [SPLIT]. To pause: [WAIT:N] where N=seconds.
-- Use save_memory for persistent facts.
-
 ## 工具使用
 - 不确定系统状态时，用 read_file 读代码/配置确认，不凭先验知识猜测
 - bash 命令前先确认 OS 类型，报错后禁止盲重试，自主适配命令
@@ -298,14 +291,6 @@ async def build_system_prompt(agent) -> str:
 
     dynamic = ""
     
-    # 提取最近一条 User 消息作为技能触发的 Query
-    user_input = ""
-    if hasattr(agent, "messages") and agent.messages:
-        for msg in reversed(agent.messages):
-            if msg.get("role") == "user" and msg.get("content"):
-                user_input = msg.get("content", "")
-                break
-
     # 注入核心记忆（系统事实，不常变）
     try:
         core_file = agent.memory.base_dir / "core.md"
@@ -321,13 +306,6 @@ async def build_system_prompt(agent) -> str:
             dynamic += "\n\n## 自演化规则\n" + rules_file.read_text(encoding="utf-8") + "\n"
     except Exception:
         pass
-
-    # 动态匹配并挂载顶级技能与偏好
-    try:
-        core_skills = _load_core_skills(user_input)
-        dynamic += core_skills
-    except Exception as e:
-        logger.error(f"Failed to load core skills: {e}")
 
     return static_p + dynamic
 
@@ -525,6 +503,14 @@ async def build_memory_block(agent, user_input: str, turn: int) -> str:
             lines.append(experience_block)
     except Exception as e:
         logger.error(f"Failed to search experiences: {e}")
+
+    # 动态匹配并挂载顶级技能与偏好（从 System 转移至此以保护缓存）
+    try:
+        core_skills = _load_core_skills(user_input)
+        if core_skills:
+            lines.append(core_skills)
+    except Exception as e:
+        logger.error(f"Failed to load core skills: {e}")
 
     lines.append("[/MEMORY BLOCK]")
     block = "\n".join(lines)

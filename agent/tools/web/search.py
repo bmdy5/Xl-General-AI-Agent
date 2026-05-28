@@ -23,7 +23,7 @@ class WebSearchTool(BaseTool):
         return "web_search"
 
     async def description(self) -> str:
-        return "Search the internet using DuckDuckGo. Returns titles, links, and snippets."
+        return "使用 DuckDuckGo 在互联网上搜索信息，返回标题、链接和摘要片段。"
 
     def is_read_only(self) -> bool:
         return True
@@ -40,21 +40,20 @@ class WebSearchTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Search the internet for information using DuckDuckGo. "
-                    "Returns a list of results with title, link, and snippet. "
-                    "Use this to find current information, documentation, news, "
-                    "or anything that requires up-to-date web search."
+                    "使用 DuckDuckGo 搜索引擎在互联网上查找信息。"
+                    "返回包含标题、链接和内容摘要的结果列表。"
+                    "当你需要查找最新的实时信息、官方文档、新闻，或任何需要联网搜索的内容时，使用此工具。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "query": {
                             "type": "string",
-                            "description": "The search query.",
+                            "description": "要搜索的关键词或句子。",
                         },
                         "max_results": {
                             "type": "integer",
-                            "description": "Maximum number of results (default 5, max 10).",
+                            "description": "返回的最大结果数量（默认5个，最多10个）。",
                             "default": 5,
                         },
                     },

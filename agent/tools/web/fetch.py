@@ -25,7 +25,7 @@ class WebFetchTool(BaseTool):
         return "web_fetch"
 
     async def description(self) -> str:
-        return "Fetch the full content of a web page and extract readable text."
+        return "抓取网页的完整内容并提取出可读正文。"
 
     def is_read_only(self) -> bool:
         return True
@@ -42,18 +42,17 @@ class WebFetchTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Fetch and extract the main text content from a web page. "
-                    "Returns clean text stripped of HTML, scripts, and styles. "
-                    "Use this when you need to read an article, documentation page, "
-                    "or any web content in full (not just a search snippet). "
-                    f"Output capped at {MAX_CONTENT // 1024}KB."
+                    "抓取并提取网页的主体文本内容。 "
+                    "返回剥离了 HTML 标签、脚本和样式的纯净文本。 "
+                    "当你需要阅读完整的文章、官方文档、或任何非摘要的网页长文时使用此工具。 "
+                    f"输出内容最高限制为 {MAX_CONTENT // 1024}KB。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "url": {
                             "type": "string",
-                            "description": "The full URL of the page to fetch (include https://).",
+                            "description": "要抓取的完整网页 URL（必须包含 https:// 或 http://）。",
                         },
                     },
                     "required": ["url"],

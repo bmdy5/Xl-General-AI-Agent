@@ -27,7 +27,7 @@ class BashTool(BaseTool):
         return "bash"
 
     async def description(self) -> str:
-        return "Execute a shell command and return its output."
+        return "执行 shell 命令并返回其输出结果。"
 
     def is_read_only(self) -> bool:
         return False
@@ -116,16 +116,16 @@ class BashTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Execute a shell command in the working directory. "
-                    f"Timeout: {BASH_TIMEOUT}s. Output truncated to {MAX_OUTPUT // 1024}KB. "
-                    "Use with caution — the user must approve each execution."
+                    "在当前工作目录中执行 shell 命令。"
+                    f"超时时间: {BASH_TIMEOUT}秒。输出结果最多截断为 {MAX_OUTPUT // 1024}KB。"
+                    "请谨慎使用 —— 危险命令需要用户手动审批。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "command": {
                             "type": "string",
-                            "description": "The shell command to execute.",
+                            "description": "要执行的 shell 命令。",
                         }
                     },
                     "required": ["command"],

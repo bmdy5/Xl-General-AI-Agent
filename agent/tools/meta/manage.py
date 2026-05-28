@@ -35,22 +35,22 @@ class ManageToolTool(BaseTool):
             "type": "function",
             "function": {
                 "name": self.name,
-                "description": "Manage tools at runtime. Actions: list (list all tools), register (add a new tool), deregister (remove a tool).",
+                "description": "在运行时动态管理底层的工具箱。支持的操作：list (列出所有工具), register (注册新工具), deregister (卸载工具)。",
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "action": {
                             "type": "string",
                             "enum": ["list", "register", "deregister"],
-                            "description": "list: show all tools. register: add a tool. deregister: remove a tool.",
+                            "description": "list: 显示当前挂载的所有工具；register: 注册并挂载新工具；deregister: 卸载指定的工具。",
                         },
                         "tool_name": {
                             "type": "string",
-                            "description": "Tool name (for register/deregister).",
+                            "description": "工具的名称（用于 register/deregister）。",
                         },
                         "tool_code": {
                             "type": "string",
-                            "description": "Python code for the tool class (for register, requires a class extending BaseTool).",
+                            "description": "新工具类的 Python 源码（仅限 register 操作，必须是继承自 BaseTool 的合法 Python 类）。",
                         },
                     },
                     "required": ["action"],

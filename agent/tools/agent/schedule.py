@@ -16,7 +16,7 @@ class ScheduleTaskTool(BaseTool):
         return "schedule_task"
 
     async def description(self) -> str:
-        return "Schedule a future task for yourself. Create timed reminders, recurring checks, or delayed follow-ups."
+        return "为自己安排未来的定时任务。可以创建定时提醒、周期性检查或延迟的跟进任务。"
 
     def is_read_only(self) -> bool:
         return False
@@ -34,13 +34,12 @@ class ScheduleTaskTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Create, list, cancel, or mark-done scheduled tasks for yourself. "
-                    "Use this when you need to: follow up later, set a reminder, "
-                    "create a daily check, or retry something after a delay.\n\n"
-                    "Time formats: 'in 10 minutes', 'tomorrow 9am', 'daily', "
-                    "'every Monday 8am', 'hourly'.\n\n"
-                    "Set auto_execute=true ONLY for low-risk tasks (retry, check status). "
-                    "Set auto_execute=false when the task involves file changes or needs user approval."
+                    "为自己创建、列出、取消或标记完成定时任务。"
+                    "当你需要：稍后跟进、设置提醒、创建每日检查，或在延迟后重试某事时使用。\n\n"
+                    "时间格式：'in 10 minutes'（10分钟后）, 'tomorrow 9am'（明天上午9点）, 'daily'（每天）, "
+                    "'every Monday 8am'（每周一早上8点）, 'hourly'（每小时）。\n\n"
+                    "仅当任务风险极低（如重试、检查状态）时，才将 auto_execute 设为 true。"
+                    "如果任务涉及修改文件或需要用户审批，必须将 auto_execute 设为 false。"
                 ),
                 "parameters": {
                     "type": "object",
@@ -48,28 +47,28 @@ class ScheduleTaskTool(BaseTool):
                         "action": {
                             "type": "string",
                             "enum": ["add", "list", "cancel", "done"],
-                            "description": "add=create task, list=show pending, cancel=remove, done=mark complete",
+                            "description": "add=创建任务, list=显示待办, cancel=删除任务, done=标记完成",
                         },
                         "description": {
                             "type": "string",
-                            "description": "Short description (for 'add'). e.g. '重试GitHub搜索'",
+                            "description": "简短描述（用于 'add'）。例如 '重试GitHub搜索'",
                         },
                         "run_at": {
                             "type": "string",
-                            "description": "When to run (for 'add'). e.g. 'in 10 minutes', 'tomorrow 9am', 'daily'",
+                            "description": "何时执行（用于 'add'）。例如 'in 10 minutes', 'tomorrow 9am', 'daily'",
                         },
                         "task": {
                             "type": "string",
-                            "description": "What to do (for 'add'). A clear prompt for yourself describing the task.",
+                            "description": "要做什么（用于 'add'）。给自己写的明确的任务提示词。",
                         },
                         "auto_execute": {
                             "type": "boolean",
-                            "description": "Execute without asking user? Default false. Only true for low-risk retry/check tasks.",
+                            "description": "是否不经用户询问自动执行？默认 false。仅对低风险的重试/检查任务设为 true。",
                             "default": False,
                         },
                         "task_id": {
                             "type": "string",
-                            "description": "Task ID (for 'cancel'/'done' actions)",
+                            "description": "任务 ID（用于 'cancel'/'done' 操作）",
                         },
                     },
                     "required": ["action"],

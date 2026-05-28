@@ -134,7 +134,12 @@ async def repair_history(agent) -> None:
 
 
 async def apply_sliding_window_and_scratchpad(agent) -> None:
-    """滑动窗口截断 + 首发意图锁定 + 工具摘要防蒸发。"""
+    """滑动窗口截断 + 首发意图锁定 + 工具摘要防蒸发。
+    【已废弃/禁用】：为了严格捍卫 DeepSeek 的 100% 缓存命中前缀，此功能被永久禁用。
+    对话超长由疲劳机制（Fatigue）熔断。
+    """
+    return
+
     if len(agent.messages) <= 50:
         return
 

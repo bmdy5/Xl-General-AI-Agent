@@ -31,7 +31,7 @@ class ReadImageTool(BaseTool):
         return "read_image"
 
     async def description(self) -> str:
-        return "Analyze an image using a vision model and return a text description."
+        return "调用视觉模型读取图片内容并返回详细的文字描述。"
 
     def is_read_only(self) -> bool:
         return True
@@ -48,26 +48,24 @@ class ReadImageTool(BaseTool):
             "function": {
                 "name": self.name,
                 "description": (
-                    "Read and analyze an image file using a vision model. "
-                    "Use this to understand screenshots, diagrams, error messages, "
-                    "architecture diagrams, UI mockups, or any visual content. "
-                    "Returns a detailed text description of what's in the image. "
-                    "Supported formats: png, jpg, jpeg, gif, webp, bmp."
+                    "调用视觉大模型读取并分析图片文件。 "
+                    "可用于理解截图、图表、报错信息、架构图、UI 界面或任何视觉内容。"
+                    "模型会返回极其详细的图片内容文字描述。"
+                    "支持的格式：png, jpg, jpeg, gif, webp, bmp。"
                 ),
                 "parameters": {
                     "type": "object",
                     "properties": {
                         "file_path": {
                             "type": "string",
-                            "description": "Absolute path to the image file.",
+                            "description": "本地图片文件的绝对路径。",
                         },
                         "focus": {
                             "type": "string",
                             "description": (
-                                "What to focus on in the image. "
-                                "Examples: 'error message', 'code', 'architecture', "
-                                "'UI layout', 'diagram', 'text content'. "
-                                "Leave empty for a general description."
+                                "希望视觉模型重点关注的内容。"
+                                "例如：'报错信息', '代码', '架构', 'UI 布局', '流程图', '文字内容'。"
+                                "如果留空，模型将提供全局的详细描述。"
                             ),
                         },
                     },

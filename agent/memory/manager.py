@@ -356,9 +356,9 @@ class MemoryManager:
         return res
 
     async def save(self, filename: str, description: str, content: str,
-                   note_path: Optional[str] = None) -> str:
+                   note_path: Optional[str] = None, ki_type: str = "ki") -> str:
         from .store import save
-        res = await save(self, filename, description, content, note_path)
+        res = await save(self, filename, description, content, note_path, ki_type)
         self.trigger_backup()
         return res
 
