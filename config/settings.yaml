@@ -48,8 +48,9 @@ notebooklm:
     PATH: "/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
 
 # 8. 腾讯云 COS 对象存储配置 (Tencent Cloud COS)
-TENCENT_CLOUD_SECRET_ID: "AKIDWuIXgcLF3g8RaYLSelfRvJUVJxPeibIl"
-TENCENT_CLOUD_SECRET_KEY: "LTKxMalkYBbxCE5jGblphLpAOQEtWYVG"
+# 生产环境推荐通过系统环境变量或云端数据库动态载入，避免敏感数据硬编码
+TENCENT_CLOUD_SECRET_ID: ""
+TENCENT_CLOUD_SECRET_KEY: ""
 TENCENT_CLOUD_COS_BUCKET: "gpt-images-1409520107"
 TENCENT_CLOUD_COS_REGION: "ap-guangzhou"
 
