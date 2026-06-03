@@ -92,13 +92,13 @@ graph TD
 - stop(self) -> None
   - 职责: 优雅清理、取消所有后台常驻协程，杜绝协程溢出。
 
-### 5. 疲劳状态机与梦境管理器 (fatigue_manager.py)
+### 5. 疲劳状态机与休眠反思管理器 (fatigue_manager.py)
 [Class] FatigueManager
-接管脑力疲劳累加、冷却打盹判断、高情商吐槽宣告和梦境反思净化逻辑。
+接管疲劳度累加、休眠冷却判定、过载报警提示生成和离线反思进化逻辑。
 - __init__(self, dispatcher)
   - 传入参数: dispatcher (MessageDispatcher 实例)
 - adjust_fatigue(self, session_key: str, increment: float, event: dict) -> None
-  - 职责: 平滑增减或重置疲劳值。当疲劳值达到 100.0 时，触发深度梦境冷却任务。
+  - 职责: 平滑增减或重置疲劳值。当疲劳值达到 100.0 时，触发休眠反思冷却任务。
 
 ### 6. 活动轨迹脱敏审计日志 (logger.py)
 [Class] ActivityLogger
@@ -127,22 +127,22 @@ graph TD
 
 由于网关服务是一个高实时性的异步并发应用，重构后对所有共享状态字典进行了收敛，将其组织为结构化的内存数据库 Schema：
 
-### 1. 会话打盹模式状态字典
+### 1. 会话休眠状态字典
 - 字典键名: dispatcher._sleep_modes
 - 数据类型: dict[str, bool]
 - 键定义: session_key (例如 'user_1705919142' 或 'group_999999')
-- 值定义: bool (True 表示当前会话因用脑过度处于打盹梦境冷冻期，不响应新指令)
+- 值定义: bool (True 表示当前会话因疲劳过载处于休眠冷却期，不响应新指令)
 
-### 2. 脑力疲劳数值字典
+### 2. 系统疲劳数值字典
 - 字典键名: dispatcher._fatigue_levels
 - 数据类型: dict[str, float]
-- 取值范围: 0.0 至 100.0 (达到 100.0 瞬时触发打盹状态机转移)
-- 转移机制: 非管理员每次会话消耗的 Token 乘以疲劳系数 QQ_FATIGUE_RATE 会被累加至该值。系统后台协程会以每分钟 2.0 percent 的速率进行物理疲劳自然退化消退。
+- 取值范围: 0.0 至 100.0 (达到 100.0 瞬时触发休眠状态机转移)
+- 转移机制: 非管理员每次会话消耗的 Token 乘以疲劳系数 QQ_FATIGUE_RATE 会被累加至该值。系统后台协程会以每分钟 2.0 percent 的速率进行疲劳度自然衰减。
 
-### 3. 活跃梦境协程句柄字典
+### 3. 活跃反思协程句柄字典
 - 字典键名: dispatcher._active_sleep_tasks
 - 数据类型: dict[str, asyncio.Task]
-- 职责: 记录处于打盹冷却期间后台异步运行的深度做梦反思任务句柄。管理员特权指令切入时，通过 cancel 物理强行中断该任务以瞬间强占唤醒。
+- 职责: 记录处于休眠冷却期间后台异步运行的离线反思任务句柄。管理员特权指令切入时，通过 cancel 物理强行中断该任务以瞬间实现系统唤醒自愈。
 
 ### 4. 挂起安全卡片审批事件字典
 - 字典键名: dispatcher._pending_perms
@@ -157,7 +157,7 @@ graph TD
 运维人员可直接在项目根目录的 .env 文件中对以下参数进行微调，修改后需重启网关：
 - QQ_ADMIN_ID = 1705919142 (主人亮哥的真实 QQ 号，特权校验唯一标识)
 - QQ_CSMA_BACKOFF_SECONDS = 1.2 (载波监听退避等待时长)
-- QQ_FATIGUE_SLEEP_MINUTES = 15.0 (打盹做梦冷却分钟数，测试时可设为 0.1s 快速复自愈)
+- QQ_FATIGUE_SLEEP_MINUTES = 15.0 (休眠冷却与反思时间，测试时可设为 0.1s 快速复苏自愈)
 - QQ_FATIGUE_RATE = 0.4 (疲劳度Token累加系数)
 
 ### 2. 运维热重启标准步骤
