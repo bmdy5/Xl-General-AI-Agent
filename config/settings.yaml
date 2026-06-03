@@ -4,7 +4,7 @@
 
 # 1. MyAgent 核心大模型配置 (Core LLM Settings)
 MYAGENT_MODEL: "deepseek/deepseek-v4-flash"
-MYAGENT_API_KEY: "sk-ctmkgcfgihyjeqhiffvncoy2rqlyfeevrbshbwzuhmp1djmt"
+MYAGENT_API_KEY: ""
 MYAGENT_API_BASE: "https://api.xiaomimimo.com/v1"
 MYAGENT_MAX_TURNS: 30
 
@@ -19,7 +19,7 @@ QQ_FATIGUE_RATE: 0.4
 # 3. Google Stitch MCP 服务集成 (Stitch MCP Integration)
 GOOGLE_CLOUD_PROJECT: "stitch-496215"
 GOOGLE_CLOUD_QUOTA_PROJECT: "stitch-496215"
-STITCH_API_KEY: "AIzaSyC297i7GVd3r0EN_UuKiwGH79WP6d-vUkM"
+STITCH_API_KEY: ""
 STITCH_SERVER_CMD: "npx @_davideast/stitch-mcp proxy"
 STITCH_TIMEOUT: 180
 
@@ -27,7 +27,7 @@ STITCH_TIMEOUT: 180
 EMBEDDING_MODE: "local"
 
 # 5. 备用大模型配置 (Backup Model Models)
-DEEPSEEK_API_KEY: "sk-0f4e3869784a4574a689198b26f1636c"
+DEEPSEEK_API_KEY: ""
 MYAGENT_MODEL_FLASH: "deepseek/deepseek-v4-flash"
 MYAGENT_MODEL_PRO: "deepseek/deepseek-v4-pro"
 
