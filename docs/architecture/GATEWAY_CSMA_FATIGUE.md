@@ -123,31 +123,31 @@ graph TD
 
 ---
 
-## 四、 内存数据库与状态字典 Schema 设计
+## 四、 内存数据库与共享状态表 Schema 设计
 
-由于网关服务是一个高实时性的异步并发应用，重构后对所有共享状态字典进行了收敛，将其组织为结构化的内存数据库 Schema：
+由于网关服务是一个高实时性的异步并发应用，重构后对所有共享状态表进行了收敛，将其组织为结构化的内存数据库 Schema：
 
-### 1. 会话休眠状态字典
-- 字典键名: dispatcher._sleep_modes
-- 数据类型: dict[str, bool]
+### 1. 会话休眠状态表
+- 键名: dispatcher._sleep_modes
+- 数据类型: dict[str, bool] (Session Key -> Status)
 - 键定义: session_key (例如 'user_1705919142' 或 'group_999999')
 - 值定义: bool (True 表示当前会话因疲劳过载处于休眠冷却期，不响应新指令)
 
-### 2. 系统疲劳数值字典
-- 字典键名: dispatcher._fatigue_levels
-- 数据类型: dict[str, float]
+### 2. 疲劳度数值表
+- 键名: dispatcher._fatigue_levels
+- 数据类型: dict[str, float] (Session Key -> Value)
 - 取值范围: 0.0 至 100.0 (达到 100.0 瞬时触发休眠状态机转移)
-- 转移机制: 非管理员每次会话消耗的 Token 乘以疲劳系数 QQ_FATIGUE_RATE 会被累加至该值。系统后台协程会以每分钟 2.0 percent 的速率进行疲劳度自然衰减。
+- 转移机制: 非管理员每次会话消耗的 Token 乘以疲劳系数 `QQ_FATIGUE_RATE` 会被累加至该值。系统后台协程会以每分钟 2.0% 的速率进行疲劳度自然衰减。
 
-### 3. 活跃反思协程句柄字典
-- 字典键名: dispatcher._active_sleep_tasks
-- 数据类型: dict[str, asyncio.Task]
+### 3. 活跃反思任务表
+- 键名: dispatcher._active_sleep_tasks
+- 数据类型: dict[str, asyncio.Task] (Session Key -> Task)
 - 职责: 记录处于休眠冷却期间后台异步运行的离线反思任务句柄。管理员特权指令切入时，通过 cancel 物理强行中断该任务以瞬间实现系统唤醒自愈。
 
-### 4. 挂起安全卡片审批事件字典
-- 字典键名: dispatcher._pending_perms
-- 数据类型: dict[str, _PermEvent]
-- 职责: 当 AgentExecutor 在推理中检测到敏感动作（如 write_file/bash）时，将卡片放行通知发送给管理员，并在此字典中注册 _PermEvent 阻塞事件锁。等待收到 'y' / 'yes' 等放行回复时，触发 set() 释放，继续执行大模型推理。
+### 4. 安全审批事件表
+- 键名: dispatcher._pending_perms
+- 数据类型: dict[str, _PermEvent] (Session Key -> Event)
+- 职责: 当 AgentExecutor 在推理中检测到敏感动作（如 `write_file`/`bash`）时，将卡片放行通知发送给管理员，并在此表中注册 `_PermEvent` 阻塞事件锁。等待收到 'y' / 'yes' 等放行回复时，触发 `set()` 释放，继续执行大模型推理。
 
 ---
 
